@@ -10,11 +10,11 @@ interface CallRecord {
   id: string;
   created_at: string | null;
   phone_number: string | null;
-  status: string;
+  status: string | null;
   duration: number | null;
   signalwire_call_id: string | null;
   assistant_id: string | null;
-  user_id: string;
+  user_id: string | null;
   analytics?: any;
   call_cost?: number | null;
   call_summary?: string | null;
@@ -88,6 +88,18 @@ const RealCallHistoryTable = () => {
     return `${minutes}m ${seconds}s`;
   };
 
+  const getStatusVariant = (status: string | null) => {
+    if (!status) return 'secondary';
+    switch (status) {
+      case 'completed':
+        return 'default';
+      case 'failed':
+        return 'destructive';
+      default:
+        return 'secondary';
+    }
+  };
+
   return (
     <Card className="shadow-md">
       <CardHeader>
@@ -135,16 +147,8 @@ const RealCallHistoryTable = () => {
                       {call.phone_number || 'N/A'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      <Badge
-                        variant={
-                          call.status === 'completed'
-                            ? 'default'
-                            : call.status === 'failed'
-                            ? 'destructive'
-                            : 'secondary'
-                        }
-                      >
-                        {call.status}
+                      <Badge variant={getStatusVariant(call.status)}>
+                        {call.status || 'Unknown'}
                       </Badge>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
