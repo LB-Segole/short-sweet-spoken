@@ -5,6 +5,13 @@ export interface User {
   name?: string;
   created_at?: string;
   updated_at?: string;
+  role?: string;
+  user_metadata?: {
+    full_name?: string;
+    phone?: string;
+    company?: string;
+    organization_name?: string;
+  };
 }
 
 export interface FAQ {

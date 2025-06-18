@@ -26,9 +26,10 @@ class SignalWireService {
       };
     } catch (error) {
       console.error('Error initiating call:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to initiate call';
       return { 
         success: false, 
-        error: error.message || 'Failed to initiate call' 
+        error: errorMessage
       };
     }
   }
@@ -47,7 +48,8 @@ class SignalWireService {
       return { transcript: data.transcript };
     } catch (error) {
       console.error('Error transcribing audio:', error);
-      return { error: error.message || 'Failed to transcribe audio' };
+      const errorMessage = error instanceof Error ? error.message : 'Failed to transcribe audio';
+      return { error: errorMessage };
     }
   }
 
@@ -66,7 +68,8 @@ class SignalWireService {
       return { response: data.response };
     } catch (error) {
       console.error('Error processing with OpenAI:', error);
-      return { error: error.message || 'Failed to process with OpenAI' };
+      const errorMessage = error instanceof Error ? error.message : 'Failed to process with OpenAI';
+      return { error: errorMessage };
     }
   }
 
@@ -81,7 +84,8 @@ class SignalWireService {
       return { audioContent: data.audioContent };
     } catch (error) {
       console.error('Error converting text to speech:', error);
-      return { error: error.message || 'Failed to convert text to speech' };
+      const errorMessage = error instanceof Error ? error.message : 'Failed to convert text to speech';
+      return { error: errorMessage };
     }
   }
 }

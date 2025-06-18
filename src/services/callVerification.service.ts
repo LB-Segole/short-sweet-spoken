@@ -1,4 +1,3 @@
-
 import { supabase } from '@/integrations/supabase/client';
 
 export interface VerificationCheck {
@@ -336,6 +335,16 @@ class CallVerificationService {
   cleanup(sessionId: string): void {
     this.sessions.delete(sessionId);
     this.subscribers.delete(sessionId);
+  }
+
+  private formatCallLog(log: any): VerificationCheck {
+    return {
+      id: log.id,
+      type: this.mapLogTypeToVerificationType(log.speaker),
+      status: log.confidence > 0.8 ? 'passed' : 'failed',
+      details: log.content,
+      timestamp: log.timestamp || new Date().toISOString()
+    };
   }
 }
 

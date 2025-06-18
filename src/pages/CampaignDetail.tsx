@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -38,6 +37,8 @@ const CampaignDetail = () => {
 
   const loadCampaignData = async () => {
     try {
+      if (!id) return;
+
       // Load campaign details
       const { data: campaignData, error: campaignError } = await supabase
         .from('campaigns')
@@ -46,7 +47,13 @@ const CampaignDetail = () => {
         .single();
 
       if (campaignError) throw campaignError;
-      setCampaign(campaignData);
+      
+      // Convert null values to undefined for our types
+      const convertedCampaign: Campaign = {
+        ...campaignData,
+        description: campaignData.description || undefined,
+      };
+      setCampaign(convertedCampaign);
 
       // Load contacts for this campaign
       const { data: contactsData, error: contactsError } = await supabase
@@ -55,7 +62,15 @@ const CampaignDetail = () => {
         .eq('campaign_id', id);
 
       if (contactsError) throw contactsError;
-      setContacts(contactsData || []);
+      
+      // Convert null values to undefined for our types
+      const convertedContacts: Contact[] = (contactsData || []).map(contact => ({
+        ...contact,
+        email: contact.email || undefined,
+        company: contact.company || undefined,
+        created_at: contact.created_at || undefined,
+      }));
+      setContacts(convertedContacts);
 
     } catch (error) {
       console.error('Error loading campaign data:', error);
