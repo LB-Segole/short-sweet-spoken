@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { MessageSquare, X, Bot, AlertCircle } from 'lucide-react';
 import AIChat from './AIChat';
