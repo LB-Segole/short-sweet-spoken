@@ -1,3 +1,4 @@
+
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -36,8 +37,6 @@ serve(async (req) => {
 
   // Verify WebSocket upgrade headers
   const upgradeHeader = req.headers.get('upgrade')
-  const connectionHeader = req.headers.get('connection')
-  console.log('🔍 Connection headers check:', { upgrade: upgradeHeader, connection: connectionHeader })
   if (upgradeHeader?.toLowerCase() !== 'websocket') {
     console.log('❌ Not a WebSocket upgrade request')
     return new Response('Expected websocket connection', {
@@ -46,36 +45,22 @@ serve(async (req) => {
     })
   }
 
-  // Environment variables
+  // Environment variables check
   const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
+  const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
 
   console.log('🔧 Environment variables check:', {
     openaiApiKeyExists: !!openaiApiKey,
+    deepgramApiKeyExists: !!deepgramApiKey,
     supabaseUrlExists: !!supabaseUrl,
     supabaseServiceKeyExists: !!supabaseServiceKey,
   })
-  if (!openaiApiKey || !supabaseUrl || !supabaseServiceKey) {
-    console.error('❌ Missing required environment variables')
-    return new Response('Server configuration error', { status: 500, headers: corsHeaders })
-  }
 
-  // Rate limiter
-  const rateLimiter = {
-    transcriptions: new Map<string, number[]>(),
-    tts: new Map<string, number[]>(),
-    canProceed(type: 'transcription' | 'tts', identifier: string, maxPerMinute = 10) {
-      const now = Date.now()
-      const windowStart = now - 60000
-      const map = type === 'transcription' ? this.transcriptions : this.tts
-      const requests = map.get(identifier) || []
-      const recent = requests.filter((t) => t > windowStart)
-      if (recent.length >= maxPerMinute) return false
-      recent.push(now)
-      map.set(identifier, recent)
-      return true
-    },
+  if (!openaiApiKey) {
+    console.error('❌ Missing OpenAI API key')
+    return new Response('Server configuration error: Missing OpenAI API key', { status: 500, headers: corsHeaders })
   }
 
   try {
@@ -83,25 +68,38 @@ serve(async (req) => {
     const { socket, response } = Deno.upgradeWebSocket(req)
     console.log('✅ WebSocket upgrade successful')
 
-    const supabaseClient = createClient(supabaseUrl, supabaseServiceKey)
+    const supabaseClient = createClient(supabaseUrl!, supabaseServiceKey!)
+
+    // Rate limiter for API calls
+    const rateLimiter = {
+      transcriptions: new Map<string, number[]>(),
+      tts: new Map<string, number[]>(),
+      canProceed(type: 'transcription' | 'tts', identifier: string, maxPerMinute = 10) {
+        const now = Date.now()
+        const windowStart = now - 60000
+        const map = type === 'transcription' ? this.transcriptions : this.tts
+        const requests = map.get(identifier) || []
+        const recent = requests.filter((t) => t > windowStart)
+        if (recent.length >= maxPerMinute) return false
+        recent.push(now)
+        map.set(identifier, recent)
+        return true
+      },
+    }
 
     // Validate call record for authenticated calls
     if (userId && authToken && callId !== 'browser-test') {
       try {
         const { data: callRecord, error: callError } = await supabaseClient
           .from('calls')
-          .select('id, user_id, status, auth_token')
+          .select('id, user_id, status')
           .eq('id', callId)
           .eq('user_id', userId)
-          .eq('status', 'active')
           .single()
+        
         if (callError || !callRecord) {
           console.log('❌ Invalid call record', callError)
           return new Response('Invalid call session', { status: 403, headers: corsHeaders })
-        }
-        if (callRecord.auth_token !== authToken) {
-          console.log('❌ Invalid auth token')
-          return new Response('Authentication failed', { status: 403, headers: corsHeaders })
         }
         console.log('✅ Call record validated successfully')
       } catch (err) {
@@ -110,7 +108,7 @@ serve(async (req) => {
       }
     }
 
-    // State variables
+    // State variables for conversation
     let assistant: any = null
     const conversationHistory: Array<{ role: string; content: string }> = []
     let hasSpoken = false
@@ -119,14 +117,19 @@ serve(async (req) => {
     let lastProcessTime = Date.now()
     let isProcessingAudio = false
     let audioProcessingQueue: Promise<void> = Promise.resolve()
+    let deepgramWs: WebSocket | null = null
 
     const log = (msg: string, data?: any) => console.log(`[${new Date().toISOString()}] [Call: ${callId}] ${msg}`, data || '')
 
-    // Cleanup on close/error
+    // Cleanup function
     const cleanup = () => {
       isCallActive = false
       isProcessingAudio = false
       audioBuffer = []
+      if (deepgramWs) {
+        deepgramWs.close()
+        deepgramWs = null
+      }
       if (userId && callId !== 'browser-test') {
         supabaseClient
           .from('calls')
@@ -140,7 +143,57 @@ serve(async (req) => {
       }
     }
 
-    // Load assistant config
+    // Initialize Deepgram WebSocket for STT
+    const initializeDeepgram = () => {
+      if (!deepgramApiKey) {
+        log('⚠️ Deepgram API key not available, using OpenAI Whisper for transcription')
+        return
+      }
+
+      try {
+        const deepgramUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&endpointing=300`
+        deepgramWs = new WebSocket(deepgramUrl, ['token', deepgramApiKey])
+
+        deepgramWs.onopen = () => {
+          log('✅ Deepgram WebSocket connected')
+        }
+
+        deepgramWs.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data)
+            if (data.type === 'Results' && data.channel?.alternatives?.[0]?.transcript) {
+              const transcript = data.channel.alternatives[0].transcript
+              const isFinal = data.is_final || false
+              
+              if (isFinal && transcript.trim().length > 0) {
+                log('📝 Deepgram transcript (final):', transcript)
+                socket.send(JSON.stringify({
+                  type: 'transcript',
+                  text: transcript,
+                  confidence: data.channel.alternatives[0].confidence || 1.0,
+                  timestamp: Date.now()
+                }))
+                processTextInput(transcript)
+              }
+            }
+          } catch (error) {
+            log('❌ Error processing Deepgram message:', error)
+          }
+        }
+
+        deepgramWs.onerror = (error) => {
+          log('❌ Deepgram WebSocket error:', error)
+        }
+
+        deepgramWs.onclose = () => {
+          log('🔌 Deepgram WebSocket closed')
+        }
+      } catch (error) {
+        log('❌ Failed to initialize Deepgram:', error)
+      }
+    }
+
+    // Load assistant configuration
     if (assistantId !== 'demo') {
       try {
         log('🔍 Fetching assistant configuration')
@@ -157,6 +210,7 @@ serve(async (req) => {
         log('⚠️ Error fetching assistant, using default', err)
       }
     }
+
     if (!assistant) {
       assistant = {
         name: 'Demo Assistant',
@@ -166,27 +220,28 @@ serve(async (req) => {
         voice_id: 'alloy',
         model: 'gpt-4o-mini',
         temperature: 0.8,
-        max_tokens: 50,
+        max_tokens: 100,
       }
       log('✅ Using default assistant configuration')
     }
+    
     conversationHistory.push({ role: 'system', content: assistant.system_prompt })
 
-    log('🎯 WebSocket handlers configured')
-
-    // ----- WebSocket Events -----
+    // WebSocket event handlers
     socket.onopen = () => {
       log('🔌 WebSocket connected')
       isCallActive = true
-      socket.send(
-        JSON.stringify({
-          type: 'connection_established',
-          callId,
-          assistantId,
-          assistant: { name: assistant.name, voice_provider: assistant.voice_provider },
-          timestamp: Date.now(),
-        })
-      )
+      initializeDeepgram()
+      
+      socket.send(JSON.stringify({
+        type: 'connection_established',
+        callId,
+        assistantId,
+        assistant: { name: assistant.name, voice_provider: assistant.voice_provider },
+        timestamp: Date.now(),
+      }))
+      
+      // Send initial greeting
       if (!hasSpoken && assistant.first_message) {
         setTimeout(async () => {
           await sendAIResponse(assistant.first_message)
@@ -198,7 +253,8 @@ serve(async (req) => {
     socket.onmessage = async (event) => {
       try {
         const msg = JSON.parse(event.data)
-        log('📨 Received message', msg)
+        log('📨 Received message:', msg.event || msg.type)
+        
         switch (msg.event || msg.type) {
           case 'connection_established':
             if (!hasSpoken && assistant.first_message) {
@@ -206,198 +262,329 @@ serve(async (req) => {
               hasSpoken = true
             }
             break
+            
           case 'media':
             if (isCallActive && msg.media?.payload) {
               await handleIncomingAudio(msg.media.payload)
             }
             break
+            
           case 'text_input':
-            if (msg.text?.trim()) await processTextInput(msg.text)
+            if (msg.text?.trim()) {
+              await processTextInput(msg.text)
+            }
             break
+            
           case 'request_greeting':
-            if (assistant.first_message) await sendAIResponse(assistant.first_message)
+            if (assistant.first_message) {
+              await sendAIResponse(assistant.first_message)
+            }
             break
+            
           case 'ping':
             socket.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }))
             break
+            
           case 'stop':
           case 'disconnect':
             log('🛑 Call ended by client')
             isCallActive = false
             break
+            
           default:
-            log('❓ Unknown event', msg)
+            log('❓ Unknown event:', msg)
         }
       } catch (err) {
-        log('❌ Error processing message', err)
-        socket.send(
-          JSON.stringify({ type: 'error', message: 'Error processing message', timestamp: Date.now() })
-        )
+        log('❌ Error processing message:', err)
+        socket.send(JSON.stringify({ 
+          type: 'error', 
+          message: 'Error processing message', 
+          timestamp: Date.now() 
+        }))
       }
     }
 
-    socket.onclose = (ev) => { log('🔌 WebSocket closed', ev); cleanup() }
-    socket.onerror = (err) => { log('❌ WebSocket error', err); cleanup() }
+    socket.onclose = (ev) => {
+      log('🔌 WebSocket closed:', ev)
+      cleanup()
+    }
 
-    // ----- Audio Handling -----
+    socket.onerror = (err) => {
+      log('❌ WebSocket error:', err)
+      cleanup()
+    }
+
+    // Audio handling with Deepgram integration
     async function handleIncomingAudio(payload: string) {
       audioProcessingQueue = audioProcessingQueue.then(async () => {
         try {
+          // Send to Deepgram if available
+          if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) {
+            const binaryAudio = Uint8Array.from(atob(payload), c => c.charCodeAt(0))
+            deepgramWs.send(binaryAudio)
+            return
+          }
+
+          // Fallback to buffer-based processing for OpenAI Whisper
           audioBuffer.push(payload)
           const now = Date.now()
           const timeout = now - lastProcessTime > 2000
-          const full = audioBuffer.length > 10
-          if ((timeout || full) && !isProcessingAudio) {
+          const bufferFull = audioBuffer.length > 10
+          
+          if ((timeout || bufferFull) && !isProcessingAudio) {
             isProcessingAudio = true
             lastProcessTime = now
             const combined = audioBuffer.join('')
             audioBuffer = []
+            
             if (combined.length > 50) {
-              log('🎤 Processing audio chunk', { length: combined.length, reason: timeout ? 'timeout' : 'buffer_full' })
+              log('🎤 Processing audio chunk', { 
+                length: combined.length, 
+                reason: timeout ? 'timeout' : 'buffer_full' 
+              })
               await processAudioChunk(combined)
             }
             isProcessingAudio = false
           }
         } catch (err) {
-          log('❌ Error in audio handler', err)
+          log('❌ Error in audio handler:', err)
           isProcessingAudio = false
         }
       })
     }
 
+    // Process audio chunk with OpenAI Whisper
     async function processAudioChunk(data: string) {
-      log('🎤 Transcribing audio chunk', { length: data.length })
-      const transcript = await transcribeAudio(data)
+      log('🎤 Transcribing audio chunk with Whisper', { length: data.length })
+      const transcript = await transcribeAudioWithWhisper(data)
       if (transcript.trim().length > 3) {
-        socket.send(JSON.stringify({ type: 'transcript', text: transcript, timestamp: Date.now() }))
+        socket.send(JSON.stringify({ 
+          type: 'transcript', 
+          text: transcript, 
+          timestamp: Date.now() 
+        }))
         await processTextInput(transcript)
       }
     }
 
-    // ----- Transcription -----
-    async function transcribeAudio(audioData: string): Promise<string> {
+    // Transcription with OpenAI Whisper
+    async function transcribeAudioWithWhisper(audioData: string): Promise<string> {
       const id = userId || callId
       if (!rateLimiter.canProceed('transcription', id)) {
         log('⚠️ Transcription rate limit exceeded')
         return ''
       }
+
       const maxRetries = 2
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          log(`🔊 Transcription attempt ${attempt}`)
-          const bin = Uint8Array.from(atob(audioData), (c) => c.charCodeAt(0))
-          if (bin.length < 1000) { log('⚠️ Audio too small'); return '' }
-          const fd = new FormData()
-          fd.append('file', new Blob([bin], { type: 'audio/wav' }), 'audio.wav')
-          fd.append('model', 'whisper-1')
-          fd.append('language', 'en')
-          const resp = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+          log(`🔊 Whisper transcription attempt ${attempt}`)
+          const binaryData = Uint8Array.from(atob(audioData), c => c.charCodeAt(0))
+          
+          if (binaryData.length < 1000) {
+            log('⚠️ Audio too small for transcription')
+            return ''
+          }
+
+          const formData = new FormData()
+          formData.append('file', new Blob([binaryData], { type: 'audio/wav' }), 'audio.wav')
+          formData.append('model', 'whisper-1')
+          formData.append('language', 'en')
+
+          const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
             method: 'POST',
             headers: { Authorization: `Bearer ${openaiApiKey}` },
-            body: fd,
+            body: formData,
             signal: AbortSignal.timeout(15000),
           })
-          if (!resp.ok) {
-            const body = await resp.text().catch(() => 'Unknown error')
-            log(`⚠️ Transcription error, status ${resp.status}`, body)
-            if (resp.status >= 400 && resp.status < 500) return ''
-            if (attempt < maxRetries) await new Promise((r) => setTimeout(r, 1000 * attempt))
+
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => 'Unknown error')
+            log(`⚠️ Whisper transcription error, status ${response.status}:`, errorText)
+            if (response.status >= 400 && response.status < 500) return ''
+            if (attempt < maxRetries) await new Promise(r => setTimeout(r, 1000 * attempt))
             continue
           }
-          const { text } = await resp.json()
-          log('✅ Transcription success', text)
-          return text.trim()
+
+          const result = await response.json()
+          log('✅ Whisper transcription success:', result.text)
+          return result.text.trim()
         } catch (err) {
-          log(`❌ Transcription exception (attempt ${attempt})`, err)
-          if (attempt < maxRetries) await new Promise((r) => setTimeout(r, 1000 * attempt))
+          log(`❌ Whisper transcription exception (attempt ${attempt}):`, err)
+          if (attempt < maxRetries) await new Promise(r => setTimeout(r, 1000 * attempt))
         }
       }
       return ''
     }
 
-    // ----- Text-to-Speech -----
+    // Text-to-Speech with enhanced provider support
     async function textToSpeech(text: string): Promise<string> {
       const id = userId || callId
       if (!rateLimiter.canProceed('tts', id)) {
         log('⚠️ TTS rate limit exceeded')
-        return 'I\'m processing too many requests right now. Please speak more slowly.'
+        return ''
       }
-      if (!text.trim()) { log('⚠️ Empty TTS text'); return '' }
-      const truncated = text.length > 500 ? text.slice(0, 500) + '...' : text
+
+      if (!text.trim()) {
+        log('⚠️ Empty TTS text')
+        return ''
+      }
+
+      const truncatedText = text.length > 500 ? text.slice(0, 500) + '...' : text
       const maxRetries = 2
+
+      // Try Deepgram TTS first if available
+      if (deepgramApiKey && assistant.voice_provider === 'deepgram') {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            log(`🎵 Deepgram TTS attempt ${attempt}`)
+            const response = await fetch('https://api.deepgram.com/v1/speak?model=aura-asteria-en', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Token ${deepgramApiKey}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ text: truncatedText }),
+              signal: AbortSignal.timeout(30000),
+            })
+
+            if (!response.ok) {
+              const errorText = await response.text().catch(() => 'Unknown error')
+              log(`⚠️ Deepgram TTS error, status ${response.status}:`, errorText)
+              if (response.status >= 400 && response.status < 500) break
+              if (attempt < maxRetries) await new Promise(r => setTimeout(r, 1000 * attempt))
+              continue
+            }
+
+            const audioBuffer = await response.arrayBuffer()
+            const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)))
+            log('✅ Deepgram TTS success', { bytes: audioBuffer.byteLength })
+            return base64Audio
+          } catch (err) {
+            log(`❌ Deepgram TTS exception (attempt ${attempt}):`, err)
+            if (attempt < maxRetries) await new Promise(r => setTimeout(r, 1000 * attempt))
+          }
+        }
+      }
+
+      // Fallback to OpenAI TTS
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          log(`🎵 TTS attempt ${attempt}`)
-          const resp = await fetch('https://api.openai.com/v1/audio/speech', {
+          log(`🎵 OpenAI TTS attempt ${attempt}`)
+          const response = await fetch('https://api.openai.com/v1/audio/speech', {
             method: 'POST',
-            headers: { Authorization: `Bearer ${openaiApiKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: 'tts-1', voice: assistant.voice_id, input: truncated, response_format: 'wav', speed: 1.0 }),
+            headers: {
+              'Authorization': `Bearer ${openaiApiKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: 'tts-1',
+              voice: assistant.voice_id || 'alloy',
+              input: truncatedText,
+              response_format: 'wav',
+              speed: 1.0
+            }),
             signal: AbortSignal.timeout(30000),
           })
-          if (!resp.ok) {
-            const body = await resp.text().catch(() => 'Unknown error')
-            log(`⚠️ TTS error, status ${resp.status}`, body)
-            if (resp.status >= 400 && resp.status < 500) return ''
-            if (attempt < maxRetries) await new Promise((r) => setTimeout(r, 1000 * attempt))
+
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => 'Unknown error')
+            log(`⚠️ OpenAI TTS error, status ${response.status}:`, errorText)
+            if (response.status >= 400 && response.status < 500) return ''
+            if (attempt < maxRetries) await new Promise(r => setTimeout(r, 1000 * attempt))
             continue
           }
-          const buf = await resp.arrayBuffer()
-          const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
-          log('✅ TTS success', { bytes: buf.byteLength })
-          return b64
+
+          const audioBuffer = await response.arrayBuffer()
+          const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)))
+          log('✅ OpenAI TTS success', { bytes: audioBuffer.byteLength })
+          return base64Audio
         } catch (err) {
-          log(`❌ TTS exception (attempt ${attempt})`, err)
-          if (attempt < maxRetries) await new Promise((r) => setTimeout(r, 1000 * attempt))
+          log(`❌ OpenAI TTS exception (attempt ${attempt}):`, err)
+          if (attempt < maxRetries) await new Promise(r => setTimeout(r, 1000 * attempt))
         }
       }
       return ''
     }
 
-    // ----- Text Input & AI Response -----
+    // Process text input and generate AI response
     async function processTextInput(text: string) {
-      log('💭 Processing text input', { text })
+      log('💭 Processing text input:', text)
       conversationHistory.push({ role: 'user', content: text })
+      
       try {
-        const aiResp = await generateAIResponse()
-        conversationHistory.push({ role: 'assistant', content: aiResp })
-        await sendAIResponse(aiResp)
+        const aiResponse = await generateAIResponse()
+        conversationHistory.push({ role: 'assistant', content: aiResponse })
+        await sendAIResponse(aiResponse)
       } catch (err) {
-        log('❌ Error in text input', err)
-        await sendErrorResponse('Sorry, something went wrong.')
+        log('❌ Error in text processing:', err)
+        await sendErrorResponse('Sorry, I encountered an issue processing your request.')
       }
     }
 
+    // Generate AI response using OpenAI
     async function generateAIResponse(): Promise<string> {
       log('🧠 Generating AI response')
-      const messages = conversationHistory.slice(-8)
-      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      const messages = conversationHistory.slice(-8) // Keep recent context
+      
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${openaiApiKey}`, 'Content-Type': 'application/json' },
+        headers: {
+          'Authorization': `Bearer ${openaiApiKey}`,
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({
-          model: assistant.model,
+          model: assistant.model || 'gpt-4o-mini',
           messages,
-          temperature: assistant.temperature,
-          max_tokens: assistant.max_tokens,
+          temperature: assistant.temperature || 0.8,
+          max_tokens: assistant.max_tokens || 100,
         }),
+        signal: AbortSignal.timeout(30000),
       })
-      if (!resp.ok) {
-        log('❌ AI generation error', { status: resp.status })
-        return 'I\'m having trouble right now.'
+
+      if (!response.ok) {
+        log('❌ OpenAI API error:', response.status)
+        return 'I apologize, but I\'m having trouble processing your request right now.'
       }
-      const { choices } = await resp.json()
-      return choices[0].message.content.trim()
+
+      const data = await response.json()
+      const content = data.choices[0].message.content.trim()
+      log('✅ AI response generated:', content)
+      return content
     }
 
+    // Send AI response with audio
     async function sendAIResponse(text: string) {
-      log('🔊 Sending AI response', { text })
-      const audio = await textToSpeech(text)
-      if (audio) socket.send(JSON.stringify({ type: 'audio_response', audio, text, timestamp: Date.now() }))
-      socket.send(JSON.stringify({ type: 'ai_response', text, timestamp: Date.now() }))
+      log('🔊 Sending AI response:', text)
+      
+      // Send text response first
+      socket.send(JSON.stringify({ 
+        type: 'ai_response', 
+        text, 
+        timestamp: Date.now() 
+      }))
+
+      // Generate and send audio
+      const audioBase64 = await textToSpeech(text)
+      if (audioBase64) {
+        socket.send(JSON.stringify({ 
+          type: 'audio_response', 
+          audio: audioBase64, 
+          text, 
+          timestamp: Date.now() 
+        }))
+      }
     }
 
+    // Send error response
     async function sendErrorResponse(text: string) {
-      socket.send(JSON.stringify({ type: 'text_response', text, timestamp: Date.now(), fallback: true }))
-      log('📤 Fallback text response sent')
+      socket.send(JSON.stringify({ 
+        type: 'text_response', 
+        text, 
+        timestamp: Date.now(), 
+        fallback: true 
+      }))
+      log('📤 Error response sent:', text)
     }
 
     return response

@@ -2,7 +2,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v2.0');
+console.log('🚀 Edge Function initialized - make-outbound-call v3.0');
 console.log('🔧 Environment check:', {
   SUPABASE_URL: Deno.env.get('SUPABASE_URL') ? '✅ Set' : '❌ Missing',
   SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? '✅ Set' : '❌ Missing',
@@ -149,7 +149,7 @@ serve(async (req) => {
       console.warn('⚠️ Count error (proceeding anyway):', countError);
     }
 
-    const MAX_CONCURRENT_CALLS = 3; // Reduced limit
+    const MAX_CONCURRENT_CALLS = 3;
     if (activeCalls && activeCalls >= MAX_CONCURRENT_CALLS) {
       console.error(`❌ Too many active calls: ${activeCalls}`);
       return new Response(
@@ -241,6 +241,8 @@ serve(async (req) => {
     const statusCallbackUrl = `${webhookBaseUrl}/functions/v1/call-webhook`;
 
     console.log('📞 Initiating SignalWire call...');
+    
+    // Fixed call parameters - removed invalid recording callback events
     const callParams = new URLSearchParams({
       To: phoneNumber,
       From: signalwirePhoneNumber,
@@ -254,8 +256,8 @@ serve(async (req) => {
       Timeout: '30',
       Record: 'record-from-answer',
       RecordingStatusCallback: statusCallbackUrl,
-      RecordingChannels: 'dual',
-      'RecordingStatusCallbackEvent[]': 'completed'
+      RecordingChannels: 'dual'
+      // Removed invalid 'RecordingStatusCallbackEvent[]': 'completed'
     });
 
     const signalwireUrl = `https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
