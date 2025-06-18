@@ -41,6 +41,7 @@
     "@radix-ui/react-tooltip": "latest",
     "@supabase/supabase-js": "latest",
     "@tanstack/react-query": "latest",
+    "axios": "^1.10.0",
     "class-variance-authority": "latest",
     "clsx": "latest",
     "cmdk": "latest",
