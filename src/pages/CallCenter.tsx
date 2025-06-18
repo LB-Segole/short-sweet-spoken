@@ -1,12 +1,14 @@
+
 import React, { useState, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Phone, Play, Pause, Square, Mic, MicOff, AlertCircle } from 'lucide-react';
+import { Phone } from 'lucide-react';
 import CallVisualization from '@/components/CallCenter/CallVisualization';
 import CampaignForm from '@/components/CallCenter/CampaignForm';
 import ContactUploader from '@/components/CallCenter/ContactUploader';
 import { CallVerificationPanel } from '@/components/CallCenter/CallVerificationPanel';
+import { CallControls } from '@/components/CallCenter/CallControls';
+import { CallStatusDisplay } from '@/components/CallCenter/CallStatusDisplay';
+import { CallActionButtons } from '@/components/CallCenter/CallActionButtons';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useCallVerification } from '@/hooks/useCallVerification';
@@ -173,80 +175,31 @@ const CallCenter = () => {
           <div className="space-y-4">
             {/* Phone Number Input */}
             {!isCallActive && (
-              <div className="space-y-2">
-                <label htmlFor="phone" className="block text-sm font-medium text-gray-700">
-                  Phone Number
-                </label>
-                <div className="flex gap-2">
-                  <Input
-                    id="phone"
-                    type="tel"
-                    placeholder="(555) 123-4567"
-                    value={phoneNumber}
-                    onChange={handlePhoneChange}
-                    className={`flex-1 ${error ? 'border-red-300 focus:border-red-500' : ''}`}
-                    maxLength={14}
-                    disabled={isLoading}
-                  />
-                  <Button 
-                    onClick={startCall} 
-                    className="bg-green-600 hover:bg-green-700 px-6"
-                    disabled={!validatePhoneNumber(phoneNumber) || isLoading}
-                  >
-                    {isLoading ? (
-                      <>
-                        <svg className="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        Starting...
-                      </>
-                    ) : (
-                      <>
-                        <Play size={16} className="mr-2" />
-                        Start Call
-                      </>
-                    )}
-                  </Button>
-                </div>
-                {error && (
-                  <div className="flex items-center text-red-600 text-sm">
-                    <AlertCircle className="h-4 w-4 mr-1" />
-                    {error}
-                  </div>
-                )}
-              </div>
+              <CallControls
+                phoneNumber={phoneNumber}
+                onPhoneChange={handlePhoneChange}
+                onStartCall={startCall}
+                isLoading={isLoading}
+                error={error}
+                validatePhoneNumber={validatePhoneNumber}
+              />
             )}
 
             {/* Call Status Display */}
             <div className="flex items-center justify-between">
-              <div className="space-y-2">
-                <p className="text-sm text-gray-600">
-                  Status: <span className={`font-medium capitalize ${
-                    callStatus === 'connected' ? 'text-green-600' : 
-                    callStatus === 'calling' ? 'text-yellow-600' : 
-                    callStatus === 'completed' ? 'text-blue-600' : 'text-gray-600'
-                  }`}>{callStatus}</span>
-                </p>
-                {currentContact && (
-                  <p className="text-sm text-gray-600">Contact: <span className="font-medium">{currentContact}</span></p>
-                )}
-                {callDuration > 0 && (
-                  <p className="text-sm text-gray-600">Duration: <span className="font-medium">{formatDuration(callDuration)}</span></p>
-                )}
-              </div>
+              <CallStatusDisplay
+                callStatus={callStatus}
+                currentContact={currentContact}
+                callDuration={callDuration}
+                formatDuration={formatDuration}
+              />
               
               {isCallActive && (
-                <div className="flex gap-2">
-                  <Button onClick={toggleMute} variant="outline" className={isMuted ? 'bg-red-100' : ''}>
-                    {isMuted ? <MicOff size={16} className="mr-2" /> : <Mic size={16} className="mr-2" />}
-                    {isMuted ? 'Unmute' : 'Mute'}
-                  </Button>
-                  <Button onClick={endCall} variant="destructive">
-                    <Square size={16} className="mr-2" />
-                    End Call
-                  </Button>
-                </div>
+                <CallActionButtons
+                  isMuted={isMuted}
+                  onToggleMute={toggleMute}
+                  onEndCall={endCall}
+                />
               )}
             </div>
           </div>
