@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { supabase } from '@/integrations/supabase/client';
 import { AudioRecorder, AudioQueue, AudioEncoder } from '@/utils/audioUtils';
 
 interface VoiceMessage {
@@ -25,14 +25,6 @@ export const useVoiceWebSocket = ({
   onMessage,
   onError
 }: UseVoiceWebSocketProps) => {
-  // Supabase client for call ownership & auth
-  const supabaseRef = useRef<SupabaseClient>(
-    createClient(
-      import.meta.env.VITE_SUPABASE_URL!,
-      import.meta.env.VITE_SUPABASE_ANON_KEY!
-    )
-  );
-
   const [isConnected, setIsConnected] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [connectionState, setConnectionState] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
@@ -115,7 +107,7 @@ export const useVoiceWebSocket = ({
       const message = { event: 'media', media: { payload: base64Audio } };
       wsRef.current.send(JSON.stringify(message));
       // Log only in development at 0.1%
-      if (process.env.NODE_ENV === 'development' && Math.random() < 0.001) {
+      if (import.meta.env.DEV && Math.random() < 0.001) {
         log('📤 Audio chunk sent', {
           originalSize: audioData.length,
           encodedSize: base64Audio.length,
@@ -184,7 +176,7 @@ export const useVoiceWebSocket = ({
 
       // Validate call ownership
       if (callId) {
-        const { data: callData, error: callErr } = await supabaseRef.current
+        const { data: callData, error: callErr } = await supabase
           .from('calls')
           .select('user_id, status')
           .eq('call_id', callId)
@@ -197,12 +189,12 @@ export const useVoiceWebSocket = ({
       await initializeAudio();
 
       // Fetch auth token
-      const { data: { session } } = await supabaseRef.current.auth.getSession();
+      const { data: { session } } = await supabase.auth.getSession();
       const authToken = session?.access_token;
       if (!authToken) throw new Error('Authentication required');
 
       // Build WebSocket URL
-      const baseUrl = import.meta.env.VITE_VOICE_WEBSOCKET_URL!;
+      const baseUrl = 'wss://csixccpoxpnwowbgkoyw.functions.supabase.co/functions/v1/voice-websocket';
       const params = new URLSearchParams({ callId: callId || 'browser-test', assistantId: assistantId || 'demo', userId, token: authToken });
       const wsUrl = `${baseUrl}?${params.toString()}`;
       log('🌐 WebSocket URL', wsUrl);
