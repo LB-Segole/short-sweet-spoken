@@ -2,7 +2,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v3.4');
+console.log('🚀 Edge Function initialized - make-outbound-call v3.5');
 console.log('🔧 Environment check:', {
   SUPABASE_URL: Deno.env.get('SUPABASE_URL') ? '✅ Set' : '❌ Missing',
   SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? '✅ Set' : '❌ Missing',
@@ -43,6 +43,44 @@ const formatToE164 = (phoneNumber: string): string => {
   
   // Return with + prefix for other cases
   return `+${digitsOnly}`;
+};
+
+// Proper XML escaping function for LaML/TwiML
+const escapeXmlContent = (text: string): string => {
+  if (!text) return '';
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ''); // Remove control characters
+};
+
+// Generate valid TwiML/LaML document
+const generateValidTwiML = (greeting: string, websocketUrl: string, callId: string, assistantId: string, userId: string): string => {
+  // Ensure greeting is safe for XML
+  const safeGreeting = escapeXmlContent(greeting || 'Hello! You are now connected to your AI assistant.');
+  
+  // Validate WebSocket URL format
+  if (!websocketUrl.startsWith('wss://') && !websocketUrl.startsWith('ws://')) {
+    throw new Error('Invalid WebSocket URL format');
+  }
+
+  // Generate clean, valid TwiML
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">${safeGreeting}</Say>
+  <Connect>
+    <Stream url="${websocketUrl}">
+      <Parameter name="callId" value="${callId}" />
+      <Parameter name="assistantId" value="${assistantId}" />
+      <Parameter name="userId" value="${userId}" />
+    </Stream>
+  </Connect>
+</Response>`;
+
+  return twiml;
 };
 
 serve(async (req) => {
@@ -251,38 +289,34 @@ serve(async (req) => {
     console.log('🔗 WebSocket URL:', wsUrl);
     console.log('🔗 Status callback URL:', statusCallbackUrl);
 
-    // Create proper TwiML with greeting and WebSocket connection
-    const firstMessage = assistant?.first_message || 'Hello! This is your AI assistant. How can I help you today?';
+    // Generate valid TwiML with proper escaping and formatting
+    const firstMessage = assistant?.first_message || 'Hello! You are now connected to your AI assistant. How can I help you today?';
     
-    // Escape XML special characters in the message
-    const escapeXml = (text: string) => {
-      return text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&apos;');
-    };
-
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">${escapeXml(firstMessage)}</Say>
-  <Connect>
-    <Stream url="${wsUrl}">
-      <Parameter name="callId" value="${callData.id}" />
-      <Parameter name="assistantId" value="${assistantId || 'demo'}" />
-      <Parameter name="userId" value="${user.id}" />
-    </Stream>
-  </Connect>
-</Response>`;
+    let twiml: string;
+    try {
+      twiml = generateValidTwiML(
+        firstMessage,
+        wsUrl,
+        callData.id,
+        assistantId || 'demo',
+        user.id
+      );
+      console.log('✅ Valid TwiML generated');
+      console.log('📝 TwiML content:', twiml);
+    } catch (twimlError) {
+      console.error('❌ TwiML generation error:', twimlError);
+      return new Response(
+        JSON.stringify({ success: false, error: `TwiML generation error: ${twimlError.message}` }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+      );
+    }
 
     console.log('📞 Initiating SignalWire call...');
-    console.log('📝 TwiML:', twiml);
     
     // Fixed call parameters with properly formatted E.164 phone number
     const callParams = new URLSearchParams({
       To: phoneNumber,
-      From: signalwirePhoneNumber, // Now properly formatted as E.164
+      From: signalwirePhoneNumber,
       Twiml: twiml,
       StatusCallback: statusCallbackUrl,
       StatusCallbackMethod: 'POST',
@@ -301,7 +335,8 @@ serve(async (req) => {
     console.log('📞 Call params:', {
       To: phoneNumber,
       From: signalwirePhoneNumber,
-      StatusCallback: statusCallbackUrl
+      StatusCallback: statusCallbackUrl,
+      TwimlLength: twiml.length
     });
 
     const signalwireResponse = await fetch(signalwireUrl, {
@@ -330,7 +365,8 @@ serve(async (req) => {
           details: {
             fromNumber: signalwirePhoneNumber,
             toNumber: phoneNumber,
-            statusCode: signalwireResponse.status
+            statusCode: signalwireResponse.status,
+            twimlLength: twiml.length
           }
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
@@ -364,21 +400,23 @@ serve(async (req) => {
         assistant_id: assistantId,
         websocket_url: wsUrl,
         from_number: signalwirePhoneNumber,
-        twiml_used: twiml
+        twiml_used: twiml,
+        twiml_valid: true
       }
     });
 
-    console.log('🎉 Call successfully initiated!');
+    console.log('🎉 Call successfully initiated with valid TwiML!');
     return new Response(
       JSON.stringify({
         success: true,
         callId: signalwireData.sid,
         dbCallId: callData.id,
         status: 'calling',
-        message: 'Call initiated successfully',
+        message: 'Call initiated successfully with valid TwiML',
         websocketUrl: wsUrl,
         fromNumber: signalwirePhoneNumber,
-        toNumber: phoneNumber
+        toNumber: phoneNumber,
+        twimlValid: true
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     );
