@@ -1,241 +1,172 @@
-import { supabase } from '@/integrations/supabase/client';
-import { toast } from 'sonner';
 
-export interface CallRequest {
-  contactId: string;
-  campaignId: string;
-  phoneNumber: string;
-  scriptId?: string;
+import { supabase } from '@/integrations/supabase/client';
+
+export interface CallRecord {
+  id: string;
+  phone_number: string;
+  status: string;
+  duration: number;
+  created_at: string;
+  summary?: string;
+  external_id?: string;
+  contact_name?: string;
+  contact_phone?: string;
+  contact_company?: string;
+  campaign_name?: string;
+  recording_url?: string;
 }
 
-export interface CallResponse {
-  success: boolean;
-  callId?: string;
-  signalwireCallId?: string;
-  error?: string;
+export interface CallStats {
+  total_calls: number;
+  successful_calls: number;
+  failed_calls: number;
+  total_duration: number;
+  average_duration: number;
+  success_rate: number;
 }
 
 class CallService {
-  private wsConnection: WebSocket | null = null;
-  private audioContext: AudioContext | null = null;
-  private mediaRecorder: MediaRecorder | null = null;
-
-  async initiateCall(request: CallRequest): Promise<CallResponse> {
+  async getAllCalls(): Promise<CallRecord[]> {
     try {
-      console.log('🚀 Initiating call:', request);
+      const { data, error } = await supabase
+        .from('call_analytics_view')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-      // First, create call record in database
-      const { data: callData, error: callError } = await supabase
-        .from('calls')
-        .insert({
-          contact_id: request.contactId,
-          campaign_id: request.campaignId,
-          phone_number: request.phoneNumber,
-          script_id: request.scriptId,
-          status: 'initiated',
-          direction: 'outbound'
-        })
-        .select()
-        .single();
+      if (error) throw error;
 
-      if (callError) {
-        console.error('❌ Failed to create call record:', callError);
-        return { success: false, error: callError.message };
-      }
-
-      // Make SignalWire API call
-      const signalwireResponse = await this.makeSignalWireCall(request, callData.id);
-      
-      if (!signalwireResponse.success) {
-        // Update call status to failed
-        await supabase
-          .from('calls')
-          .update({ status: 'failed', error_message: signalwireResponse.error })
-          .eq('id', callData.id);
-        
-        return signalwireResponse;
-      }
-
-      // Update call with SignalWire SID
-      await supabase
-        .from('calls')
-        .update({ 
-          signalwire_call_id: signalwireResponse.signalwireCallId,
-          status: 'connecting'
-        })
-        .eq('id', callData.id);
-
-      // Initialize WebSocket for real-time audio
-      await this.initializeWebSocket(callData.id, signalwireResponse.signalwireCallId);
-
-      return {
-        success: true,
-        callId: callData.id,
-        signalwireCallId: signalwireResponse.signalwireCallId
-      };
-
+      return (data || []).map(call => ({
+        id: call.id || '',
+        phone_number: call.contact_phone || 'Unknown',
+        status: call.status || 'unknown',
+        duration: call.duration || 0,
+        created_at: call.created_at || '',
+        summary: call.summary,
+        external_id: call.external_id,
+        contact_name: call.contact_name,
+        contact_phone: call.contact_phone,
+        contact_company: call.contact_company,
+        campaign_name: call.campaign_name,
+        recording_url: undefined
+      }));
     } catch (error) {
-      console.error('❌ Call initiation error:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      };
+      console.error('Error fetching calls:', error);
+      return [];
     }
   }
 
-  private async makeSignalWireCall(request: CallRequest, callId: string): Promise<CallResponse> {
+  async getCallById(callId: string): Promise<CallRecord | null> {
     try {
-      const { data, error } = await supabase.functions.invoke('make-call', {
-        body: {
-          to: request.phoneNumber,
-          callId: callId,
-          campaignId: request.campaignId,
-          scriptId: request.scriptId
+      const { data, error } = await supabase
+        .from('call_analytics_view')
+        .select('*')
+        .eq('id', callId)
+        .single();
+
+      if (error) throw error;
+      if (!data) return null;
+
+      return {
+        id: data.id || '',
+        phone_number: data.contact_phone || 'Unknown',
+        status: data.status || 'unknown',
+        duration: data.duration || 0,
+        created_at: data.created_at || '',
+        summary: data.summary,
+        external_id: data.external_id,
+        contact_name: data.contact_name,
+        contact_phone: data.contact_phone,
+        contact_company: data.contact_company,
+        campaign_name: data.campaign_name,
+        recording_url: undefined
+      };
+    } catch (error) {
+      console.error('Error fetching call:', error);
+      return null;
+    }
+  }
+
+  async initiateCall(phoneNumber: string, campaignId?: string): Promise<{ success: boolean; callId?: string; error?: string }> {
+    try {
+      if (!phoneNumber) {
+        throw new Error('Phone number is required');
+      }
+
+      const { data, error } = await supabase.functions.invoke('make-outbound-call', {
+        body: { 
+          phoneNumber,
+          campaignId: campaignId || undefined
         }
       });
 
-      if (error) {
-        console.error('❌ SignalWire API error:', error);
-        return { success: false, error: error.message };
-      }
-
-      return {
-        success: true,
-        signalwireCallId: data.call_sid
+      if (error) throw error;
+      
+      return { 
+        success: true, 
+        callId: data.callId
       };
-
     } catch (error) {
-      console.error('❌ SignalWire call error:', error);
+      console.error('Error initiating call:', error);
       return { 
         success: false, 
-        error: error instanceof Error ? error.message : 'SignalWire API failed' 
+        error: error instanceof Error ? error.message : 'Failed to initiate call'
       };
     }
   }
 
-  private async initializeWebSocket(callId: string, signalwireCallId: string): Promise<void> {
+  async endCall(callId: string, summary?: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const wsUrl = `wss://your-signalwire-domain.signalwire.com/ws`;
-      this.wsConnection = new WebSocket(wsUrl);
+      const { error } = await supabase.functions.invoke('end-call', {
+        body: { callId, summary }
+      });
 
-      this.wsConnection.onopen = () => {
-        console.log('✅ WebSocket connected for call:', callId);
-        this.setupAudioProcessing(callId);
-      };
-
-      this.wsConnection.onmessage = (event) => {
-        this.handleWebSocketMessage(event, callId);
-      };
-
-      this.wsConnection.onerror = (error) => {
-        console.error('❌ WebSocket error:', error);
-        toast.error('Real-time audio connection failed');
-      };
-
-      this.wsConnection.onclose = () => {
-        console.log('🔌 WebSocket disconnected for call:', callId);
-        this.cleanup();
-      };
-
-    } catch (error) {
-      console.error('❌ WebSocket initialization error:', error);
-    }
-  }
-
-  private async setupAudioProcessing(callId: string): Promise<void> {
-    try {
-      this.audioContext = new AudioContext();
+      if (error) throw error;
       
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      this.mediaRecorder = new MediaRecorder(stream);
-
-      this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0 && this.wsConnection?.readyState === WebSocket.OPEN) {
-          // Send audio data to AI agent
-          this.wsConnection.send(JSON.stringify({
-            type: 'audio',
-            callId: callId,
-            data: event.data
-          }));
-        }
+      return { success: true };
+    } catch (error) {
+      console.error('Error ending call:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to end call'
       };
-
-      this.mediaRecorder.start(100); // Send audio chunks every 100ms
-      console.log('✅ Audio processing started for call:', callId);
-
-    } catch (error) {
-      console.error('❌ Audio setup error:', error);
-      toast.error('Microphone access denied');
     }
   }
 
-  private handleWebSocketMessage(event: MessageEvent, callId: string): void {
+  async getCallStats(): Promise<CallStats> {
     try {
-      const message = JSON.parse(event.data);
-      
-      switch (message.type) {
-        case 'audio_response':
-          this.playAIResponse(message.audioData);
-          break;
-        case 'call_status':
-          this.updateCallStatus(callId, message.status);
-          break;
-        case 'transcription':
-          console.log('📝 User said:', message.text);
-          break;
-        default:
-          console.log('📨 Unknown message type:', message.type);
-      }
-    } catch (error) {
-      console.error('❌ WebSocket message error:', error);
-    }
-  }
-
-  private playAIResponse(audioData: string): void {
-    try {
-      const audio = new Audio(`data:audio/wav;base64,${audioData}`);
-      audio.play();
-    } catch (error) {
-      console.error('❌ Audio playback error:', error);
-    }
-  }
-
-  private async updateCallStatus(callId: string, status: string): Promise<void> {
-    await supabase
-      .from('calls')
-      .update({ status })
-      .eq('id', callId);
-  }
-
-  private cleanup(): void {
-    if (this.mediaRecorder) {
-      this.mediaRecorder.stop();
-      this.mediaRecorder = null;
-    }
-    if (this.audioContext) {
-      this.audioContext.close();
-      this.audioContext = null;
-    }
-    if (this.wsConnection) {
-      this.wsConnection.close();
-      this.wsConnection = null;
-    }
-  }
-
-  async endCall(callId: string): Promise<void> {
-    try {
-      await supabase
+      const { data, error } = await supabase
         .from('calls')
-        .update({ 
-          status: 'completed',
-          ended_at: new Date().toISOString()
-        })
-        .eq('id', callId);
+        .select('status, duration')
+        .order('created_at', { ascending: false });
 
-      this.cleanup();
-      console.log('✅ Call ended:', callId);
+      if (error) throw error;
+
+      const calls = data || [];
+      const totalCalls = calls.length;
+      const successfulCalls = calls.filter(call => call.status === 'completed').length;
+      const failedCalls = calls.filter(call => call.status === 'failed').length;
+      const totalDuration = calls.reduce((sum, call) => sum + (call.duration || 0), 0);
+      const averageDuration = totalCalls > 0 ? Math.round(totalDuration / totalCalls) : 0;
+      const successRate = totalCalls > 0 ? Math.round((successfulCalls / totalCalls) * 100) : 0;
+
+      return {
+        total_calls: totalCalls,
+        successful_calls: successfulCalls,
+        failed_calls: failedCalls,
+        total_duration: totalDuration,
+        average_duration: averageDuration,
+        success_rate: successRate
+      };
     } catch (error) {
-      console.error('❌ End call error:', error);
+      console.error('Error fetching call stats:', error);
+      return {
+        total_calls: 0,
+        successful_calls: 0,
+        failed_calls: 0,
+        total_duration: 0,
+        average_duration: 0,
+        success_rate: 0
+      };
     }
   }
 }

@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+
+import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -52,6 +53,7 @@ const CampaignDetail = () => {
       const convertedCampaign: Campaign = {
         ...campaignData,
         description: campaignData.description || undefined,
+        status: campaignData.status || 'draft',
       };
       setCampaign(convertedCampaign);
 

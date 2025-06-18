@@ -1,4 +1,3 @@
-
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types';
 import { validatePassword } from '../utils/validation';
@@ -33,7 +32,7 @@ interface AuthContextType {
   register: (data: RegisterData) => Promise<void>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
-  updatePassword: (newPassword: string, currentPassword?: string) => Promise<void>;
+  updatePassword: (newPassword: string) => Promise<void>;
   updateProfile: (data: ProfileData) => Promise<void>;
 }
 
@@ -52,21 +51,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
           email: session.user.email || '',
           role: 'user',
-          createdAt: session.user.created_at
+          created_at: session.user.created_at
         });
       }
       setIsLoading(false);
     });
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
         setUser({
           id: session.user.id,
           name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
           email: session.user.email || '',
           role: 'user',
-          createdAt: session.user.created_at
+          created_at: session.user.created_at
         });
       } else {
         setUser(null);
@@ -93,7 +92,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           name: data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User',
           email: data.user.email || '',
           role: 'user',
-          createdAt: data.user.created_at
+          created_at: data.user.created_at
         };
         setUser(userData);
         
@@ -181,7 +180,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const updatePassword = async (newPassword: string, currentPassword?: string) => {
+  const updatePassword = async (newPassword: string) => {
     setIsLoading(true);
     try {
       const passwordValidation = validatePassword(newPassword);

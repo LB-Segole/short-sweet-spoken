@@ -11,6 +11,9 @@ export interface User {
     phone?: string;
     company?: string;
     organization_name?: string;
+    country?: string;
+    address?: string;
+    organization?: string;
   };
 }
 

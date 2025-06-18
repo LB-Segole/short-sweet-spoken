@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+
+import { useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
 import { 
   LayoutDashboard, 
   Phone, 
-  Users, 
   Settings, 
   LogOut, 
   Bot,
@@ -18,7 +18,7 @@ import ContactSupportModal from '@/components/Support/ContactSupportModal';
 import PaymentModal from '@/components/Payment/PaymentModal';
 
 const MainLayout = () => {
-  const { user, logout } = useAuth();
+  const { logout } = useAuth();
   const navigate = useNavigate();
   const [showContactSupport, setShowContactSupport] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
