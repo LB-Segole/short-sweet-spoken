@@ -17,7 +17,6 @@ interface CallRequest {
 }
 
 serve(async (req) => {
-  // Enhanced logging for function entry
   console.log('🚀 make-outbound-call function invoked', {
     method: req.method,
     url: req.url,
@@ -135,12 +134,8 @@ serve(async (req) => {
     })
 
     if (!signalwireProjectId || !signalwireApiToken || !signalwireSpaceUrl) {
-      console.error('❌ SignalWire credentials missing:', {
-        projectId: !!signalwireProjectId,
-        token: !!signalwireApiToken,
-        spaceUrl: !!signalwireSpaceUrl
-      })
-      throw new Error('SignalWire credentials not configured. Please check SIGNALWIRE_PROJECT_ID, SIGNALWIRE_TOKEN, and SIGNALWIRE_SPACE_URL.')
+      console.error('❌ SignalWire credentials missing')
+      throw new Error('SignalWire credentials not configured')
     }
 
     // Use default phone number if not set
@@ -171,13 +166,13 @@ serve(async (req) => {
     
     console.log('🔗 SignalWire API URL:', signalwireUrl)
 
-    // Fixed callback events - use correct format
+    // FIXED: Use individual parameters instead of combined string
     const callParams = new URLSearchParams({
       To: phoneNumber,
       From: fromNumber,
       Twiml: twiml,
       StatusCallback: statusCallbackUrl,
-      StatusCallbackEvent: 'initiated ringing answered completed',
+      StatusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'].join(','),
       StatusCallbackMethod: 'POST',
       Timeout: '120',
       Record: 'true',
@@ -200,6 +195,7 @@ serve(async (req) => {
     })
 
     console.log('📡 SignalWire response status:', signalwireResponse.status)
+    console.log('📡 SignalWire response headers:', Object.fromEntries(signalwireResponse.headers.entries()))
 
     if (!signalwireResponse.ok) {
       const errorText = await signalwireResponse.text()

@@ -9,7 +9,6 @@ const corsHeaders = {
 }
 
 serve(async (req) => {
-  // Enhanced logging for function entry
   console.log('🚀 voice-websocket function invoked', {
     method: req.method,
     url: req.url,
@@ -39,13 +38,14 @@ serve(async (req) => {
   })
 
   if (upgradeHeader?.toLowerCase() !== 'websocket') {
-    console.log('❌ Not a WebSocket upgrade request', { 
-      upgrade: upgradeHeader,
-      expected: 'websocket'
-    })
+    console.log('❌ Not a WebSocket upgrade request')
     return new Response('Expected websocket connection', { 
-      status: 400,
-      headers: corsHeaders 
+      status: 426,
+      headers: { 
+        ...corsHeaders,
+        'Upgrade': 'websocket',
+        'Connection': 'Upgrade'
+      }
     })
   }
 
@@ -88,7 +88,6 @@ serve(async (req) => {
     let lastProcessTime = Date.now()
     let isProcessingAudio = false
 
-    // Enhanced logging function
     const log = (message: string, data?: any) => {
       const timestamp = new Date().toISOString()
       console.log(`[${timestamp}] [Call: ${callId}] ${message}`, data || '')
@@ -147,7 +146,7 @@ serve(async (req) => {
       log('🔌 WebSocket connected successfully')
       isCallActive = true
       
-      // Send connection acknowledgment
+      // Send connection acknowledgment with error handling
       try {
         socket.send(JSON.stringify({
           type: 'connection_established',
