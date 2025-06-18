@@ -50,6 +50,7 @@
     "input-otp": "latest",
     "lucide-react": "latest",
     "next-themes": "latest",
+    "openai": "^5.5.1",
     "react": "latest",
     "react-day-picker": "latest",
     "react-dom": "latest",

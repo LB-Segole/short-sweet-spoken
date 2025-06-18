@@ -66,9 +66,9 @@ export const useSubscription = () => {
           plan: data.plan,
           subscribed: isTrialActive || isSubscriptionActive || false,
           subscription_tier: data.plan,
-          subscription_end: data.subscription_end,
-          trial_end: data.trial_end,
-          trial_start: data.trial_start,
+          subscription_end: data.subscription_end || undefined,
+          trial_end: data.trial_end || undefined,
+          trial_start: data.trial_start || undefined,
           isLoading: false
         });
       } else {

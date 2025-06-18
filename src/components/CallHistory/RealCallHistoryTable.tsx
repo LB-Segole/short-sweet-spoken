@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Phone, Clock, DollarSign, FileText, Play, RefreshCw } from 'lucide-react';
-import { useRealCallHistory, RealCallRecord } from '@/hooks/useRealCallHistory';
+import { useRealCallHistory } from '@/hooks/useRealCallHistory';
 import { toast } from 'sonner';
 
 const RealCallHistoryTable = () => {

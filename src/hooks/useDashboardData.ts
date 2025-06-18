@@ -42,9 +42,10 @@ export const useDashboardData = () => {
       // Get today's calls
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      const todaysCalls = calls?.filter(call => 
-        new Date(call.created_at) >= today
-      ).length || 0;
+      const todaysCalls = calls?.filter(call => {
+        if (!call.created_at) return false;
+        return new Date(call.created_at) >= today;
+      }).length || 0;
       
       return {
         totalCalls,
