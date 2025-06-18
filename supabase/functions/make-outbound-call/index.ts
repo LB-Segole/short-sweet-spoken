@@ -1,4 +1,3 @@
-
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -46,17 +45,44 @@ serve(async (req) => {
     )
   }
 
-  try {
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+  const supabaseClient = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      },
+      db: {
+        schema: 'public',
+      },
+      global: {
+        headers: {
+          'x-application-name': 'voice-ai-outbound-calls'
+        }
+      }
+    }
+  )
+
+  const { phoneNumber, assistantId, campaignId, contactId, squadId } = requestBody
+
+  // Validate phone number format
+  const phoneRegex = /^\+[1-9]\d{1,14}$/
+  if (!phoneRegex.test(phoneNumber)) {
+    console.error('❌ Invalid phone number format:', phoneNumber)
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'Invalid phone number format. Must be in E.164 format (e.g., +1234567890)'
+      }),
+      {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      }
     )
+  }
 
-    const { phoneNumber, assistantId, campaignId, contactId, squadId } = requestBody
-
-    console.log('📞 Making outbound call to:', phoneNumber)
-
-    // Get user from auth header
+  try {
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) {
       console.error('❌ No authorization header provided')
@@ -65,9 +91,9 @@ serve(async (req) => {
 
     const token = authHeader.replace('Bearer ', '')
     console.log('🔐 Attempting to verify user token')
-    
+
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token)
-    
+
     if (authError || !user) {
       console.error('❌ Authentication failed:', authError)
       throw new Error('Invalid authentication')
@@ -75,10 +101,31 @@ serve(async (req) => {
 
     console.log('✅ User authenticated:', user.id)
 
-    // Get assistant details if provided
+    // Check for active calls limit
+    const { count: activeCalls } = await supabaseClient
+      .from('calls')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .in('status', ['pending', 'calling', 'answered'])
+
+    const MAX_CONCURRENT_CALLS = 5
+    if (activeCalls >= MAX_CONCURRENT_CALLS) {
+      console.error('❌ User has too many active calls:', activeCalls)
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `Maximum concurrent calls limit reached (${MAX_CONCURRENT_CALLS})`,
+          activeCalls
+        }),
+        {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 429,
+        }
+      )
+    }
+
     let assistant = null
     if (assistantId) {
-      console.log('🔍 Fetching assistant details for:', assistantId)
       const { data: assistantData, error: assistantError } = await supabaseClient
         .from('assistants')
         .select('*')
@@ -86,16 +133,9 @@ serve(async (req) => {
         .eq('user_id', user.id)
         .single()
 
-      if (assistantError) {
-        console.error('⚠️ Assistant fetch error:', assistantError)
-      } else {
-        assistant = assistantData
-        console.log('✅ Assistant loaded for call:', assistant.name)
-      }
+      if (!assistantError) assistant = assistantData
     }
 
-    // Create call record in database first
-    console.log('📝 Creating call record in database')
     const { data: callData, error: callError } = await supabaseClient
       .from('calls')
       .insert({
@@ -111,79 +151,62 @@ serve(async (req) => {
       .select()
       .single()
 
-    if (callError) {
-      console.error('❌ Failed to create call record:', callError)
-      throw new Error(`Failed to create call record: ${callError.message}`)
-    }
+    if (callError) throw new Error(`Failed to create call record: ${callError.message}`)
 
-    console.log('✅ Call record created:', callData.id)
-
-    // Get SignalWire credentials
     const signalwireProjectId = Deno.env.get('SIGNALWIRE_PROJECT_ID')
     const signalwireApiToken = Deno.env.get('SIGNALWIRE_TOKEN')
     const signalwireSpaceUrl = Deno.env.get('SIGNALWIRE_SPACE_URL')
     const signalwirePhoneNumber = Deno.env.get('SIGNALWIRE_PHONE_NUMBER')
+
     const webhookBaseUrl = Deno.env.get('SUPABASE_URL')
-
-    console.log('🔧 SignalWire configuration check:', {
-      projectIdExists: !!signalwireProjectId,
-      tokenExists: !!signalwireApiToken,
-      spaceUrlExists: !!signalwireSpaceUrl,
-      phoneNumberExists: !!signalwirePhoneNumber,
-      webhookBaseUrlExists: !!webhookBaseUrl
-    })
-
-    if (!signalwireProjectId || !signalwireApiToken || !signalwireSpaceUrl) {
-      console.error('❌ SignalWire credentials missing')
-      throw new Error('SignalWire credentials not configured')
+    if (!webhookBaseUrl || !webhookBaseUrl.startsWith('https://')) {
+      throw new Error('Invalid or missing SUPABASE_URL environment variable')
     }
 
-    // Use default phone number if not set
-    const fromNumber = signalwirePhoneNumber || '+12345678901'
-    console.log('📱 Using phone number:', fromNumber)
+    const baseHost = webhookBaseUrl
+      .replace('https://', '')
+      .replace('http://', '')
+      .replace('supabase.co', '.supabase.co')
 
-    // Create webhook URLs
-    const statusCallbackUrl = `${webhookBaseUrl}/functions/v1/call-webhook`
-    
-    // Prepare TwiML for the call with proper WebSocket streaming
-    const wsUrl = `wss://${webhookBaseUrl.replace('https://', '').replace('http://', '')}/functions/v1/voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}`
-    
+    const wsUrl = `wss://${baseHost}/functions/v1/voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`
+
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Connect>
-    <Stream url="${wsUrl}">
-      <Parameter name="callId" value="${callData.id}" />
-      <Parameter name="assistantId" value="${assistantId || 'demo'}" />
-    </Stream>
-  </Connect>
-</Response>`
+    <Response>
+      <Connect>
+        <Stream url="${wsUrl}">
+          <Parameter name="callId" value="${callData.id}" />
+          <Parameter name="assistantId" value="${assistantId || 'demo'}" />
+          <Parameter name="userId" value="${user.id}" />
+          <Parameter name="authToken" value="${token.substring(0, 32)}" />
+        </Stream>
+      </Connect>
+    </Response>`
 
-    console.log('📋 TwiML prepared:', twiml)
-    console.log('🌐 WebSocket URL:', wsUrl)
+    const statusCallbackUrl = `${webhookBaseUrl}/functions/v1/call-webhook`
+    const fromNumber = signalwirePhoneNumber || '+12345678901'
 
-    // Construct correct SignalWire API URL
-    const signalwireUrl = `https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`
-    
-    console.log('🔗 SignalWire API URL:', signalwireUrl)
-
-    // FIXED: Use individual parameters instead of combined string
     const callParams = new URLSearchParams({
       To: phoneNumber,
       From: fromNumber,
       Twiml: twiml,
       StatusCallback: statusCallbackUrl,
-      StatusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'].join(','),
+      'StatusCallbackEvent[]': 'initiated',
+      'StatusCallbackEvent[]': 'ringing',
+      'StatusCallbackEvent[]': 'answered',
+      'StatusCallbackEvent[]': 'completed',
       StatusCallbackMethod: 'POST',
-      Timeout: '120',
-      Record: 'true',
+      Timeout: '30',
+      Record: 'record-from-answer',
       RecordingStatusCallback: statusCallbackUrl,
       RecordingChannels: 'dual',
-      RecordingStatusCallbackEvent: 'completed',
+      'RecordingStatusCallbackEvent[]': 'completed',
       MachineDetection: 'Enable',
-      MachineDetectionTimeout: '5'
+      MachineDetectionTimeout: '5',
+      MachineDetectionSpeechThreshold: '2400',
+      MachineDetectionSpeechEndThreshold: '1200'
     })
 
-    console.log('📞 Making SignalWire API call with params:', Object.fromEntries(callParams.entries()))
+    const signalwireUrl = `https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`
 
     const signalwireResponse = await fetch(signalwireUrl, {
       method: 'POST',
@@ -194,23 +217,13 @@ serve(async (req) => {
       body: callParams
     })
 
-    console.log('📡 SignalWire response status:', signalwireResponse.status)
-    console.log('📡 SignalWire response headers:', Object.fromEntries(signalwireResponse.headers.entries()))
-
     if (!signalwireResponse.ok) {
       const errorText = await signalwireResponse.text()
-      console.error('❌ SignalWire API error:', {
-        status: signalwireResponse.status,
-        statusText: signalwireResponse.statusText,
-        body: errorText
-      })
       throw new Error(`SignalWire API error: ${signalwireResponse.status} - ${errorText}`)
     }
 
     const signalwireData = await signalwireResponse.json()
-    console.log('✅ SignalWire call created:', signalwireData)
 
-    // Update call record with SignalWire call SID
     const { error: updateError } = await supabaseClient
       .from('calls')
       .update({
@@ -220,16 +233,8 @@ serve(async (req) => {
       })
       .eq('id', callData.id)
 
-    if (updateError) {
-      console.error('⚠️ Failed to update call with SignalWire SID:', updateError)
-    } else {
-      console.log('✅ Call record updated with SignalWire SID')
-    }
-
-    // Log the call initiation
-    await supabaseClient
-      .from('webhook_logs')
-      .insert({
+    if (!updateError) {
+      await supabaseClient.from('webhook_logs').insert({
         call_id: callData.id,
         event_type: 'call_initiated',
         event_data: {
@@ -239,8 +244,7 @@ serve(async (req) => {
           websocket_url: wsUrl
         }
       })
-
-    console.log('✅ Call initiated successfully, returning response')
+    }
 
     return new Response(
       JSON.stringify({
@@ -256,19 +260,25 @@ serve(async (req) => {
         status: 200,
       }
     )
-
   } catch (error) {
     console.error('❌ Critical error in make-outbound-call:', {
       message: error.message,
       stack: error.stack,
       name: error.name
     })
-    
+
     return new Response(
       JSON.stringify({
         success: false,
         error: error.message,
-        details: 'Check function logs for more information'
+        errorCode: error.name,
+        context: {
+          phoneNumber: phoneNumber?.substring(0, 5) + '***',
+          assistantId,
+          timestamp: new Date().toISOString(),
+          callId: typeof callData !== 'undefined' ? callData.id : null
+        },
+        details: Deno.env.get('NODE_ENV') === 'development' ? error.stack : undefined
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
