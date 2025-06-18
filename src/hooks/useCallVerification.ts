@@ -1,7 +1,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
-import { callVerificationService } from '@/services/callVerification.service';
-import { VerificationSession } from '@/types';
+import { callVerificationService } from '@/services/verification';
+import { VerificationSession } from '@/services/verification/types';
 
 export const useCallVerification = () => {
   const [sessions, setSessions] = useState<VerificationSession[]>([]);

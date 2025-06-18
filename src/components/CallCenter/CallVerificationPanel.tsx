@@ -4,7 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CheckCircle, XCircle, Clock, Phone, AlertTriangle } from 'lucide-react';
-import { callVerificationService, VerificationSession, VerificationCheck } from '@/services/callVerification.service';
+import { callVerificationService } from '@/services/verification';
+import { VerificationSession, VerificationCheck } from '@/services/verification/types';
 
 interface CallVerificationPanelProps {
   callId?: string;
@@ -77,6 +78,12 @@ export const CallVerificationPanel: React.FC<CallVerificationPanelProps> = ({ ca
         return 'Webhook Events';
       case 'ring_timeout':
         return 'Ring Duration (2 min)';
+      case 'call_connection':
+        return 'Call Connection';
+      case 'audio_stream':
+        return 'Audio Stream';
+      case 'ai_response':
+        return 'AI Response';
       default:
         return 'Unknown Check';
     }
@@ -142,7 +149,7 @@ export const CallVerificationPanel: React.FC<CallVerificationPanelProps> = ({ ca
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {session.checks.map((check, index) => (
+                    {session.checks.map((check: VerificationCheck, index: number) => (
                       <div 
                         key={check.id}
                         className="flex items-start gap-2 p-2 rounded-lg bg-gray-50 dark:bg-gray-800"
