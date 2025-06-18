@@ -148,18 +148,21 @@ serve(async (req) => {
       isCallActive = true
       
       // Send connection acknowledgment
-      socket.send(JSON.stringify({
-        type: 'connection_established',
-        callId: callId,
-        assistantId: assistantId,
-        assistant: {
-          name: assistant.name,
-          voice_provider: assistant.voice_provider
-        },
-        timestamp: Date.now()
-      }))
-
-      log('📤 Connection acknowledgment sent')
+      try {
+        socket.send(JSON.stringify({
+          type: 'connection_established',
+          callId: callId,
+          assistantId: assistantId,
+          assistant: {
+            name: assistant.name,
+            voice_provider: assistant.voice_provider
+          },
+          timestamp: Date.now()
+        }))
+        log('📤 Connection acknowledgment sent')
+      } catch (error) {
+        log('❌ Error sending connection acknowledgment', error)
+      }
 
       // Send greeting after short delay
       if (!hasSpoken && assistant.first_message) {
@@ -212,11 +215,15 @@ serve(async (req) => {
             break
 
           case 'ping':
-            socket.send(JSON.stringify({
-              type: 'pong',
-              timestamp: Date.now()
-            }))
-            log('💓 Responded to ping with pong')
+            try {
+              socket.send(JSON.stringify({
+                type: 'pong',
+                timestamp: Date.now()
+              }))
+              log('💓 Responded to ping with pong')
+            } catch (error) {
+              log('❌ Error responding to ping', error)
+            }
             break
 
           case 'stop':
@@ -230,11 +237,15 @@ serve(async (req) => {
         }
       } catch (error) {
         log('❌ Error processing WebSocket message', error)
-        socket.send(JSON.stringify({
-          type: 'error',
-          message: 'Error processing message',
-          timestamp: Date.now()
-        }))
+        try {
+          socket.send(JSON.stringify({
+            type: 'error',
+            message: 'Error processing message',
+            timestamp: Date.now()
+          }))
+        } catch (sendError) {
+          log('❌ Error sending error response', sendError)
+        }
       }
     }
 
@@ -306,11 +317,15 @@ serve(async (req) => {
         if (transcript && transcript.trim().length > 3) {
           log('👤 User said', { transcript })
           
-          socket.send(JSON.stringify({
-            type: 'transcript',
-            text: transcript,
-            timestamp: Date.now()
-          }))
+          try {
+            socket.send(JSON.stringify({
+              type: 'transcript',
+              text: transcript,
+              timestamp: Date.now()
+            }))
+          } catch (error) {
+            log('❌ Error sending transcript', error)
+          }
           
           await processTextInput(transcript)
         }
@@ -401,20 +416,25 @@ serve(async (req) => {
         const audioData = await textToSpeech(text)
         
         if (audioData) {
-          socket.send(JSON.stringify({
-            type: 'audio_response',
-            audio: audioData,
-            text: text,
-            timestamp: Date.now()
-          }))
-          
-          socket.send(JSON.stringify({
-            type: 'ai_response',
-            text: text,
-            timestamp: Date.now()
-          }))
-          
-          log('✅ Audio response sent successfully')
+          try {
+            socket.send(JSON.stringify({
+              type: 'audio_response',
+              audio: audioData,
+              text: text,
+              timestamp: Date.now()
+            }))
+            
+            socket.send(JSON.stringify({
+              type: 'ai_response',
+              text: text,
+              timestamp: Date.now()
+            }))
+            
+            log('✅ Audio response sent successfully')
+          } catch (error) {
+            log('❌ Error sending audio response', error)
+            await sendErrorResponse(text)
+          }
         } else {
           await sendErrorResponse(text)
         }

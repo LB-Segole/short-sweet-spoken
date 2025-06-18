@@ -171,12 +171,13 @@ serve(async (req) => {
     
     console.log('🔗 SignalWire API URL:', signalwireUrl)
 
+    // Fixed callback events - use correct format
     const callParams = new URLSearchParams({
       To: phoneNumber,
       From: fromNumber,
       Twiml: twiml,
       StatusCallback: statusCallbackUrl,
-      StatusCallbackEvent: 'initiated,ringing,answered,completed',
+      StatusCallbackEvent: 'initiated ringing answered completed',
       StatusCallbackMethod: 'POST',
       Timeout: '120',
       Record: 'true',
