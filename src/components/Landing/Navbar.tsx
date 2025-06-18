@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuth } from '@/context/AuthContext';
 import {
   Sheet,
   SheetContent,
@@ -13,13 +14,8 @@ import { Button } from '@/components/ui/button';
 import { Menu } from 'lucide-react';
 
 const Navbar = () => {
-  const { isLoggedIn, logout } = useAuth();
+  const { isAuthenticated, logout } = useAuth();
   const navigate = useNavigate();
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-
-  const toggleMenu = () => {
-    setIsMenuOpen(!isMenuOpen);
-  };
 
   const handleLogout = async () => {
     await logout();
@@ -42,7 +38,7 @@ const Navbar = () => {
           <Link to="/blog" className="hover:text-gray-600">Blog</Link>
           <Link to="/api-documentation" className="hover:text-gray-600">API</Link>
           <Link to="/contact-sales" className="hover:text-gray-600">Contact Sales</Link>
-          {isLoggedIn ? (
+          {isAuthenticated ? (
             <>
               <Link to="/dashboard" className="hover:text-gray-600">Dashboard</Link>
               <Button onClick={handleLogout} variant="outline">Logout</Button>
@@ -80,7 +76,7 @@ const Navbar = () => {
               <Link to="/blog" className="hover:text-gray-600 block py-2">Blog</Link>
               <Link to="/api-documentation" className="hover:text-gray-600 block py-2">API</Link>
               <Link to="/contact-sales" className="hover:text-gray-600 block py-2">Contact Sales</Link>
-              {isLoggedIn ? (
+              {isAuthenticated ? (
                 <>
                   <Link to="/dashboard" className="hover:text-gray-600 block py-2">Dashboard</Link>
                   <Button onClick={handleLogout} variant="outline" className="w-full">Logout</Button>
