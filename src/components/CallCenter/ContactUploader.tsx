@@ -1,13 +1,10 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
-import { Upload, Phone, Users, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
+import { Upload, CheckCircle, XCircle } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
-import { callService } from '@/services/callService';
 
 interface Contact {
   name: string;
@@ -27,7 +24,6 @@ const ContactUploader: React.FC<ContactUploaderProps> = ({ campaignId, onSuccess
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadedContacts, setUploadedContacts] = useState<Contact[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
-  const [isCalling, setIsCalling] = useState(false);
   
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

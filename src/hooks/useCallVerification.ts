@@ -1,9 +1,9 @@
 
 import { useState, useEffect, useCallback } from 'react';
-import { callVerificationService, CallVerificationSession } from '@/services/callVerification.service';
+import { callVerificationService, VerificationSession } from '@/services/callVerification.service';
 
 export const useCallVerification = () => {
-  const [sessions, setSessions] = useState<CallVerificationSession[]>([]);
+  const [sessions, setSessions] = useState<VerificationSession[]>([]);
   const [isRunning, setIsRunning] = useState(false);
 
   // Poll for session updates
@@ -44,7 +44,8 @@ export const useCallVerification = () => {
   const getLatestSession = useCallback(() => {
     const allSessions = callVerificationService.getAllSessions();
     return allSessions.length > 0 
-      ? allSessions.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())[0]
+      ? allSessions.sort((a: VerificationSession, b: VerificationSession) => 
+          new Date(b.startTime).getTime() - new Date(a.startTime).getTime())[0]
       : null;
   }, []);
 

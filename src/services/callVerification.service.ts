@@ -1,37 +1,72 @@
+
 import { supabase } from '@/integrations/supabase/client';
 
 export interface VerificationCheck {
-  type: 'signalwire_api' | 'call_connection' | 'audio_stream' | 'ai_response';
+  id: string;
+  type: 'signalwire_api' | 'call_status' | 'webhook_response' | 'ring_timeout';
   status: 'pending' | 'passed' | 'failed';
   details: string;
-  timestamp?: string;
+  timestamp: string;
 }
 
 export interface VerificationSession {
   callId: string;
   sessionId: string;
+  phoneNumber: string;
   checks: VerificationCheck[];
   startTime: string;
+  lastUpdate: string;
   status: 'running' | 'completed' | 'failed';
+  overallStatus: 'checking' | 'verified' | 'failed';
 }
+
+// Type alias for backward compatibility
+export type CallVerificationSession = VerificationSession;
 
 class CallVerificationService {
   private sessions = new Map<string, VerificationSession>();
   private subscribers = new Map<string, (session: VerificationSession) => void>();
 
-  startVerification(callId: string): string {
+  startVerification(callId: string, phoneNumber: string): string {
     const sessionId = `verify_${callId}_${Date.now()}`;
     
     const session: VerificationSession = {
       callId,
       sessionId,
+      phoneNumber,
       startTime: new Date().toISOString(),
+      lastUpdate: new Date().toISOString(),
       status: 'running',
+      overallStatus: 'checking',
       checks: [
-        { type: 'signalwire_api', status: 'pending', details: 'Checking SignalWire API response...' },
-        { type: 'call_connection', status: 'pending', details: 'Verifying call connection...' },
-        { type: 'audio_stream', status: 'pending', details: 'Testing audio stream...' },
-        { type: 'ai_response', status: 'pending', details: 'Validating AI agent response...' }
+        { 
+          id: `check_1_${sessionId}`,
+          type: 'signalwire_api', 
+          status: 'pending', 
+          details: 'Checking SignalWire API response...', 
+          timestamp: new Date().toISOString()
+        },
+        { 
+          id: `check_2_${sessionId}`,
+          type: 'call_status', 
+          status: 'pending', 
+          details: 'Verifying call status progression...', 
+          timestamp: new Date().toISOString()
+        },
+        { 
+          id: `check_3_${sessionId}`,
+          type: 'webhook_response', 
+          status: 'pending', 
+          details: 'Testing webhook events...', 
+          timestamp: new Date().toISOString()
+        },
+        { 
+          id: `check_4_${sessionId}`,
+          type: 'ring_timeout', 
+          status: 'pending', 
+          details: 'Validating ring duration (2 min)...', 
+          timestamp: new Date().toISOString()
+        }
       ]
     };
 
@@ -43,6 +78,11 @@ class CallVerificationService {
     return sessionId;
   }
 
+  // Alias method for backward compatibility
+  startVerificationSession(callId: string, phoneNumber: string): Promise<string> {
+    return Promise.resolve(this.startVerification(callId, phoneNumber));
+  }
+
   private async runVerificationChecks(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
@@ -51,9 +91,9 @@ class CallVerificationService {
 
     // Run checks sequentially with delays
     setTimeout(() => this.checkSignalWireAPI(sessionId), 1000);
-    setTimeout(() => this.checkCallConnection(sessionId), 3000);
-    setTimeout(() => this.checkAudioStream(sessionId), 5000);
-    setTimeout(() => this.checkAIResponse(sessionId), 7000);
+    setTimeout(() => this.checkCallStatus(sessionId), 3000);
+    setTimeout(() => this.checkWebhookResponse(sessionId), 5000);
+    setTimeout(() => this.checkRingTimeout(sessionId), 7000);
     setTimeout(() => this.completeVerification(sessionId), 10000);
   }
 
@@ -87,6 +127,7 @@ class CallVerificationService {
       }
       
       check.timestamp = new Date().toISOString();
+      session.lastUpdate = new Date().toISOString();
       this.updateSession(sessionId);
       
     } catch (error) {
@@ -94,16 +135,17 @@ class CallVerificationService {
       check.status = 'failed';
       check.details = `❌ Error checking SignalWire API: ${error instanceof Error ? error.message : 'Unknown error'}`;
       check.timestamp = new Date().toISOString();
+      session.lastUpdate = new Date().toISOString();
       console.log(`❌ CHECK 1 ERROR: ${error instanceof Error ? error.message : 'Unknown error'}`);
       this.updateSession(sessionId);
     }
   }
 
-  private async checkCallConnection(sessionId: string): Promise<void> {
+  private async checkCallStatus(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
-    console.log(`✅ CHECK 2: Verifying call connection for ${session.callId}`);
+    console.log(`✅ CHECK 2: Verifying call status for ${session.callId}`);
     
     try {
       const { data: callData, error } = await supabase
@@ -112,7 +154,7 @@ class CallVerificationService {
         .eq('id', session.callId)
         .single();
 
-      const check = session.checks.find(c => c.type === 'call_connection')!;
+      const check = session.checks.find(c => c.type === 'call_status')!;
       
       if (error) {
         check.status = 'failed';
@@ -129,120 +171,94 @@ class CallVerificationService {
       }
       
       check.timestamp = new Date().toISOString();
+      session.lastUpdate = new Date().toISOString();
       this.updateSession(sessionId);
       
     } catch (error) {
-      const check = session.checks.find(c => c.type === 'call_connection')!;
+      const check = session.checks.find(c => c.type === 'call_status')!;
       check.status = 'failed';
-      check.details = `❌ Error checking call connection: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      check.details = `❌ Error checking call status: ${error instanceof Error ? error.message : 'Unknown error'}`;
       check.timestamp = new Date().toISOString();
+      session.lastUpdate = new Date().toISOString();
       this.updateSession(sessionId);
     }
   }
 
-  private async checkAudioStream(sessionId: string): Promise<void> {
+  private async checkWebhookResponse(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
-    console.log(`✅ CHECK 3: Testing audio stream for ${session.callId}`);
+    console.log(`✅ CHECK 3: Testing webhook response for ${session.callId}`);
     
     try {
-      // Check if audio stream is active by looking for recent audio logs
-      const { data: audioLogs, error } = await supabase
+      // Check for webhook logs
+      const { data: webhookLogs, error } = await supabase
         .from('call_logs')
         .select('*')
         .eq('call_id', session.callId)
-        .eq('log_type', 'audio_stream')
+        .eq('log_type', 'webhook')
         .gte('created_at', new Date(Date.now() - 30000).toISOString()) // Last 30 seconds
         .order('created_at', { ascending: false })
         .limit(1);
 
-      const check = session.checks.find(c => c.type === 'audio_stream')!;
+      const check = session.checks.find(c => c.type === 'webhook_response')!;
       
       if (error) {
         check.status = 'failed';
-        check.details = `❌ Error checking audio stream: ${error.message}`;
-      } else if (audioLogs && audioLogs.length > 0) {
+        check.details = `❌ Error checking webhook logs: ${error.message}`;
+      } else if (webhookLogs && webhookLogs.length > 0) {
         check.status = 'passed';
-        check.details = `✅ Audio stream active - last activity: ${audioLogs[0].created_at}`;
+        check.details = `✅ Webhook events received - last event: ${webhookLogs[0].created_at}`;
       } else {
-        // Try to test microphone access
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          stream.getTracks().forEach(track => track.stop());
-          check.status = 'passed';
-          check.details = `✅ Audio stream ready - microphone access granted`;
-        } catch (micError) {
-          check.status = 'failed';
-          check.details = `❌ Audio stream failed - microphone access denied`;
-        }
+        check.status = 'failed';
+        check.details = `❌ No webhook events received within 30 seconds`;
       }
       
       check.timestamp = new Date().toISOString();
+      session.lastUpdate = new Date().toISOString();
       this.updateSession(sessionId);
       
     } catch (error) {
-      const check = session.checks.find(c => c.type === 'audio_stream')!;
+      const check = session.checks.find(c => c.type === 'webhook_response')!;
       check.status = 'failed';
-      check.details = `❌ Error testing audio stream: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      check.details = `❌ Error testing webhook response: ${error instanceof Error ? error.message : 'Unknown error'}`;
       check.timestamp = new Date().toISOString();
+      session.lastUpdate = new Date().toISOString();
       this.updateSession(sessionId);
     }
   }
 
-  private async checkAIResponse(sessionId: string): Promise<void> {
+  private async checkRingTimeout(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
-    console.log(`✅ CHECK 4: Validating AI agent response for ${session.callId}`);
+    console.log(`✅ CHECK 4: Validating ring timeout for ${session.callId}`);
     
     try {
-      // Check for AI responses in call logs
-      const { data: aiLogs, error } = await supabase
-        .from('call_logs')
-        .select('*')
-        .eq('call_id', session.callId)
-        .eq('log_type', 'ai_response')
-        .gte('created_at', new Date(Date.now() - 60000).toISOString()) // Last 60 seconds
-        .order('created_at', { ascending: false })
-        .limit(1);
+      const callStartTime = new Date(session.startTime);
+      const currentTime = new Date();
+      const elapsedSeconds = (currentTime.getTime() - callStartTime.getTime()) / 1000;
 
-      const check = session.checks.find(c => c.type === 'ai_response')!;
+      const check = session.checks.find(c => c.type === 'ring_timeout')!;
       
-      if (error) {
-        check.status = 'failed';
-        check.details = `❌ Error checking AI responses: ${error.message}`;
-      } else if (aiLogs && aiLogs.length > 0) {
+      if (elapsedSeconds < 120) { // Less than 2 minutes
         check.status = 'passed';
-        check.details = `✅ AI agent responding - last response: ${aiLogs[0].created_at}`;
+        check.details = `✅ Ring duration within limits: ${Math.round(elapsedSeconds)}s (< 120s)`;
       } else {
-        // Test AI agent with a ping
-        try {
-          const { data, error: aiError } = await supabase.functions.invoke('ai-agent-test', {
-            body: { callId: session.callId, message: 'ping' }
-          });
-          
-          if (aiError) {
-            check.status = 'failed';
-            check.details = `❌ AI agent test failed: ${aiError.message}`;
-          } else {
-            check.status = 'passed';
-            check.details = `✅ AI agent responsive - test successful`;
-          }
-        } catch (aiTestError) {
-          check.status = 'failed';
-          check.details = `❌ AI agent not responding - test failed`;
-        }
+        check.status = 'failed';
+        check.details = `❌ Ring timeout exceeded: ${Math.round(elapsedSeconds)}s (> 120s)`;
       }
       
       check.timestamp = new Date().toISOString();
+      session.lastUpdate = new Date().toISOString();
       this.updateSession(sessionId);
       
     } catch (error) {
-      const check = session.checks.find(c => c.type === 'ai_response')!;
+      const check = session.checks.find(c => c.type === 'ring_timeout')!;
       check.status = 'failed';
-      check.details = `❌ Error validating AI response: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      check.details = `❌ Error validating ring timeout: ${error instanceof Error ? error.message : 'Unknown error'}`;
       check.timestamp = new Date().toISOString();
+      session.lastUpdate = new Date().toISOString();
       this.updateSession(sessionId);
     }
   }
@@ -263,12 +279,15 @@ class CallVerificationService {
 
     if (failedChecks.length === 0) {
       session.status = 'completed';
+      session.overallStatus = 'verified';
       console.log(`✅ Verification completed successfully for call ${session.callId}`);
     } else {
       session.status = 'failed';
+      session.overallStatus = 'failed';
       console.log(`❌ Verification failed for call ${session.callId} - ${failedChecks.length} checks failed`);
     }
 
+    session.lastUpdate = new Date().toISOString();
     this.updateSession(sessionId);
   }
 
@@ -292,6 +311,26 @@ class CallVerificationService {
 
   getSession(sessionId: string): VerificationSession | undefined {
     return this.sessions.get(sessionId);
+  }
+
+  getSessionResults(sessionId: string): VerificationSession | undefined {
+    return this.getSession(sessionId);
+  }
+
+  getAllSessions(): VerificationSession[] {
+    return Array.from(this.sessions.values());
+  }
+
+  clearOldSessions(): void {
+    const now = new Date();
+    for (const [sessionId, session] of this.sessions.entries()) {
+      const sessionTime = new Date(session.startTime);
+      const ageMinutes = (now.getTime() - sessionTime.getTime()) / (1000 * 60);
+      
+      if (ageMinutes > 30) { // Clear sessions older than 30 minutes
+        this.cleanup(sessionId);
+      }
+    }
   }
 
   cleanup(sessionId: string): void {

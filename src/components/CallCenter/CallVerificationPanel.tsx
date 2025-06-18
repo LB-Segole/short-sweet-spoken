@@ -18,7 +18,7 @@ export const CallVerificationPanel: React.FC<CallVerificationPanelProps> = ({ ca
   useEffect(() => {
     // Poll for session updates every 2 seconds
     const interval = setInterval(() => {
-      setSessions(callVerificationService.getSession ? [callVerificationService.getSession()] : []);
+      setSessions(callVerificationService.getAllSessions());
     }, 2000);
 
     return () => clearInterval(interval);
@@ -32,7 +32,7 @@ export const CallVerificationPanel: React.FC<CallVerificationPanelProps> = ({ ca
 
     setIsRunningVerification(true);
     try {
-      const sessionId = await callVerificationService.startVerification(callId, phoneNumber);
+      const sessionId = callVerificationService.startVerification(callId, phoneNumber);
       console.log(`Started verification session: ${sessionId}`);
     } catch (error) {
       console.error('Failed to start verification:', error);
