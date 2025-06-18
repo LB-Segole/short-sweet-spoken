@@ -2,7 +2,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v3.0');
+console.log('🚀 Edge Function initialized - make-outbound-call v3.1');
 console.log('🔧 Environment check:', {
   SUPABASE_URL: Deno.env.get('SUPABASE_URL') ? '✅ Set' : '❌ Missing',
   SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? '✅ Set' : '❌ Missing',
@@ -44,7 +44,7 @@ serve(async (req) => {
     try {
       requestBody = await req.json();
       console.log('📋 Request parsed:', { 
-        phoneNumber: requestBody.phoneNumber?.substring(0, 5) + '***',
+        phoneNumber: requestBody.phoneNumber?.substring(0, 7) + '***',
         assistantId: requestBody.assistantId 
       });
     } catch (error) {
@@ -55,17 +55,17 @@ serve(async (req) => {
       );
     }
 
-    // Validate required environment variables
+    // Validate required environment variables - including SIGNALWIRE_PHONE_NUMBER
     const requiredEnvVars = [
       'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 
-      'SIGNALWIRE_PROJECT_ID', 'SIGNALWIRE_TOKEN', 'SIGNALWIRE_SPACE_URL'
+      'SIGNALWIRE_PROJECT_ID', 'SIGNALWIRE_TOKEN', 'SIGNALWIRE_SPACE_URL', 'SIGNALWIRE_PHONE_NUMBER'
     ];
     
     for (const envVar of requiredEnvVars) {
       if (!Deno.env.get(envVar)) {
         console.error(`❌ Missing required env var: ${envVar}`);
         return new Response(
-          JSON.stringify({ success: false, error: `Server configuration error: Missing ${envVar}` }),
+          JSON.stringify({ success: false, error: `Server configuration error: Missing ${envVar}. Please configure this in Supabase Edge Function secrets.` }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
         );
       }
@@ -208,19 +208,23 @@ serve(async (req) => {
 
     console.log('✅ Call record created:', callData.id);
 
-    // Prepare SignalWire call
-    const signalwireProjectId = Deno.env.get('SIGNALWIRE_PROJECT_ID');
-    const signalwireApiToken = Deno.env.get('SIGNALWIRE_TOKEN');
-    const signalwireSpaceUrl = Deno.env.get('SIGNALWIRE_SPACE_URL');
-    const signalwirePhoneNumber = Deno.env.get('SIGNALWIRE_PHONE_NUMBER') || '+12345678901';
+    // Get SignalWire configuration
+    const signalwireProjectId = Deno.env.get('SIGNALWIRE_PROJECT_ID')!;
+    const signalwireApiToken = Deno.env.get('SIGNALWIRE_TOKEN')!;
+    const signalwireSpaceUrl = Deno.env.get('SIGNALWIRE_SPACE_URL')!;
+    const signalwirePhoneNumber = Deno.env.get('SIGNALWIRE_PHONE_NUMBER')!;
 
-    const webhookBaseUrl = Deno.env.get('SUPABASE_URL');
-    const baseHost = webhookBaseUrl
-      ?.replace('https://', '')
-      .replace('http://', '')
-      .replace('supabase.co', '.supabase.co');
+    console.log('📞 Using SignalWire phone number:', signalwirePhoneNumber.substring(0, 7) + '***');
 
-    const wsUrl = `wss://${baseHost}/functions/v1/voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`;
+    // Construct webhook URLs properly
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const statusCallbackUrl = `${supabaseUrl}/functions/v1/call-webhook`;
+    
+    // Construct WebSocket URL properly  
+    const wsUrl = `wss://${supabaseUrl.replace('https://', '').replace('http://', '')}/functions/v1/voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`;
+
+    console.log('🔗 WebSocket URL:', wsUrl);
+    console.log('🔗 Status callback URL:', statusCallbackUrl);
 
     // Enhanced SWML with proper voice agent integration
     const firstMessage = assistant?.first_message || 'Hello! This is your AI assistant. How can I help you today?';
@@ -238,31 +242,35 @@ serve(async (req) => {
       <Say voice="${voiceId}">${firstMessage}</Say>
     </Response>`;
 
-    const statusCallbackUrl = `${webhookBaseUrl}/functions/v1/call-webhook`;
-
     console.log('📞 Initiating SignalWire call...');
     
-    // Fixed call parameters - removed invalid recording callback events
+    // Fixed call parameters - removed invalid parameters
     const callParams = new URLSearchParams({
       To: phoneNumber,
       From: signalwirePhoneNumber,
       Twiml: swml,
       StatusCallback: statusCallbackUrl,
-      'StatusCallbackEvent[]': 'initiated',
-      'StatusCallbackEvent[]': 'ringing', 
-      'StatusCallbackEvent[]': 'answered',
-      'StatusCallbackEvent[]': 'completed',
       StatusCallbackMethod: 'POST',
       Timeout: '30',
       Record: 'record-from-answer',
-      RecordingStatusCallback: statusCallbackUrl,
-      RecordingChannels: 'dual'
-      // Removed invalid 'RecordingStatusCallbackEvent[]': 'completed'
+      RecordingStatusCallback: statusCallbackUrl
     });
+
+    // Add status callback events individually
+    callParams.append('StatusCallbackEvent', 'initiated');
+    callParams.append('StatusCallbackEvent', 'ringing');
+    callParams.append('StatusCallbackEvent', 'answered');
+    callParams.append('StatusCallbackEvent', 'completed');
 
     const signalwireUrl = `https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
 
     console.log('🌐 SignalWire API call to:', signalwireUrl);
+    console.log('📞 Call params:', {
+      To: phoneNumber,
+      From: signalwirePhoneNumber,
+      StatusCallback: statusCallbackUrl
+    });
+
     const signalwireResponse = await fetch(signalwireUrl, {
       method: 'POST',
       headers: {
@@ -285,7 +293,12 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({
           success: false,
-          error: `SignalWire API error: ${signalwireResponse.status} - ${errorText}`
+          error: `SignalWire API error: ${signalwireResponse.status} - ${errorText}`,
+          details: {
+            fromNumber: signalwirePhoneNumber,
+            toNumber: phoneNumber,
+            statusCode: signalwireResponse.status
+          }
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
       );
@@ -316,7 +329,8 @@ serve(async (req) => {
         signalwire_sid: signalwireData.sid,
         phone_number: phoneNumber,
         assistant_id: assistantId,
-        websocket_url: wsUrl
+        websocket_url: wsUrl,
+        from_number: signalwirePhoneNumber
       }
     });
 
@@ -328,7 +342,9 @@ serve(async (req) => {
         dbCallId: callData.id,
         status: 'calling',
         message: 'Call initiated successfully',
-        websocketUrl: wsUrl
+        websocketUrl: wsUrl,
+        fromNumber: signalwirePhoneNumber,
+        toNumber: phoneNumber
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     );
