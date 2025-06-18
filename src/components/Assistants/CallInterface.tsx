@@ -288,9 +288,10 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
       
       <CardContent>
         <Tabs defaultValue="outbound" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="outbound">Outbound Calls</TabsTrigger>
             <TabsTrigger value="browser">Browser Voice Test</TabsTrigger>
+            <TabsTrigger value="realtime">LavaBall Realtime</TabsTrigger>
           </TabsList>
           
           <TabsContent value="outbound" className="space-y-4">
@@ -427,11 +428,26 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
             <div className="space-y-4">
               <div className="flex items-center gap-2 text-sm text-gray-600">
                 <Mic className="h-4 w-4" />
-                <span>Test voice AI directly in your browser</span>
+                <span>Test voice AI directly in your browser (legacy)</span>
               </div>
               
               <VoiceInterface 
                 callId="browser-test"
+                assistantId={selectedAssistantId || 'demo'}
+                className="border-0 shadow-none"
+              />
+            </div>
+          </TabsContent>
+
+          <TabsContent value="realtime" className="space-y-4">
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-sm text-gray-600">
+                <Activity className="h-4 w-4" />
+                <span>Real-time voice conversation with LavaBall AI</span>
+              </div>
+              
+              <RealtimeVoiceInterface 
+                callId="realtime-test"
                 assistantId={selectedAssistantId || 'demo'}
                 className="border-0 shadow-none"
               />
