@@ -9,10 +9,11 @@ const corsHeaders = {
 }
 
 serve(async (req) => {
-  console.log('🔄 Voice WebSocket function called', {
+  // Enhanced logging for function entry
+  console.log('🚀 voice-websocket function invoked', {
     method: req.method,
-    headers: Object.fromEntries(req.headers.entries()),
-    url: req.url
+    url: req.url,
+    headers: Object.fromEntries(req.headers.entries())
   })
 
   // Handle CORS preflight
@@ -25,12 +26,23 @@ serve(async (req) => {
   const callId = url.searchParams.get('callId') || 'browser-test'
   const assistantId = url.searchParams.get('assistantId') || 'demo'
 
-  console.log('📋 WebSocket parameters', { callId, assistantId })
+  console.log('📋 WebSocket parameters extracted:', { callId, assistantId })
 
   // Check if this is a WebSocket upgrade request
   const upgradeHeader = req.headers.get('upgrade')
+  const connectionHeader = req.headers.get('connection')
+  
+  console.log('🔍 Connection headers check:', {
+    upgrade: upgradeHeader,
+    connection: connectionHeader,
+    isWebSocket: upgradeHeader?.toLowerCase() === 'websocket'
+  })
+
   if (upgradeHeader?.toLowerCase() !== 'websocket') {
-    console.log('❌ Not a WebSocket upgrade request', { upgrade: upgradeHeader })
+    console.log('❌ Not a WebSocket upgrade request', { 
+      upgrade: upgradeHeader,
+      expected: 'websocket'
+    })
     return new Response('Expected websocket connection', { 
       status: 400,
       headers: corsHeaders 
@@ -39,6 +51,15 @@ serve(async (req) => {
 
   // Verify required environment variables
   const openaiApiKey = Deno.env.get('OPENAI_API_KEY') || Deno.env.get('OpenAi_API_Key')
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')
+  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+
+  console.log('🔧 Environment variables check:', {
+    openaiApiKeyExists: !!openaiApiKey,
+    supabaseUrlExists: !!supabaseUrl,
+    supabaseServiceKeyExists: !!supabaseServiceKey
+  })
+
   if (!openaiApiKey) {
     console.error('❌ OpenAI API key not configured')
     return new Response('OpenAI API key not configured', { 
@@ -47,14 +68,16 @@ serve(async (req) => {
     })
   }
 
-  console.log('✅ OpenAI API key found, upgrading to WebSocket...')
+  console.log('✅ All required environment variables found')
 
   try {
+    console.log('🔄 Attempting WebSocket upgrade...')
     const { socket, response } = Deno.upgradeWebSocket(req)
+    console.log('✅ WebSocket upgrade successful')
 
     const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+      supabaseUrl ?? '',
+      supabaseServiceKey ?? ''
     )
 
     let assistant: any = null
@@ -71,10 +94,12 @@ serve(async (req) => {
       console.log(`[${timestamp}] [Call: ${callId}] ${message}`, data || '')
     }
 
+    log('🎯 WebSocket connection initialized')
+
     // Get assistant configuration
     if (assistantId && assistantId !== 'demo') {
       try {
-        log('🔍 Fetching assistant configuration')
+        log('🔍 Fetching assistant configuration from database')
         const { data: assistantData, error } = await supabaseClient
           .from('assistants')
           .select('*')
@@ -116,6 +141,8 @@ serve(async (req) => {
       content: assistant.system_prompt
     })
 
+    log('🎯 Conversation history initialized')
+
     socket.onopen = async () => {
       log('🔌 WebSocket connected successfully')
       isCallActive = true
@@ -132,12 +159,15 @@ serve(async (req) => {
         timestamp: Date.now()
       }))
 
+      log('📤 Connection acknowledgment sent')
+
       // Send greeting after short delay
       if (!hasSpoken && assistant.first_message) {
-        log('🎤 Sending initial greeting')
+        log('🎤 Preparing to send initial greeting')
         setTimeout(async () => {
           await sendAIResponse(assistant.first_message)
           hasSpoken = true
+          log('✅ Initial greeting sent')
         }, 1000)
       }
     }
@@ -145,7 +175,11 @@ serve(async (req) => {
     socket.onmessage = async (event) => {
       try {
         const message = JSON.parse(event.data)
-        log('📨 Received message', { type: message.event || message.type })
+        log('📨 Received WebSocket message', { 
+          type: message.event || message.type,
+          hasPayload: !!message.media?.payload,
+          hasText: !!message.text
+        })
         
         switch (message.event || message.type) {
           case 'connected':
@@ -182,6 +216,7 @@ serve(async (req) => {
               type: 'pong',
               timestamp: Date.now()
             }))
+            log('💓 Responded to ping with pong')
             break
 
           case 'stop':
@@ -209,7 +244,7 @@ serve(async (req) => {
     }
 
     socket.onerror = (error) => {
-      log('❌ WebSocket error', error)
+      log('❌ WebSocket error occurred', error)
       isCallActive = false
     }
 
@@ -226,6 +261,7 @@ serve(async (req) => {
           audioBuffer = []
           
           if (combinedAudio.length > 100) {
+            log('🎤 Processing audio chunk', { length: combinedAudio.length })
             await processAudioChunk(combinedAudio)
           }
           
@@ -285,6 +321,7 @@ serve(async (req) => {
 
     async function transcribeAudio(audioData: string): Promise<string> {
       try {
+        log('🔊 Starting OpenAI transcription')
         const binaryData = Uint8Array.from(atob(audioData), c => c.charCodeAt(0))
         
         const formData = new FormData()
@@ -302,11 +339,15 @@ serve(async (req) => {
         })
 
         if (!response.ok) {
-          log('❌ Transcription API error', { status: response.status })
+          log('❌ Transcription API error', { 
+            status: response.status,
+            statusText: response.statusText
+          })
           return ''
         }
 
         const result = await response.json()
+        log('✅ Transcription successful', { text: result.text })
         return result.text || ''
       } catch (error) {
         log('❌ Transcription error', error)
@@ -316,7 +357,7 @@ serve(async (req) => {
 
     async function generateAIResponse(): Promise<string> {
       try {
-        log('🧠 Generating AI response')
+        log('🧠 Generating AI response with OpenAI')
 
         const recentHistory = conversationHistory.slice(-8)
         
@@ -335,7 +376,10 @@ serve(async (req) => {
         })
 
         if (!response.ok) {
-          log('❌ AI generation error', { status: response.status })
+          log('❌ AI generation error', { 
+            status: response.status,
+            statusText: response.statusText
+          })
           return 'I\'m having trouble processing that right now. Could you try again?'
         }
 
@@ -388,6 +432,7 @@ serve(async (req) => {
           timestamp: Date.now(),
           fallback: true
         }))
+        log('📤 Error response sent as text fallback')
       } catch (error) {
         log('❌ Error sending error response', error)
       }
@@ -395,6 +440,7 @@ serve(async (req) => {
 
     async function textToSpeech(text: string): Promise<string> {
       try {
+        log('🎵 Starting OpenAI TTS conversion')
         const response = await fetch('https://api.openai.com/v1/audio/speech', {
           method: 'POST',
           headers: {
@@ -410,14 +456,20 @@ serve(async (req) => {
         })
 
         if (!response.ok) {
-          log('❌ TTS error', { status: response.status })
+          log('❌ TTS error', { 
+            status: response.status,
+            statusText: response.statusText
+          })
           return ''
         }
 
         const audioBuffer = await response.arrayBuffer()
         const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)))
         
-        log('✅ TTS successful', { audioLength: audioBuffer.byteLength })
+        log('✅ TTS successful', { 
+          audioLength: audioBuffer.byteLength,
+          base64Length: base64Audio.length
+        })
         return base64Audio
       } catch (error) {
         log('❌ TTS failed', error)
@@ -429,7 +481,12 @@ serve(async (req) => {
     return response
 
   } catch (error) {
-    console.error('❌ Critical error in voice-websocket function:', error)
+    console.error('❌ Critical error in voice-websocket function:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    })
+    
     return new Response(
       JSON.stringify({ 
         error: 'Internal server error',

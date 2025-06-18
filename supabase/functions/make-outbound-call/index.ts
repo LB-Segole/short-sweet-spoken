@@ -17,8 +17,34 @@ interface CallRequest {
 }
 
 serve(async (req) => {
+  // Enhanced logging for function entry
+  console.log('🚀 make-outbound-call function invoked', {
+    method: req.method,
+    url: req.url,
+    headers: Object.fromEntries(req.headers.entries())
+  })
+
   if (req.method === 'OPTIONS') {
+    console.log('✅ Handling CORS preflight request')
     return new Response(null, { headers: corsHeaders })
+  }
+
+  let requestBody: CallRequest
+  try {
+    requestBody = await req.json()
+    console.log('📋 Request body parsed:', requestBody)
+  } catch (error) {
+    console.error('❌ Failed to parse request body:', error)
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'Invalid request body - must be valid JSON'
+      }),
+      {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      }
+    )
   }
 
   try {
@@ -27,26 +53,33 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    const { phoneNumber, assistantId, campaignId, contactId, squadId }: CallRequest = await req.json()
+    const { phoneNumber, assistantId, campaignId, contactId, squadId } = requestBody
 
     console.log('📞 Making outbound call to:', phoneNumber)
 
     // Get user from auth header
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) {
+      console.error('❌ No authorization header provided')
       throw new Error('No authorization header')
     }
 
     const token = authHeader.replace('Bearer ', '')
+    console.log('🔐 Attempting to verify user token')
+    
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token)
     
     if (authError || !user) {
+      console.error('❌ Authentication failed:', authError)
       throw new Error('Invalid authentication')
     }
+
+    console.log('✅ User authenticated:', user.id)
 
     // Get assistant details if provided
     let assistant = null
     if (assistantId) {
+      console.log('🔍 Fetching assistant details for:', assistantId)
       const { data: assistantData, error: assistantError } = await supabaseClient
         .from('assistants')
         .select('*')
@@ -55,7 +88,7 @@ serve(async (req) => {
         .single()
 
       if (assistantError) {
-        console.error('Assistant fetch error:', assistantError)
+        console.error('⚠️ Assistant fetch error:', assistantError)
       } else {
         assistant = assistantData
         console.log('✅ Assistant loaded for call:', assistant.name)
@@ -63,6 +96,7 @@ serve(async (req) => {
     }
 
     // Create call record in database first
+    console.log('📝 Creating call record in database')
     const { data: callData, error: callError } = await supabaseClient
       .from('calls')
       .insert({
@@ -79,10 +113,11 @@ serve(async (req) => {
       .single()
 
     if (callError) {
+      console.error('❌ Failed to create call record:', callError)
       throw new Error(`Failed to create call record: ${callError.message}`)
     }
 
-    console.log('📝 Call record created:', callData.id)
+    console.log('✅ Call record created:', callData.id)
 
     // Get SignalWire credentials
     const signalwireProjectId = Deno.env.get('SIGNALWIRE_PROJECT_ID')
@@ -90,6 +125,14 @@ serve(async (req) => {
     const signalwireSpaceUrl = Deno.env.get('SIGNALWIRE_SPACE_URL')
     const signalwirePhoneNumber = Deno.env.get('SIGNALWIRE_PHONE_NUMBER')
     const webhookBaseUrl = Deno.env.get('SUPABASE_URL')
+
+    console.log('🔧 SignalWire configuration check:', {
+      projectIdExists: !!signalwireProjectId,
+      tokenExists: !!signalwireApiToken,
+      spaceUrlExists: !!signalwireSpaceUrl,
+      phoneNumberExists: !!signalwirePhoneNumber,
+      webhookBaseUrlExists: !!webhookBaseUrl
+    })
 
     if (!signalwireProjectId || !signalwireApiToken || !signalwireSpaceUrl) {
       console.error('❌ SignalWire credentials missing:', {
@@ -102,6 +145,7 @@ serve(async (req) => {
 
     // Use default phone number if not set
     const fromNumber = signalwirePhoneNumber || '+12345678901'
+    console.log('📱 Using phone number:', fromNumber)
 
     // Create webhook URLs
     const statusCallbackUrl = `${webhookBaseUrl}/functions/v1/call-webhook`
@@ -122,9 +166,11 @@ serve(async (req) => {
     console.log('📋 TwiML prepared:', twiml)
     console.log('🌐 WebSocket URL:', wsUrl)
 
-    // Make call via SignalWire API using the space URL
-    const signalwireUrl = `https://${signalwireProjectId}.${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`
+    // Construct correct SignalWire API URL
+    const signalwireUrl = `https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`
     
+    console.log('🔗 SignalWire API URL:', signalwireUrl)
+
     const callParams = new URLSearchParams({
       To: phoneNumber,
       From: fromNumber,
@@ -132,7 +178,7 @@ serve(async (req) => {
       StatusCallback: statusCallbackUrl,
       StatusCallbackEvent: 'initiated,ringing,answered,completed',
       StatusCallbackMethod: 'POST',
-      Timeout: '120', // 2 minute ring timeout
+      Timeout: '120',
       Record: 'true',
       RecordingStatusCallback: statusCallbackUrl,
       RecordingChannels: 'dual',
@@ -141,8 +187,7 @@ serve(async (req) => {
       MachineDetectionTimeout: '5'
     })
 
-    console.log('🔗 SignalWire URL:', signalwireUrl)
-    console.log('📞 Making SignalWire API call...')
+    console.log('📞 Making SignalWire API call with params:', Object.fromEntries(callParams.entries()))
 
     const signalwireResponse = await fetch(signalwireUrl, {
       method: 'POST',
@@ -153,9 +198,15 @@ serve(async (req) => {
       body: callParams
     })
 
+    console.log('📡 SignalWire response status:', signalwireResponse.status)
+
     if (!signalwireResponse.ok) {
       const errorText = await signalwireResponse.text()
-      console.error('❌ SignalWire API error:', errorText)
+      console.error('❌ SignalWire API error:', {
+        status: signalwireResponse.status,
+        statusText: signalwireResponse.statusText,
+        body: errorText
+      })
       throw new Error(`SignalWire API error: ${signalwireResponse.status} - ${errorText}`)
     }
 
@@ -173,7 +224,9 @@ serve(async (req) => {
       .eq('id', callData.id)
 
     if (updateError) {
-      console.error('Failed to update call with SignalWire SID:', updateError)
+      console.error('⚠️ Failed to update call with SignalWire SID:', updateError)
+    } else {
+      console.log('✅ Call record updated with SignalWire SID')
     }
 
     // Log the call initiation
@@ -189,6 +242,8 @@ serve(async (req) => {
           websocket_url: wsUrl
         }
       })
+
+    console.log('✅ Call initiated successfully, returning response')
 
     return new Response(
       JSON.stringify({
@@ -206,11 +261,17 @@ serve(async (req) => {
     )
 
   } catch (error) {
-    console.error('❌ Error making outbound call:', error)
+    console.error('❌ Critical error in make-outbound-call:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    })
+    
     return new Response(
       JSON.stringify({
         success: false,
-        error: error.message
+        error: error.message,
+        details: 'Check function logs for more information'
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
