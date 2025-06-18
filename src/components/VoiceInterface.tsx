@@ -3,7 +3,7 @@ import React, { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Mic, MicOff, Phone, PhoneOff, Volume2, AlertCircle, Loader2 } from 'lucide-react';
+import { Mic, MicOff, Phone, PhoneOff, Volume2, AlertCircle, Loader2, Activity } from 'lucide-react';
 import { useVoiceWebSocket } from '@/hooks/useVoiceWebSocket';
 import { toast } from 'sonner';
 
@@ -20,6 +20,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
 }) => {
   const [logs, setLogs] = useState<string[]>([]);
   const [lastResponse, setLastResponse] = useState<string>('');
+  const [audioActivity, setAudioActivity] = useState(false);
 
   const handleConnectionChange = useCallback((connected: boolean) => {
     if (connected) {
@@ -28,6 +29,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
     } else {
       toast.info('Voice connection closed');
       addLog('❌ Voice connection closed');
+      setAudioActivity(false);
     }
   }, []);
 
@@ -37,7 +39,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
     if (message.type === 'log') {
       addLog(`📝 ${message.data.message}`);
     } else if (message.type === 'transcript') {
-      addLog(`👤 You said: "${message.data.text}"`);
+      addLog(`👤 You: "${message.data.text}" (confidence: ${message.data.confidence || 'unknown'})`);
       toast.info(`You said: "${message.data.text}"`);
     } else if (message.type === 'ai_response') {
       const responseText = message.data.text || message.data;
@@ -45,7 +47,13 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
       setLastResponse(responseText);
       toast.success(`AI responded: "${responseText}"`);
     } else if (message.type === 'audio_response') {
-      addLog(`🔊 Audio response received (${message.data.text})`);
+      addLog(`🔊 Audio response received: "${message.data.text}"`);
+      setAudioActivity(true);
+      setTimeout(() => setAudioActivity(false), 2000);
+    } else if (message.type === 'connection_established') {
+      addLog(`🤝 Connected to assistant: ${message.data.assistant?.name || 'Unknown'}`);
+    } else if (message.type === 'greeting_sent') {
+      addLog(`👋 Greeting sent successfully`);
     } else {
       addLog(`📨 ${message.type}: ${JSON.stringify(message.data).substring(0, 100)}...`);
     }
@@ -59,7 +67,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
 
   const addLog = useCallback((message: string) => {
     const timestamp = new Date().toLocaleTimeString();
-    setLogs(prev => [...prev.slice(-19), `[${timestamp}] ${message}`]);
+    setLogs(prev => [...prev.slice(-24), `[${timestamp}] ${message}`]); // Keep last 25 logs
   }, []);
 
   const {
@@ -101,6 +109,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
     addLog('🔄 Disconnecting...');
     disconnect();
     setLastResponse('');
+    setAudioActivity(false);
   };
 
   const handleTestGreeting = () => {
@@ -125,7 +134,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
 
   const getConnectionIcon = () => {
     if (connectionState === 'connecting') return <Loader2 className="h-4 w-4 animate-spin" />;
-    if (isConnected && isRecording) return <Mic className="h-4 w-4" />;
+    if (isConnected && isRecording) return <Mic className="h-4 w-4 text-green-500" />;
     if (isConnected) return <Volume2 className="h-4 w-4" />;
     return <MicOff className="h-4 w-4" />;
   };
@@ -133,7 +142,9 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
   const getStatusMessage = () => {
     switch (connectionState) {
       case 'connecting': return 'Connecting to voice service...';
-      case 'connected': return isRecording ? 'Recording active - speak now' : 'Connected - microphone ready';
+      case 'connected': 
+        if (isRecording) return 'Recording active - speak now';
+        return 'Connected - microphone ready';
       case 'error': return 'Connection failed - check logs below';
       default: return 'Ready to connect';
     }
@@ -146,6 +157,9 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
           <span className="flex items-center gap-2">
             {getConnectionIcon()}
             Voice Interface
+            {audioActivity && (
+              <Activity className="h-4 w-4 text-blue-500 animate-pulse" />
+            )}
           </span>
           <Badge variant={getConnectionBadgeVariant()}>
             {connectionState}
@@ -157,6 +171,20 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
         {/* Status Message */}
         <div className="p-3 bg-gray-50 rounded-md">
           <p className="text-sm text-gray-700">{getStatusMessage()}</p>
+          {isConnected && (
+            <div className="flex items-center gap-2 mt-2">
+              <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-400'}`}></div>
+              <span className="text-xs text-gray-600">
+                {isRecording ? 'Listening...' : 'Ready'}
+              </span>
+              {audioActivity && (
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+                  <span className="text-xs text-blue-600">Playing audio</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Last AI Response */}
@@ -232,7 +260,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
         {/* Live Logs */}
         <div className="space-y-2">
           <h4 className="text-sm font-medium">Live Logs:</h4>
-          <div className="bg-gray-50 p-3 rounded-md max-h-40 overflow-y-auto">
+          <div className="bg-gray-50 p-3 rounded-md max-h-48 overflow-y-auto">
             {logs.length === 0 ? (
               <div className="text-gray-500 text-sm">No logs yet...</div>
             ) : (
@@ -266,6 +294,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
                 <li>The AI should automatically send a greeting</li>
                 <li>Speak into your microphone or use test buttons</li>
                 <li>Monitor the logs below to trace the audio pipeline</li>
+                <li>Watch for audio activity indicators when AI speaks</li>
               </ol>
             </div>
           </div>

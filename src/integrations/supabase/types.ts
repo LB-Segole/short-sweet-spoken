@@ -57,6 +57,7 @@ export type Database = {
       call_logs: {
         Row: {
           call_id: string | null
+          confidence: number | null
           content: string
           id: string
           speaker: string
@@ -64,6 +65,7 @@ export type Database = {
         }
         Insert: {
           call_id?: string | null
+          confidence?: number | null
           content: string
           id?: string
           speaker: string
@@ -71,12 +73,20 @@ export type Database = {
         }
         Update: {
           call_id?: string | null
+          confidence?: number | null
           content?: string
           id?: string
           speaker?: string
           timestamp?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "call_logs_call_id_fkey"
+            columns: ["call_id"]
+            isOneToOne: false
+            referencedRelation: "call_analytics_view"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "call_logs_call_id_fkey"
             columns: ["call_id"]
@@ -97,6 +107,8 @@ export type Database = {
           contact_id: string | null
           created_at: string | null
           duration: number | null
+          ended_at: string | null
+          external_id: string | null
           id: string
           intent_matched: string | null
           phone_number: string | null
@@ -105,6 +117,7 @@ export type Database = {
           squad_id: string | null
           status: string | null
           success_score: number | null
+          summary: string | null
           transcript: string | null
           transfer_reason: string | null
           updated_at: string | null
@@ -120,6 +133,8 @@ export type Database = {
           contact_id?: string | null
           created_at?: string | null
           duration?: number | null
+          ended_at?: string | null
+          external_id?: string | null
           id?: string
           intent_matched?: string | null
           phone_number?: string | null
@@ -128,6 +143,7 @@ export type Database = {
           squad_id?: string | null
           status?: string | null
           success_score?: number | null
+          summary?: string | null
           transcript?: string | null
           transfer_reason?: string | null
           updated_at?: string | null
@@ -143,6 +159,8 @@ export type Database = {
           contact_id?: string | null
           created_at?: string | null
           duration?: number | null
+          ended_at?: string | null
+          external_id?: string | null
           id?: string
           intent_matched?: string | null
           phone_number?: string | null
@@ -151,6 +169,7 @@ export type Database = {
           squad_id?: string | null
           status?: string | null
           success_score?: number | null
+          summary?: string | null
           transcript?: string | null
           transfer_reason?: string | null
           updated_at?: string | null
@@ -189,32 +208,41 @@ export type Database = {
       }
       campaigns: {
         Row: {
+          completed_calls: number | null
           created_at: string | null
           description: string | null
           id: string
           name: string
           script_id: string | null
           status: string | null
+          success_rate: number | null
+          total_calls: number | null
           updated_at: string | null
           user_id: string | null
         }
         Insert: {
+          completed_calls?: number | null
           created_at?: string | null
           description?: string | null
           id?: string
           name: string
           script_id?: string | null
           status?: string | null
+          success_rate?: number | null
+          total_calls?: number | null
           updated_at?: string | null
           user_id?: string | null
         }
         Update: {
+          completed_calls?: number | null
           created_at?: string | null
           description?: string | null
           id?: string
           name?: string
           script_id?: string | null
           status?: string | null
+          success_rate?: number | null
+          total_calls?: number | null
           updated_at?: string | null
           user_id?: string | null
         }
@@ -223,6 +251,7 @@ export type Database = {
       contacts: {
         Row: {
           campaign_id: string | null
+          company: string | null
           created_at: string | null
           custom_fields: Json | null
           email: string | null
@@ -233,6 +262,7 @@ export type Database = {
         }
         Insert: {
           campaign_id?: string | null
+          company?: string | null
           created_at?: string | null
           custom_fields?: Json | null
           email?: string | null
@@ -243,6 +273,7 @@ export type Database = {
         }
         Update: {
           campaign_id?: string | null
+          company?: string | null
           created_at?: string | null
           custom_fields?: Json | null
           email?: string | null
@@ -287,6 +318,13 @@ export type Database = {
           timestamp?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "conversation_logs_call_id_fkey"
+            columns: ["call_id"]
+            isOneToOne: false
+            referencedRelation: "call_analytics_view"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "conversation_logs_call_id_fkey"
             columns: ["call_id"]
@@ -464,6 +502,13 @@ export type Database = {
             foreignKeyName: "webhook_logs_call_id_fkey"
             columns: ["call_id"]
             isOneToOne: false
+            referencedRelation: "call_analytics_view"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "webhook_logs_call_id_fkey"
+            columns: ["call_id"]
+            isOneToOne: false
             referencedRelation: "calls"
             referencedColumns: ["id"]
           },
@@ -471,10 +516,51 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      call_analytics_view: {
+        Row: {
+          analytics: Json | null
+          avg_confidence: number | null
+          campaign_name: string | null
+          contact_company: string | null
+          contact_name: string | null
+          contact_phone: string | null
+          created_at: string | null
+          duration: number | null
+          ended_at: string | null
+          external_id: string | null
+          first_message_at: string | null
+          id: string | null
+          last_message_at: string | null
+          message_count: number | null
+          status: string | null
+          summary: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
-      [_ in never]: never
+      get_active_calls: {
+        Args: { user_uuid?: string }
+        Returns: {
+          call_id: string
+          external_id: string
+          contact_name: string
+          contact_phone: string
+          status: string
+          duration: number
+          message_count: number
+          last_activity: string
+        }[]
+      }
+      get_call_transcription: {
+        Args: { call_uuid: string }
+        Returns: {
+          speaker: string
+          message: string
+          confidence: number
+          message_timestamp: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
