@@ -1,5 +1,5 @@
-
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { AudioRecorder, AudioQueue, AudioEncoder } from '@/utils/audioUtils';
 
 interface VoiceMessage {
@@ -9,6 +9,7 @@ interface VoiceMessage {
 }
 
 interface UseVoiceWebSocketProps {
+  userId: string;                      // REQUIRED - Add user ID for validation
   callId?: string;
   assistantId?: string;
   onConnectionChange?: (connected: boolean) => void;
@@ -17,12 +18,21 @@ interface UseVoiceWebSocketProps {
 }
 
 export const useVoiceWebSocket = ({
+  userId,
   callId,
   assistantId,
   onConnectionChange,
   onMessage,
   onError
 }: UseVoiceWebSocketProps) => {
+  // Supabase client for call ownership & auth
+  const supabaseRef = useRef<SupabaseClient>(
+    createClient(
+      process.env.REACT_APP_SUPABASE_URL!,
+      process.env.REACT_APP_SUPABASE_ANON_KEY!
+    )
+  );
+
   const [isConnected, setIsConnected] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [connectionState, setConnectionState] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
@@ -36,8 +46,9 @@ export const useVoiceWebSocket = ({
   const maxReconnectAttempts = 3;
   const heartbeatInterval = useRef<number | null>(null);
   const connectionTimeout = useRef<number | null>(null);
+  const connectionLockRef = useRef(false);  // prevent race conditions
 
-  // Enhanced logging function with timestamps
+  // Enhanced logging with rotation
   const log = useCallback((message: string, data?: any) => {
     const timestamp = new Date().toISOString();
     const logMessage: VoiceMessage = {
@@ -45,82 +56,66 @@ export const useVoiceWebSocket = ({
       data: { message, data },
       timestamp: Date.now()
     };
-    
     console.log(`[${timestamp}] 🎙️ Voice WebSocket: ${message}`, data || '');
     messageLogRef.current.push(logMessage);
+    // Keep only last 100 messages
+    if (messageLogRef.current.length > 100) {
+      messageLogRef.current = messageLogRef.current.slice(-50);
+    }
     onMessage?.(logMessage);
   }, [onMessage]);
 
-  // Initialize audio context and queue with error handling
+  // Initialize audio system
   const initializeAudio = useCallback(async () => {
     try {
       log('🔄 Initializing audio system...');
-      
       if (!audioContextRef.current) {
         audioContextRef.current = new AudioContext({ sampleRate: 24000 });
         if (audioContextRef.current.state === 'suspended') {
           await audioContextRef.current.resume();
-          log('✅ Audio context resumed from suspended state');
+          log('✅ Audio context resumed');
         }
         log('✅ Audio context initialized', { 
           sampleRate: audioContextRef.current.sampleRate,
-          state: audioContextRef.current.state 
+          state: audioContextRef.current.state
         });
       }
-      
       if (!audioQueueRef.current && audioContextRef.current) {
         audioQueueRef.current = new AudioQueue(audioContextRef.current);
         log('✅ Audio queue initialized');
       }
-      
       return true;
     } catch (error) {
-      log('❌ Error initializing audio', error);
-      onError?.(`Audio initialization failed: ${error}`);
+      log('❌ Audio initialization error', error);
+      onError?.(`Audio init failed: ${error}`);
       throw error;
     }
   }, [log, onError]);
 
-  // Enhanced audio data handler with validation
+  // Validate audio data
+  const validateAudioData = (audioData: Float32Array): boolean => {
+    if (!audioData || !(audioData instanceof Float32Array)) return false;
+    if (audioData.length < 100 || audioData.length > 48000) return false;
+    if (audioData.some(sample => !isFinite(sample))) return false;
+    const maxAmp = Math.max(...Array.from(audioData).map(Math.abs));
+    return maxAmp >= 0.001 && maxAmp <= 1.0;
+  };
+
+  // Handle outgoing audio
   const handleAudioData = useCallback((audioData: Float32Array) => {
-    if (wsRef.current?.readyState !== WebSocket.OPEN) {
-      log('⚠️ WebSocket not open, cannot send audio', {
-        readyState: wsRef.current?.readyState || 'null',
-        dataLength: audioData.length
-      });
-      return;
-    }
-
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
     try {
-      // Validate audio data
-      if (audioData.length < 100) {
-        return; // Skip very small chunks
-      }
-
-      // Check for silence (very low amplitude)
-      const maxAmplitude = Math.max(...Array.from(audioData).map(Math.abs));
-      if (maxAmplitude < 0.001) {
-        return; // Skip silent audio
-      }
-
-      const base64Audio = AudioEncoder.encodeAudioForWebSocket(audioData);
-
-      if (!base64Audio || base64Audio.length < 10) {
-        log('⚠️ Skipping audio chunk - encoding produced no data');
+      if (!validateAudioData(audioData)) {
+        log('⚠️ Invalid audio data detected, skipping chunk');
         return;
       }
-
-      const message = {
-        event: 'media',
-        media: {
-          payload: base64Audio
-        }
-      };
-
+      const base64Audio = AudioEncoder.encodeAudioForWebSocket(audioData);
+      if (!base64Audio || base64Audio.length < 10) return;
+      const maxAmplitude = Math.max(...Array.from(audioData).map(Math.abs));
+      const message = { event: 'media', media: { payload: base64Audio } };
       wsRef.current.send(JSON.stringify(message));
-
-      // Enhanced logging with audio characteristics
-      if (Math.random() < 0.01) { // Log 1% of chunks for monitoring
+      // Log only in development at 0.1%
+      if (process.env.NODE_ENV === 'development' && Math.random() < 0.001) {
         log('📤 Audio chunk sent', {
           originalSize: audioData.length,
           encodedSize: base64Audio.length,
@@ -129,31 +124,28 @@ export const useVoiceWebSocket = ({
         });
       }
     } catch (error) {
-      log('❌ Error sending audio data', error);
-      onError?.(`Audio send error: ${error}`);
+      log('❌ Audio send error', error);
+      onError?.(`Audio send failed: ${error}`);
     }
   }, [log, onError]);
 
-  // Start recording with enhanced error handling
+  // Recording controls
   const startRecording = useCallback(async () => {
     try {
-      log('🎤 Starting audio recording...');
-      
+      log('🎤 Starting recording...');
       if (!audioRecorderRef.current) {
         audioRecorderRef.current = new AudioRecorder(handleAudioData);
       }
-      
       await audioRecorderRef.current.start();
       setIsRecording(true);
-      log('✅ Recording started successfully');
+      log('✅ Recording started');
     } catch (error) {
-      log('❌ Error starting recording', error);
+      log('❌ Recording start error', error);
       onError?.(`Recording failed: ${error}`);
       setIsRecording(false);
     }
   }, [handleAudioData, log, onError]);
 
-  // Stop recording
   const stopRecording = useCallback(() => {
     if (audioRecorderRef.current) {
       audioRecorderRef.current.stop();
@@ -163,322 +155,222 @@ export const useVoiceWebSocket = ({
     }
   }, [log]);
 
-  // Setup heartbeat to keep WebSocket alive
+  // Heartbeat
   const setupHeartbeat = useCallback(() => {
-    if (heartbeatInterval.current) {
-      clearInterval(heartbeatInterval.current);
-    }
-
+    if (heartbeatInterval.current) clearInterval(heartbeatInterval.current);
     heartbeatInterval.current = window.setInterval(() => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ event: 'ping', timestamp: Date.now() }));
-        log('💓 Heartbeat sent');
+        log('💓 Heartbeat');
       }
-    }, 30000); // Send heartbeat every 30 seconds
+    }, 30000);
   }, [log]);
 
-  // Enhanced connect function with better error handling
+  // Connect with auth, validation, locking, and recovery
   const connect = useCallback(async () => {
+    if (!userId) throw new Error('User ID required');
+    if (connectionLockRef.current) return;
+    connectionLockRef.current = true;
+
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       log('⚠️ Already connected');
+      connectionLockRef.current = false;
       return;
     }
 
     try {
       setConnectionState('connecting');
-      log('🔄 Connecting to voice WebSocket...', { callId, assistantId });
+      log('🔄 Connecting...', { userId, callId, assistantId });
 
-      // Initialize audio first
-      const audioInitialized = await initializeAudio();
-      if (!audioInitialized) {
-        throw new Error('Failed to initialize audio system');
+      // Validate call ownership
+      if (callId) {
+        const { data: callData, error: callErr } = await supabaseRef.current
+          .from('calls')
+          .select('user_id, status')
+          .eq('call_id', callId)
+          .single();
+        if (callErr || !callData || callData.user_id !== userId) {
+          throw new Error('Unauthorized: Call access denied');
+        }
       }
 
-      const wsUrl = `wss://csixccpoxpnwowbgkoyw.functions.supabase.co/functions/v1/voice-websocket?callId=${callId || 'browser-test'}&assistantId=${assistantId || 'demo'}`;
-      
+      await initializeAudio();
+
+      // Fetch auth token
+      const { data: { session } } = await supabaseRef.current.auth.getSession();
+      const authToken = session?.access_token;
+      if (!authToken) throw new Error('Authentication required');
+
+      // Build WebSocket URL
+      const baseUrl = process.env.REACT_APP_VOICE_WEBSOCKET_URL!;
+      const params = new URLSearchParams({ callId: callId || 'browser-test', assistantId: assistantId || 'demo', userId, token: authToken });
+      const wsUrl = `${baseUrl}?${params.toString()}`;
       log('🌐 WebSocket URL', wsUrl);
 
       wsRef.current = new WebSocket(wsUrl);
-
-      // Set connection timeout
       connectionTimeout.current = window.setTimeout(() => {
         if (wsRef.current?.readyState !== WebSocket.OPEN) {
-          log('⏰ Connection timeout after 15 seconds');
+          log('⏰ Connection timeout');
           wsRef.current?.close();
           setConnectionState('error');
-          onError?.('Connection timeout - WebSocket failed to connect within 15 seconds');
+          onError?.('Timeout - failed to connect in 15s');
         }
       }, 15000);
 
       wsRef.current.onopen = () => {
-        if (connectionTimeout.current) {
-          clearTimeout(connectionTimeout.current);
-          connectionTimeout.current = null;
-        }
-        
-        log('✅ WebSocket connected successfully');
-        setIsConnected(true);
-        setConnectionState('connected');
-        onConnectionChange?.(true);
+        if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
+        log('✅ Connected'); setIsConnected(true); setConnectionState('connected'); onConnectionChange?.(true);
         reconnectAttempts.current = 0;
-
-        // Setup heartbeat
         setupHeartbeat();
 
-        // Send initial connection message with more details
-        const connectMessage = {
-          event: 'connected',
-          protocol: 'voice-streaming',
-          version: '1.0',
-          callId: callId,
-          assistantId: assistantId,
-          timestamp: Date.now(),
-          clientInfo: {
-            userAgent: navigator.userAgent,
-            audioSupport: 'WebAudio',
-            sampleRate: audioContextRef.current?.sampleRate || 24000
-          }
-        };
-        wsRef.current?.send(JSON.stringify(connectMessage));
-        log('📤 Connection message sent', connectMessage);
-
-        // Start recording immediately after successful connection
-        setTimeout(() => startRecording(), 500);
+        wsRef.current?.send(JSON.stringify({ event: 'connected', protocol: 'voice-streaming', version: '1.0', callId, assistantId, timestamp: Date.now() }));
+        log('📤 Connect message');
+        setTimeout(startRecording, 500);
+        connectionLockRef.current = false;
       };
 
-      wsRef.current.onmessage = async (event) => {
+      wsRef.current.onmessage = async evt => {
+        let data: any;
         try {
-          const data = JSON.parse(event.data);
-          log('📨 Received WebSocket message', { 
-            type: data.type || data.event,
-            hasAudio: !!data.audio,
-            hasText: !!data.text,
-            timestamp: Date.now()
-          });
+          data = JSON.parse(evt.data);
+        } catch { return; }
+        // Validate message type
+        const eventType = data.type || data.event;
+        const allowed = ['connection_established','audio_response','text_response','greeting_sent','transcript','ai_response','error','pong'];
+        if (!allowed.includes(eventType)) {
+          log('❌ Invalid message type', data); return;
+        }
+        log('📨 Received', { type: eventType });
+        const message: VoiceMessage = { type: eventType, data, timestamp: Date.now() };
+        onMessage?.(message);
 
-          const message: VoiceMessage = {
-            type: data.type || data.event || 'unknown',
-            data: data,
-            timestamp: Date.now()
-          };
-          onMessage?.(message);
-
-          // Handle different message types
-          switch (data.type || data.event) {
-            case 'connection_established':
-              log('🤝 Connection established by server');
-              break;
-
-            case 'audio_response':
-              if (data.audio && audioQueueRef.current) {
-                try {
-                  log('🔊 Processing audio response', { 
-                    audioLength: data.audio.length,
-                    text: data.text 
-                  });
-                  
-                  const audioData = AudioEncoder.decodeAudioFromWebSocket(data.audio);
-                  await audioQueueRef.current.addToQueue(audioData);
-                  log('✅ Audio response queued for playback', { 
-                    decodedLength: audioData.length 
-                  });
-                } catch (error) {
-                  log('❌ Error processing audio response', error);
-                }
-              } else {
-                log('⚠️ Audio response missing audio data', data);
+        switch (eventType) {
+          case 'audio_response':
+            if (data.audio && audioQueueRef.current) {
+              try {
+                const audioBuf = AudioEncoder.decodeAudioFromWebSocket(data.audio);
+                await audioQueueRef.current.addToQueue(audioBuf);
+                log('✅ Audio queued');
+              } catch (err) {
+                log('❌ Audio processing error', err);
               }
-              break;
-
-            case 'text_response':
-              log('💬 Text response received', data.text);
-              break;
-
-            case 'greeting_sent':
-              log('👋 Greeting sent successfully');
-              break;
-
-            case 'transcript':
-              log('📝 Transcript received', { text: data.text, confidence: data.confidence });
-              break;
-
-            case 'ai_response':
-              log('🤖 AI response generated', { text: data.text, shouldTransfer: data.shouldTransfer });
-              break;
-
-            case 'error':
-              log('❌ WebSocket error message', data);
-              onError?.(data.message || 'Unknown WebSocket error');
-              break;
-
-            case 'pong':
-              log('💓 Heartbeat pong received');
-              break;
-
-            default:
-              log('❓ Unknown message type', { type: data.type || data.event, data });
-          }
-        } catch (error) {
-          log('❌ Error processing WebSocket message', error);
-          onError?.(`Message processing error: ${error}`);
+            }
+            break;
+          case 'error':
+            onError?.(data.message || 'Unknown WS error');
+            break;
         }
       };
 
-      wsRef.current.onerror = (error) => {
-        if (connectionTimeout.current) {
-          clearTimeout(connectionTimeout.current);
-          connectionTimeout.current = null;
-        }
-        
-        log('❌ WebSocket error', error);
+      wsRef.current.onerror = err => {
+        if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
+        log('❌ WS error', err);
         setConnectionState('error');
-        
         if (reconnectAttempts.current < maxReconnectAttempts) {
           reconnectAttempts.current++;
-          const delay = 2000 * reconnectAttempts.current;
-          log(`🔄 Retrying connection (${reconnectAttempts.current}/${maxReconnectAttempts}) in ${delay}ms`);
-          setTimeout(() => connect(), delay);
+          setTimeout(connect, 2000 * reconnectAttempts.current);
         } else {
-          onError?.('WebSocket connection failed after multiple attempts');
+          onError?.('Failed after multiple retries');
         }
+        connectionLockRef.current = false;
       };
 
-      wsRef.current.onclose = (event) => {
-        if (connectionTimeout.current) {
-          clearTimeout(connectionTimeout.current);
-          connectionTimeout.current = null;
-        }
-        
-        if (heartbeatInterval.current) {
-          clearInterval(heartbeatInterval.current);
-          heartbeatInterval.current = null;
-        }
-        
-        log('🔌 WebSocket closed', { code: event.code, reason: event.reason });
-        setIsConnected(false);
-        setConnectionState('disconnected');
-        onConnectionChange?.(false);
+      wsRef.current.onclose = evt => {
+        if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
+        if (heartbeatInterval.current) clearInterval(heartbeatInterval.current);
+        log('🔌 Closed', { code: evt.code, reason: evt.reason });
+        setIsConnected(false); setConnectionState('disconnected'); onConnectionChange?.(false);
         stopRecording();
-        
-        // Clean up audio
-        if (audioQueueRef.current) {
-          audioQueueRef.current.clear();
-        }
-
-        // Auto-reconnect on unexpected close (not user-initiated)
-        if (event.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
+        audioQueueRef.current?.clear();
+        if (evt.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
           reconnectAttempts.current++;
-          const delay = 1000 * reconnectAttempts.current;
-          log(`🔄 Auto-reconnecting (${reconnectAttempts.current}/${maxReconnectAttempts}) in ${delay}ms`);
-          setTimeout(() => connect(), delay);
+          setTimeout(connect, 1000 * reconnectAttempts.current);
         }
+        connectionLockRef.current = false;
       };
 
     } catch (error) {
-      log('❌ Error connecting to WebSocket', error);
+      log('❌ Connect error', error);
       setConnectionState('error');
-      onError?.(`Connection failed: ${error}`);
+      onError?.(`${error}`);
+      connectionLockRef.current = false;
     }
-  }, [callId, assistantId, initializeAudio, startRecording, stopRecording, log, onConnectionChange, onMessage, onError, setupHeartbeat]);
+  }, [userId, callId, assistantId, initializeAudio, startRecording, setupHeartbeat, onConnectionChange, onMessage, onError]);
 
-  // Enhanced disconnect function
-  const disconnect = useCallback(() => {
-    log('🔌 Disconnecting...');
-    
-    // Reset reconnect attempts
+  // Disconnect with audio context suspend
+  const disconnect = useCallback(async () => {
+    log('🔌 Disconnecting');
     reconnectAttempts.current = maxReconnectAttempts;
-    
-    // Clear timeouts and intervals
-    if (connectionTimeout.current) {
-      clearTimeout(connectionTimeout.current);
-      connectionTimeout.current = null;
-    }
-    
-    if (heartbeatInterval.current) {
-      clearInterval(heartbeatInterval.current);
-      heartbeatInterval.current = null;
-    }
-    
+    if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
+    if (heartbeatInterval.current) clearInterval(heartbeatInterval.current);
     stopRecording();
-    
-    if (wsRef.current) {
-      wsRef.current.close(1000, 'User disconnected');
-      wsRef.current = null;
+    wsRef.current?.close(1000, 'User disconnected');
+    wsRef.current = null;
+    // Suspend audio context for reuse
+    if (audioContextRef.current && audioContextRef.current.state === 'running') {
+      await audioContextRef.current.suspend();
+      log('⏸ Audio context suspended');
     }
-    
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-    
-    if (audioQueueRef.current) {
-      audioQueueRef.current.clear();
-      audioQueueRef.current = null;
-    }
-    
-    setIsConnected(false);
-    setIsRecording(false);
-    setConnectionState('disconnected');
-    log('✅ Disconnected successfully');
+    audioQueueRef.current?.clear(); audioQueueRef.current = null;
+    setIsConnected(false); setIsRecording(false); setConnectionState('disconnected');
+    log('✅ Disconnected');
   }, [stopRecording, log]);
 
-  // Send text message with validation
+  // Text and greeting
   const sendTextMessage = useCallback((text: string) => {
-    if (!text || !text.trim()) {
-      log('⚠️ Cannot send empty text message');
-      return;
-    }
-
+    if (!text?.trim()) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      const message = {
-        event: 'text_input',
-        text: text.trim()
-      };
-      wsRef.current.send(JSON.stringify(message));
-      log('💬 Text message sent', { text: text.trim(), length: text.length });
+      wsRef.current.send(JSON.stringify({ event: 'text_input', text: text.trim() }));
+      log('💬 Sent text', { length: text.length });
     } else {
-      log('❌ Cannot send text - WebSocket not connected', { 
-        readyState: wsRef.current?.readyState || 'null' 
-      });
-      onError?.('Cannot send message - not connected');
+      onError?.('Not connected');
     }
   }, [log, onError]);
 
-  // Request greeting with validation
   const requestGreeting = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      const message = {
-        event: 'request_greeting',
-        callId: callId,
-        timestamp: Date.now()
-      };
-      wsRef.current.send(JSON.stringify(message));
+      wsRef.current.send(JSON.stringify({ event: 'request_greeting', callId, timestamp: Date.now() }));
       log('👋 Greeting requested');
     } else {
-      log('❌ Cannot request greeting - WebSocket not connected');
-      onError?.('Cannot request greeting - not connected');
+      onError?.('Not connected');
     }
   }, [callId, log, onError]);
 
-  // Cleanup on unmount
+  // Network monitoring for auto-recovery
   useEffect(() => {
-    return () => {
-      disconnect();
+    const onOnline = () => {
+      if (!isConnected && connectionState === 'error') {
+        log('🌐 Online - retrying'); connect();
+      }
     };
-  }, [disconnect]);
+    const onOffline = () => {
+      if (isConnected) { log('📡 Offline - pausing'); disconnect(); }
+    };
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, [isConnected, connectionState, connect, disconnect, log]);
+
+  // Cleanup on unmount
+  useEffect(() => () => { disconnect(); }, [disconnect]);
 
   return {
     // State
     isConnected,
     isRecording,
     connectionState,
-    
+    // Accessibility
+    ariaLabel: isConnected ? 'Voice connection active' : 'Voice connection inactive',
+    ariaLive: connectionState === 'error' ? 'assertive' : 'polite',
+    connectionStatus: `Voice connection ${connectionState}. ${isRecording ? 'Recording active' : 'Not recording'}`,
     // Actions
     connect,
     disconnect,
     sendTextMessage,
     requestGreeting,
-    
     // Data
     messageLog: messageLogRef.current
   };
