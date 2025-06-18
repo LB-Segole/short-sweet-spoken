@@ -1,3 +1,4 @@
+
 /**
  * Enhanced logger utility for the application with structured logging
  * Optimized for voice-AI pipeline debugging and real-time audio operations
@@ -245,7 +246,7 @@ class Logger {
     // Format message for console with better structure
     const contextStr = Object.keys(mergedContext).length > 0 
       ? `[${Object.entries(mergedContext)
-          .filter(([k, v]) => v !== undefined && v !== null)
+          .filter(([, v]) => v !== undefined && v !== null)
           .map(([k, v]) => `${k}:${v}`)
           .join(',')}]`
       : '';
@@ -325,12 +326,6 @@ class Logger {
   }
 
   // FIXED: Enhanced log service integration
-  private sendToLogService(logEntry: any): void {
-    if (this.logBuffer.length > 0) {
-      this.sendBatchToLogService([logEntry]);
-    }
-  }
-
   private sendBatchToLogService(logEntries: any[]): void {
     // Enhanced external logging service integration
     try {

@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,12 +9,14 @@ import { toast } from 'sonner';
 interface VoiceInterfaceProps {
   callId?: string;
   assistantId?: string;
+  userId?: string; // Add userId prop
   className?: string;
 }
 
 const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
   callId,
   assistantId,
+  userId = 'demo-user', // Default value for demo purposes
   className
 }) => {
   const [logs, setLogs] = useState<string[]>([]);
@@ -79,6 +80,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
     sendTextMessage,
     requestGreeting
   } = useVoiceWebSocket({
+    userId, // Pass the userId
     callId,
     assistantId,
     onConnectionChange: handleConnectionChange,
@@ -254,6 +256,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
           <div className="text-sm text-gray-600 space-y-1">
             {callId && <div>Call ID: {callId}</div>}
             {assistantId && <div>Assistant ID: {assistantId}</div>}
+            <div>User ID: {userId}</div>
           </div>
         )}
 
