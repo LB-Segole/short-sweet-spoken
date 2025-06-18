@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Phone, PhoneCall, PhoneOff, Mic } from 'lucide-react';
+import { Phone, PhoneCall, PhoneOff, Mic, AlertCircle } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { showErrorToast, showSuccessToast } from '@/utils/errorHandling';
 import { Assistant } from '@/types/assistant';
@@ -31,7 +31,7 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
   useEffect(() => {
     if (!currentCallId) return;
 
-    console.log('Subscribing to call updates for:', currentCallId);
+    console.log('📞 Subscribing to call updates for:', currentCallId);
     
     const channel = supabase
       .channel(`call-updates-${currentCallId}`)
@@ -44,7 +44,7 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
           filter: `signalwire_call_id=eq.${currentCallId}`
         },
         (payload) => {
-          console.log('Call status update:', payload.new);
+          console.log('📞 Call status update:', payload.new);
           const newStatus = payload.new?.status;
           
           if (newStatus === 'ringing' || newStatus === 'calling') {
@@ -70,7 +70,7 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
       .subscribe();
 
     return () => {
-      console.log('Unsubscribing from call updates');
+      console.log('📞 Unsubscribing from call updates');
       supabase.removeChannel(channel);
     };
   }, [currentCallId]);
@@ -87,19 +87,20 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
     }
 
     try {
+      console.log('📞 Starting call initiation process...');
       setCallStatus('initiating');
       setStatusMessage('Preparing call request...');
 
       // Validate phone number format
       const cleanNumber = phoneNumber.replace(/\D/g, '');
       if (cleanNumber.length < 10) {
-        showErrorToast('Please enter a valid phone number');
+        showErrorToast('Please enter a valid phone number (at least 10 digits)');
         setCallStatus('idle');
         setStatusMessage('');
         return;
       }
 
-      console.log('Making call with assistant:', selectedAssistant?.name);
+      console.log('📞 Making call with assistant:', selectedAssistant?.name, 'to number:', phoneNumber);
       
       const callParams = {
         phoneNumber: phoneNumber,
@@ -108,37 +109,51 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
         contactId: null
       };
 
-      console.log('Call parameters:', callParams);
+      console.log('📞 Call parameters:', callParams);
       
+      // Enhanced error logging for the function call
       const { data, error } = await supabase.functions.invoke('make-outbound-call', {
         body: callParams
       });
 
-      console.log('Call response:', { data, error });
+      console.log('📞 Function response:', { data, error });
 
       if (error) {
-        console.error('Call error:', error);
+        console.error('📞 Supabase function error:', error);
         setCallStatus('idle');
         setStatusMessage('');
-        throw error;
+        throw new Error(`Function error: ${error.message || error}`);
       }
 
       if (data?.success) {
-        console.log('Call initiated successfully, SignalWire ID:', data.callId);
+        console.log('📞 Call initiated successfully, SignalWire ID:', data.callId);
         setCurrentCallId(data.callId);
         setCallStatus('calling');
         setStatusMessage('Call initiated, dialing...');
         showSuccessToast(`Call initiated! Calling ${phoneNumber} with ${selectedAssistant?.name}...`);
       } else {
+        console.error('📞 Call initiation failed:', data);
         setCallStatus('idle');
         setStatusMessage('');
-        throw new Error(data?.error || 'Failed to initiate call');
+        throw new Error(data?.error || 'Failed to initiate call - no success response');
       }
     } catch (error) {
-      console.error('Error making call:', error);
+      console.error('📞 Error making call:', error);
       setCallStatus('idle');
       setStatusMessage('');
-      showErrorToast('Failed to initiate call');
+      
+      // More detailed error messaging
+      if (error instanceof Error) {
+        if (error.message.includes('Function error')) {
+          showErrorToast(`Call failed: ${error.message}`);
+        } else if (error.message.includes('network')) {
+          showErrorToast('Network error - please check your connection and try again');
+        } else {
+          showErrorToast(`Failed to initiate call: ${error.message}`);
+        }
+      } else {
+        showErrorToast('Failed to initiate call - unknown error');
+      }
     }
   };
 
@@ -146,7 +161,7 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
     if (!currentCallId) return;
 
     try {
-      console.log('Ending call:', currentCallId);
+      console.log('📞 Ending call:', currentCallId);
       setStatusMessage('Ending call...');
       
       const { data, error } = await supabase.functions.invoke('end-call', {
@@ -154,7 +169,7 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
       });
 
       if (error) {
-        console.error('Error ending call via edge function:', error);
+        console.error('📞 Error ending call via edge function:', error);
         // Don't throw error, just continue with UI reset
       }
 
@@ -177,7 +192,7 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
       }, 2000);
       
     } catch (error) {
-      console.error('Error ending call:', error);
+      console.error('📞 Error ending call:', error);
       setStatusMessage('Call ended');
       showSuccessToast('Call ended');
       
@@ -338,6 +353,26 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
                     {statusMessage || 'Processing...'}
                   </span>
                 </div>
+                {callStatus === 'initiating' && (
+                  <div className="mt-2 text-xs text-blue-600">
+                    ℹ️ Initializing call with assistant "{selectedAssistant?.name}"...
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Enhanced debugging info for troubleshooting */}
+            {callStatus === 'idle' && (
+              <div className="p-3 bg-gray-50 border border-gray-200 rounded-md">
+                <div className="text-xs text-gray-600 space-y-1">
+                  <div>💡 Debug Info:</div>
+                  <div>• Selected Assistant: {selectedAssistant?.name || 'None'}</div>
+                  <div>• Phone Number: {phoneNumber || 'None'}</div>
+                  <div>• Call Status: {callStatus}</div>
+                  {selectedAssistant && (
+                    <div>• Voice Provider: {selectedAssistant.voice_provider}</div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -369,6 +404,21 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
               <div className="text-center py-4">
                 <p className="text-gray-500 text-sm">No AI agents available</p>
                 <p className="text-gray-400 text-xs">Create an AI agent first to make calls</p>
+              </div>
+            )}
+
+            {/* Troubleshooting section */}
+            {callStatus === 'idle' && (!phoneNumber.trim() || !selectedAssistantId) && (
+              <div className="flex items-start gap-2 p-3 bg-yellow-50 rounded-md">
+                <AlertCircle className="h-4 w-4 text-yellow-600 mt-0.5 flex-shrink-0" />
+                <div className="text-sm text-yellow-800">
+                  <div className="font-medium">Requirements:</div>
+                  <ul className="list-disc list-inside mt-1 space-y-1">
+                    <li>Select an AI agent from the dropdown</li>
+                    <li>Enter a valid phone number (10+ digits)</li>
+                    <li>Ensure the agent has proper voice configuration</li>
+                  </ul>
+                </div>
               </div>
             )}
           </TabsContent>

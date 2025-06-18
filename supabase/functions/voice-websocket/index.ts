@@ -50,6 +50,7 @@ serve(async (req) => {
   let audioBuffer: Array<string> = []
   let lastProcessTime = Date.now()
   let lastHeartbeat = Date.now()
+  let isProcessingAudio = false
 
   // Enhanced logging function with detailed context
   const log = (message: string, data?: any) => {
@@ -60,7 +61,8 @@ serve(async (req) => {
       hasSpoken,
       isCallActive,
       bufferLength: audioBuffer.length,
-      conversationLength: conversationHistory.length
+      conversationLength: conversationHistory.length,
+      isProcessingAudio
     }
     console.log(`[${timestamp}] [Call: ${callId}] ${message}`, data ? { ...context, data } : context)
   }
@@ -118,23 +120,30 @@ serve(async (req) => {
     isCallActive = true
     lastHeartbeat = Date.now()
     
-    // Send connection acknowledgment
+    // Send connection acknowledgment with enhanced details
     socket.send(JSON.stringify({
       type: 'connection_established',
       callId: callId,
       assistantId: assistantId,
       assistant: {
         name: assistant.name,
-        voice_provider: assistant.voice_provider
+        voice_provider: assistant.voice_provider,
+        model: assistant.model
       },
-      timestamp: Date.now()
+      serverInfo: {
+        timestamp: Date.now(),
+        timezone: Deno.env.get('TZ') || 'UTC',
+        version: '1.0'
+      }
     }))
 
     // Send greeting immediately after connection
     if (!hasSpoken && assistant.first_message) {
       log('🎤 Sending initial greeting')
-      await sendAIResponse(assistant.first_message)
-      hasSpoken = true
+      setTimeout(async () => {
+        await sendAIResponse(assistant.first_message)
+        hasSpoken = true
+      }, 1000) // Small delay to ensure client is ready
     }
   }
 
@@ -146,7 +155,8 @@ serve(async (req) => {
       log('📨 Received message', { 
         type: message.event || message.type,
         hasPayload: !!message.media?.payload,
-        textLength: message.text?.length 
+        textLength: message.text?.length,
+        timestamp: Date.now()
       })
       
       switch (message.event || message.type) {
@@ -162,11 +172,15 @@ serve(async (req) => {
           break
 
         case 'media':
-          if (isCallActive && message.media?.payload) {
+          if (isCallActive && message.media?.payload && !isProcessingAudio) {
             log('🎵 Received audio data', { payloadLength: message.media.payload.length })
             await handleIncomingAudio(message.media.payload)
           } else {
-            log('⚠️ Received media message but missing payload or call inactive')
+            if (isProcessingAudio) {
+              log('⚠️ Skipping audio - already processing')
+            } else {
+              log('⚠️ Received media message but missing payload or call inactive')
+            }
           }
           break
 
@@ -190,7 +204,8 @@ serve(async (req) => {
           log('💓 Heartbeat ping received')
           socket.send(JSON.stringify({
             type: 'pong',
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            serverTime: new Date().toISOString()
           }))
           break
 
@@ -208,6 +223,7 @@ serve(async (req) => {
       socket.send(JSON.stringify({
         type: 'error',
         message: 'Error processing message',
+        details: error.message,
         timestamp: Date.now()
       }))
     }
@@ -216,6 +232,7 @@ serve(async (req) => {
   socket.onclose = (event) => {
     log('🔌 WebSocket closed', { code: event.code, reason: event.reason })
     isCallActive = false
+    audioBuffer = [] // Clear buffer on close
   }
 
   socket.onerror = (error) => {
@@ -223,7 +240,7 @@ serve(async (req) => {
     isCallActive = false
   }
 
-  // Enhanced audio handling with better validation
+  // Enhanced audio handling with better validation and processing control
   async function handleIncomingAudio(audioPayload: string) {
     try {
       if (!audioPayload || audioPayload.length < 10) {
@@ -238,18 +255,19 @@ serve(async (req) => {
         payloadLength: audioPayload.length 
       })
       
-      // Process audio every 2 seconds or when buffer reaches threshold
+      // Process audio every 3 seconds or when buffer reaches threshold
       const now = Date.now()
-      const shouldProcess = (now - lastProcessTime > 2000) || (audioBuffer.length > 15)
+      const shouldProcess = (now - lastProcessTime > 3000) || (audioBuffer.length > 20)
       
-      if (shouldProcess) {
+      if (shouldProcess && !isProcessingAudio) {
+        isProcessingAudio = true
         lastProcessTime = now
         
         // Combine buffer and process
         const combinedAudio = audioBuffer.join('')
-        audioBuffer = []
+        audioBuffer = [] // Clear buffer immediately
         
-        if (combinedAudio.length > 100) {
+        if (combinedAudio.length > 200) { // Increased minimum size
           log('🎵 Processing combined audio chunk', { 
             combinedLength: combinedAudio.length,
             processingDelay: now - lastProcessTime 
@@ -258,9 +276,12 @@ serve(async (req) => {
         } else {
           log('⚠️ Combined audio too small, skipping processing', { length: combinedAudio.length })
         }
+        
+        isProcessingAudio = false
       }
     } catch (error) {
       log('❌ Error handling incoming audio', error)
+      isProcessingAudio = false
     }
   }
 
@@ -311,18 +332,19 @@ serve(async (req) => {
       const transcript = await transcribeAudio(audioData)
       const transcriptionTime = Date.now() - startTime
       
-      if (transcript && transcript.trim().length > 2) {
+      if (transcript && transcript.trim().length > 3) { // Increased minimum length
         log('👤 User said', { 
           transcript, 
           transcriptionTime,
-          confidence: transcript.length > 10 ? 'high' : 'medium'
+          confidence: transcript.length > 15 ? 'high' : 'medium'
         })
         
         // Send transcript event to client
         socket.send(JSON.stringify({
           type: 'transcript',
           text: transcript,
-          confidence: transcript.length > 10 ? 0.8 : 0.6,
+          confidence: transcript.length > 15 ? 0.9 : 0.7,
+          transcriptionTime: transcriptionTime,
           timestamp: Date.now()
         }))
         
@@ -341,6 +363,7 @@ serve(async (req) => {
       socket.send(JSON.stringify({
         type: 'error',
         message: 'Error processing audio. Please try speaking again.',
+        details: error.message,
         timestamp: Date.now()
       }))
     }
@@ -350,7 +373,7 @@ serve(async (req) => {
     try {
       log('🎤 Transcribing audio with OpenAI Whisper', { dataLength: audioData.length })
       
-      // Decode base64 audio with error handling
+      // Decode base64 audio with enhanced error handling
       let binaryData: Uint8Array
       try {
         binaryData = Uint8Array.from(atob(audioData), c => c.charCodeAt(0))
@@ -367,6 +390,7 @@ serve(async (req) => {
       formData.append('model', 'whisper-1')
       formData.append('language', 'en')
       formData.append('response_format', 'json')
+      formData.append('temperature', '0.2') // Lower temperature for more accurate transcription
 
       log('📡 Sending request to OpenAI Whisper API')
       const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
@@ -412,15 +436,16 @@ serve(async (req) => {
       })
 
       // Keep only recent conversation history to stay within token limits
-      const recentHistory = conversationHistory.slice(-8) // Increased from 6 to 8
+      const recentHistory = conversationHistory.slice(-10) // Increased from 8 to 10
       
       const requestBody = {
         model: assistant.model || 'gpt-4o-mini',
         messages: recentHistory,
-        temperature: assistant.temperature || 0.7,
-        max_tokens: assistant.max_tokens || 50,
+        temperature: assistant.temperature || 0.8,
+        max_tokens: assistant.max_tokens || 60, // Increased slightly
         presence_penalty: 0.1,
-        frequency_penalty: 0.1
+        frequency_penalty: 0.1,
+        top_p: 0.9
       }
 
       log('📡 Calling OpenAI API', { 
@@ -479,7 +504,9 @@ serve(async (req) => {
           type: 'audio_response',
           audio: audioData,
           text: text,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          voice: assistant.voice_id,
+          duration: Math.round(text.length * 0.1) // Rough estimate
         }))
         
         // Also send text response for UI display
@@ -506,7 +533,8 @@ serve(async (req) => {
       socket.send(JSON.stringify({
         type: 'text_response',
         text: text,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        fallback: true
       }))
       log('📤 Sent text-only response')
     } catch (error) {
@@ -596,13 +624,21 @@ serve(async (req) => {
     }
   }
 
-  // Heartbeat monitor to detect dead connections
+  // Enhanced heartbeat monitor to detect dead connections
   const heartbeatMonitor = setInterval(() => {
     const now = Date.now()
-    if (now - lastHeartbeat > 60000) { // 60 seconds timeout
+    if (now - lastHeartbeat > 90000) { // 90 seconds timeout (increased)
       log('💔 Heartbeat timeout, closing connection')
       socket.close(1000, 'Heartbeat timeout')
       clearInterval(heartbeatMonitor)
+    } else if (now - lastHeartbeat > 60000) {
+      // Send warning at 60 seconds
+      log('⚠️ Heartbeat warning - no activity for 60 seconds')
+      socket.send(JSON.stringify({
+        type: 'heartbeat_warning',
+        lastActivity: lastHeartbeat,
+        timestamp: now
+      }))
     }
   }, 30000) // Check every 30 seconds
 

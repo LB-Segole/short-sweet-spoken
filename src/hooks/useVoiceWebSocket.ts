@@ -1,3 +1,4 @@
+
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { AudioRecorder, AudioQueue, AudioEncoder } from '@/utils/audioUtils';
 
@@ -34,6 +35,7 @@ export const useVoiceWebSocket = ({
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 3;
   const heartbeatInterval = useRef<number | null>(null);
+  const connectionTimeout = useRef<number | null>(null);
 
   // Enhanced logging function with timestamps
   const log = useCallback((message: string, data?: any) => {
@@ -52,6 +54,8 @@ export const useVoiceWebSocket = ({
   // Initialize audio context and queue with error handling
   const initializeAudio = useCallback(async () => {
     try {
+      log('🔄 Initializing audio system...');
+      
       if (!audioContextRef.current) {
         audioContextRef.current = new AudioContext({ sampleRate: 24000 });
         if (audioContextRef.current.state === 'suspended') {
@@ -68,6 +72,8 @@ export const useVoiceWebSocket = ({
         audioQueueRef.current = new AudioQueue(audioContextRef.current);
         log('✅ Audio queue initialized');
       }
+      
+      return true;
     } catch (error) {
       log('❌ Error initializing audio', error);
       onError?.(`Audio initialization failed: ${error}`);
@@ -180,10 +186,13 @@ export const useVoiceWebSocket = ({
 
     try {
       setConnectionState('connecting');
-      log('🔄 Connecting to voice WebSocket...');
+      log('🔄 Connecting to voice WebSocket...', { callId, assistantId });
 
       // Initialize audio first
-      await initializeAudio();
+      const audioInitialized = await initializeAudio();
+      if (!audioInitialized) {
+        throw new Error('Failed to initialize audio system');
+      }
 
       const wsUrl = `wss://csixccpoxpnwowbgkoyw.functions.supabase.co/functions/v1/voice-websocket?callId=${callId || 'browser-test'}&assistantId=${assistantId || 'demo'}`;
       
@@ -192,17 +201,21 @@ export const useVoiceWebSocket = ({
       wsRef.current = new WebSocket(wsUrl);
 
       // Set connection timeout
-      const connectionTimeout = setTimeout(() => {
+      connectionTimeout.current = window.setTimeout(() => {
         if (wsRef.current?.readyState !== WebSocket.OPEN) {
-          log('⏰ Connection timeout after 10 seconds');
+          log('⏰ Connection timeout after 15 seconds');
           wsRef.current?.close();
           setConnectionState('error');
-          onError?.('Connection timeout');
+          onError?.('Connection timeout - WebSocket failed to connect within 15 seconds');
         }
-      }, 10000);
+      }, 15000);
 
       wsRef.current.onopen = () => {
-        clearTimeout(connectionTimeout);
+        if (connectionTimeout.current) {
+          clearTimeout(connectionTimeout.current);
+          connectionTimeout.current = null;
+        }
+        
         log('✅ WebSocket connected successfully');
         setIsConnected(true);
         setConnectionState('connected');
@@ -212,20 +225,25 @@ export const useVoiceWebSocket = ({
         // Setup heartbeat
         setupHeartbeat();
 
-        // Send initial connection message
+        // Send initial connection message with more details
         const connectMessage = {
           event: 'connected',
           protocol: 'voice-streaming',
           version: '1.0',
           callId: callId,
           assistantId: assistantId,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          clientInfo: {
+            userAgent: navigator.userAgent,
+            audioSupport: 'WebAudio',
+            sampleRate: audioContextRef.current?.sampleRate || 24000
+          }
         };
         wsRef.current?.send(JSON.stringify(connectMessage));
         log('📤 Connection message sent', connectMessage);
 
-        // Start recording immediately
-        startRecording();
+        // Start recording immediately after successful connection
+        setTimeout(() => startRecording(), 500);
       };
 
       wsRef.current.onmessage = async (event) => {
@@ -248,7 +266,7 @@ export const useVoiceWebSocket = ({
           // Handle different message types
           switch (data.type || data.event) {
             case 'connection_established':
-              log('🤝 Connection established');
+              log('🤝 Connection established by server');
               break;
 
             case 'audio_response':
@@ -268,7 +286,7 @@ export const useVoiceWebSocket = ({
                   log('❌ Error processing audio response', error);
                 }
               } else {
-                log('⚠️ Audio response missing audio data');
+                log('⚠️ Audio response missing audio data', data);
               }
               break;
 
@@ -290,7 +308,7 @@ export const useVoiceWebSocket = ({
 
             case 'error':
               log('❌ WebSocket error message', data);
-              onError?.(data.message || 'Unknown error');
+              onError?.(data.message || 'Unknown WebSocket error');
               break;
 
             case 'pong':
@@ -307,7 +325,11 @@ export const useVoiceWebSocket = ({
       };
 
       wsRef.current.onerror = (error) => {
-        clearTimeout(connectionTimeout);
+        if (connectionTimeout.current) {
+          clearTimeout(connectionTimeout.current);
+          connectionTimeout.current = null;
+        }
+        
         log('❌ WebSocket error', error);
         setConnectionState('error');
         
@@ -322,7 +344,11 @@ export const useVoiceWebSocket = ({
       };
 
       wsRef.current.onclose = (event) => {
-        clearTimeout(connectionTimeout);
+        if (connectionTimeout.current) {
+          clearTimeout(connectionTimeout.current);
+          connectionTimeout.current = null;
+        }
+        
         if (heartbeatInterval.current) {
           clearInterval(heartbeatInterval.current);
           heartbeatInterval.current = null;
@@ -339,7 +365,7 @@ export const useVoiceWebSocket = ({
           audioQueueRef.current.clear();
         }
 
-        // Auto-reconnect on unexpected close
+        // Auto-reconnect on unexpected close (not user-initiated)
         if (event.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
           reconnectAttempts.current++;
           const delay = 1000 * reconnectAttempts.current;
@@ -362,7 +388,12 @@ export const useVoiceWebSocket = ({
     // Reset reconnect attempts
     reconnectAttempts.current = maxReconnectAttempts;
     
-    // Clear heartbeat
+    // Clear timeouts and intervals
+    if (connectionTimeout.current) {
+      clearTimeout(connectionTimeout.current);
+      connectionTimeout.current = null;
+    }
+    
     if (heartbeatInterval.current) {
       clearInterval(heartbeatInterval.current);
       heartbeatInterval.current = null;
