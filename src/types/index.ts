@@ -96,7 +96,7 @@ export interface Call {
 
 export interface VerificationCheck {
   id: string;
-  type: 'signalwire_api' | 'call_connection' | 'audio_stream' | 'ai_response';
+  type: 'signalwire_api' | 'call_connection' | 'audio_stream' | 'ai_response' | 'call_status' | 'webhook_response' | 'ring_timeout';
   status: 'pending' | 'passed' | 'failed';
   details: string;
   timestamp: string;

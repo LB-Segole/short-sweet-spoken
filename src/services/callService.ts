@@ -41,12 +41,12 @@ class CallService {
         status: call.status || 'unknown',
         duration: call.duration || 0,
         created_at: call.created_at || '',
-        summary: call.summary,
-        external_id: call.external_id,
-        contact_name: call.contact_name,
-        contact_phone: call.contact_phone,
-        contact_company: call.contact_company,
-        campaign_name: call.campaign_name,
+        summary: call.summary || undefined,
+        external_id: call.external_id || undefined,
+        contact_name: call.contact_name || undefined,
+        contact_phone: call.contact_phone || undefined,
+        contact_company: call.contact_company || undefined,
+        campaign_name: call.campaign_name || undefined,
         recording_url: undefined
       }));
     } catch (error) {
@@ -57,6 +57,11 @@ class CallService {
 
   async getCallById(callId: string): Promise<CallRecord | null> {
     try {
+      if (!callId) {
+        console.warn('getCallById called with undefined callId');
+        return null;
+      }
+
       const { data, error } = await supabase
         .from('call_analytics_view')
         .select('*')
@@ -72,12 +77,12 @@ class CallService {
         status: data.status || 'unknown',
         duration: data.duration || 0,
         created_at: data.created_at || '',
-        summary: data.summary,
-        external_id: data.external_id,
-        contact_name: data.contact_name,
-        contact_phone: data.contact_phone,
-        contact_company: data.contact_company,
-        campaign_name: data.campaign_name,
+        summary: data.summary || undefined,
+        external_id: data.external_id || undefined,
+        contact_name: data.contact_name || undefined,
+        contact_phone: data.contact_phone || undefined,
+        contact_company: data.contact_company || undefined,
+        campaign_name: data.campaign_name || undefined,
         recording_url: undefined
       };
     } catch (error) {

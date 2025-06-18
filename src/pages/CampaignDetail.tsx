@@ -49,11 +49,13 @@ const CampaignDetail = () => {
 
       if (campaignError) throw campaignError;
       
-      // Convert null values to undefined for our types
+      // Convert the data to match our interface
       const convertedCampaign: Campaign = {
-        ...campaignData,
+        id: campaignData.id,
+        name: campaignData.name,
         description: campaignData.description || undefined,
         status: campaignData.status || 'draft',
+        created_at: campaignData.created_at || new Date().toISOString(),
       };
       setCampaign(convertedCampaign);
 
@@ -67,10 +69,10 @@ const CampaignDetail = () => {
       
       // Convert null values to undefined for our types
       const convertedContacts: Contact[] = (contactsData || []).map(contact => ({
-        ...contact,
+        id: contact.id,
+        name: contact.name,
+        phone: contact.phone,
         email: contact.email || undefined,
-        company: contact.company || undefined,
-        created_at: contact.created_at || undefined,
       }));
       setContacts(convertedContacts);
 

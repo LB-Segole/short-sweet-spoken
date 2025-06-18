@@ -1,24 +1,6 @@
 
 import { supabase } from '@/integrations/supabase/client';
-
-export interface VerificationCheck {
-  id: string;
-  type: 'signalwire_api' | 'call_connection' | 'audio_stream' | 'ai_response';
-  status: 'pending' | 'passed' | 'failed';
-  details: string;
-  timestamp: string;
-}
-
-export interface VerificationSession {
-  callId: string;
-  sessionId: string;
-  phoneNumber: string;
-  checks: VerificationCheck[];
-  startTime: string;
-  lastUpdate: string;
-  status: 'running' | 'completed' | 'failed';
-  overallStatus: 'checking' | 'verified' | 'failed';
-}
+import { VerificationCheck, VerificationSession } from '@/types';
 
 class CallVerificationService {
   private sessions: Map<string, VerificationSession> = new Map();
@@ -43,6 +25,35 @@ class CallVerificationService {
     
     // Start verification process
     this.runVerificationChecks(sessionId);
+    
+    return sessionId;
+  }
+
+  // Alias for backward compatibility
+  async startVerificationSession(callId: string, phoneNumber: string): Promise<string> {
+    return this.createVerificationSession(callId, phoneNumber);
+  }
+
+  // Simple method to start verification directly
+  startVerification(callId: string, phoneNumber: string): string {
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    const session: VerificationSession = {
+      callId,
+      sessionId,
+      phoneNumber,
+      checks: [],
+      startTime: new Date().toISOString(),
+      lastUpdate: new Date().toISOString(),
+      status: 'running',
+      overallStatus: 'checking'
+    };
+
+    this.sessions.set(sessionId, session);
+    this.subscribers.set(sessionId, []);
+    
+    // Start verification process asynchronously
+    setTimeout(() => this.runVerificationChecks(sessionId), 100);
     
     return sessionId;
   }
@@ -248,7 +259,7 @@ class CallVerificationService {
       return (logs || []).map(log => ({
         id: log.id,
         type: this.mapLogTypeToVerificationType(log.speaker),
-        status: log.confidence > 0.8 ? 'passed' : 'failed',
+        status: (log.confidence || 0) > 0.8 ? 'passed' : 'failed',
         details: log.content,
         timestamp: log.timestamp || new Date().toISOString()
       }));
@@ -272,6 +283,10 @@ class CallVerificationService {
     return this.sessions.get(sessionId);
   }
 
+  getSessionResults(sessionId: string): VerificationSession | null {
+    return this.sessions.get(sessionId) || null;
+  }
+
   getAllSessions(): VerificationSession[] {
     return Array.from(this.sessions.values());
   }
@@ -279,6 +294,18 @@ class CallVerificationService {
   clearSession(sessionId: string): void {
     this.sessions.delete(sessionId);
     this.subscribers.delete(sessionId);
+  }
+
+  clearOldSessions(): void {
+    const now = Date.now();
+    const oneHourAgo = now - (60 * 60 * 1000); // 1 hour in milliseconds
+
+    for (const [sessionId, session] of this.sessions.entries()) {
+      const sessionTime = new Date(session.startTime).getTime();
+      if (sessionTime < oneHourAgo) {
+        this.clearSession(sessionId);
+      }
+    }
   }
 }
 
