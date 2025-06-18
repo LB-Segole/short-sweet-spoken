@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -23,17 +22,17 @@ const RealCallHistoryTable = () => {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed':
-        return 'bg-green-100 text-green-800';
+        return 'default';
       case 'failed':
-        return 'bg-red-100 text-red-800';
+        return 'destructive';
       case 'busy':
-        return 'bg-orange-100 text-orange-800';
+        return 'secondary';
       case 'no-answer':
-        return 'bg-gray-100 text-gray-800';
+        return 'outline';
       case 'in-progress':
-        return 'bg-blue-100 text-blue-800';
+        return 'default';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'outline';
     }
   };
 
@@ -112,7 +111,7 @@ const RealCallHistoryTable = () => {
                       )}
                     </td>
                     <td className="py-3">
-                      <Badge className={getStatusColor(call.status)}>
+                      <Badge variant={getStatusColor(call.status)}>
                         {call.status.replace('-', ' ')}
                       </Badge>
                     </td>

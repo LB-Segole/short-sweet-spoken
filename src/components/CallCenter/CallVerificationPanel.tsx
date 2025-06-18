@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CheckCircle, XCircle, Clock, Phone, AlertTriangle } from 'lucide-react';
-import { callVerificationService, CallVerificationSession, RingVerificationCheck } from '@/services/callVerification.service';
+import { callVerificationService, VerificationSession, VerificationCheck } from '@/services/callVerification.service';
 
 interface CallVerificationPanelProps {
   callId?: string;
@@ -12,13 +12,13 @@ interface CallVerificationPanelProps {
 }
 
 export const CallVerificationPanel: React.FC<CallVerificationPanelProps> = ({ callId, phoneNumber }) => {
-  const [sessions, setSessions] = useState<CallVerificationSession[]>([]);
+  const [sessions, setSessions] = useState<VerificationSession[]>([]);
   const [isRunningVerification, setIsRunningVerification] = useState(false);
 
   useEffect(() => {
     // Poll for session updates every 2 seconds
     const interval = setInterval(() => {
-      setSessions(callVerificationService.getAllSessions());
+      setSessions(callVerificationService.getSession ? [callVerificationService.getSession()] : []);
     }, 2000);
 
     return () => clearInterval(interval);
@@ -32,7 +32,7 @@ export const CallVerificationPanel: React.FC<CallVerificationPanelProps> = ({ ca
 
     setIsRunningVerification(true);
     try {
-      const sessionId = await callVerificationService.startVerificationSession(callId, phoneNumber);
+      const sessionId = await callVerificationService.startVerification(callId, phoneNumber);
       console.log(`Started verification session: ${sessionId}`);
     } catch (error) {
       console.error('Failed to start verification:', error);
@@ -41,7 +41,7 @@ export const CallVerificationPanel: React.FC<CallVerificationPanelProps> = ({ ca
     }
   };
 
-  const getCheckIcon = (status: RingVerificationCheck['status']) => {
+  const getCheckIcon = (status: VerificationCheck['status']) => {
     switch (status) {
       case 'passed':
         return <CheckCircle className="h-4 w-4 text-green-500" />;
@@ -54,10 +54,10 @@ export const CallVerificationPanel: React.FC<CallVerificationPanelProps> = ({ ca
     }
   };
 
-  const getStatusBadge = (status: CallVerificationSession['overallStatus']) => {
+  const getStatusBadge = (status: VerificationSession['overallStatus']) => {
     switch (status) {
       case 'verified':
-        return <Badge variant="default" className="bg-green-500">✅ Verified</Badge>;
+        return <Badge className="bg-green-500 text-white">✅ Verified</Badge>;
       case 'failed':
         return <Badge variant="destructive">❌ Failed</Badge>;
       case 'checking':
@@ -67,7 +67,7 @@ export const CallVerificationPanel: React.FC<CallVerificationPanelProps> = ({ ca
     }
   };
 
-  const getCheckTitle = (type: RingVerificationCheck['type']) => {
+  const getCheckTitle = (type: VerificationCheck['type']) => {
     switch (type) {
       case 'signalwire_api':
         return 'SignalWire API Response';
