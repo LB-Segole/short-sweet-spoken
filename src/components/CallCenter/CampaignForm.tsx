@@ -27,7 +27,6 @@ const CampaignForm: React.FC<CampaignFormProps> = ({ initialData, onSuccess, onC
     name: '',
     description: '',
     status: 'draft',
-    script: '',
     ...initialData
   });
   
@@ -50,7 +49,7 @@ const CampaignForm: React.FC<CampaignFormProps> = ({ initialData, onSuccess, onC
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.name || !formData.script) {
+    if (!formData.name) {
       toast.error('Please fill in all required fields');
       return;
     }
@@ -128,22 +127,6 @@ const CampaignForm: React.FC<CampaignFormProps> = ({ initialData, onSuccess, onC
                 <SelectItem value="completed">Completed</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-          
-          <div className="space-y-2">
-            <Label htmlFor="script">Call Script *</Label>
-            <Textarea
-              id="script"
-              name="script"
-              value={formData.script || ''}
-              onChange={handleChange}
-              placeholder="Enter call script for the AI agent"
-              rows={8}
-              required
-            />
-            <p className="text-sm text-gray-500">
-              Write a script that guides the AI agent's conversation. Include specific talking points, questions to ask, and responses to common questions.
-            </p>
           </div>
         </CardContent>
         

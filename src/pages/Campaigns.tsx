@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,15 +7,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Plus, Search, Edit, Trash2, Play, Pause, MoreHorizontal } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { useCampaigns, Campaign } from '@/hooks/useCampaigns';
+import { useCampaigns } from '@/hooks/useCampaigns';
+import { Campaign } from '@/types';
 import CampaignDialog from '@/components/Campaigns/CampaignDialog';
 import { formatDistanceToNow } from 'date-fns';
 
 const Campaigns = () => {
-  const { campaigns, isLoading, createCampaign, updateCampaign, deleteCampaign } = useCampaigns();
+  const { campaigns, isLoading, updateCampaign, deleteCampaign } = useCampaigns();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
   const [deletingCampaign, setDeletingCampaign] = useState<Campaign | null>(null);
 
@@ -34,10 +33,6 @@ const Campaigns = () => {
       case 'completed': return 'outline';
       default: return 'outline';
     }
-  };
-
-  const handleCreateCampaign = () => {
-    setIsCreateDialogOpen(false);
   };
 
   const handleUpdateCampaign = () => {
@@ -90,10 +85,12 @@ const Campaigns = () => {
           <h1 className="text-2xl md:text-3xl font-bold">Campaigns</h1>
           <p className="text-gray-500">Manage your voice calling campaigns</p>
         </div>
-        <Button onClick={() => setIsCreateDialogOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Create Campaign
-        </Button>
+        <CampaignDialog trigger={
+          <Button>
+            <Plus className="mr-2 h-4 w-4" />
+            Create Campaign
+          </Button>
+        } />
       </div>
 
       {/* Filters */}
@@ -199,21 +196,17 @@ const Campaigns = () => {
                 }
               </p>
               {!searchQuery && statusFilter === 'all' && (
-                <Button onClick={() => setIsCreateDialogOpen(true)}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Create Your First Campaign
-                </Button>
+                <CampaignDialog trigger={
+                  <Button>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Create Your First Campaign
+                  </Button>
+                } />
               )}
             </CardContent>
           </Card>
         )}
       </div>
-
-      {/* Create Campaign Dialog */}
-      <CampaignDialog
-        trigger={null}
-        onSuccess={handleCreateCampaign}
-      />
 
       {/* Edit Campaign Dialog */}
       {editingCampaign && (

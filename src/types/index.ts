@@ -1,4 +1,19 @@
 
+export interface User {
+  id: string;
+  email: string;
+  name?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface FAQ {
+  id: string;
+  question: string;
+  answer: string;
+  category?: string;
+}
+
 export interface Assistant {
   id: string;
   name: string;
@@ -23,6 +38,7 @@ export interface Campaign {
   completed_calls?: number;
   success_rate?: number;
   script_id?: string;
+  script?: string;
   user_id?: string;
   created_at: string;
   updated_at: string;
@@ -70,7 +86,7 @@ export interface Call {
 
 export interface VerificationCheck {
   id: string;
-  type: 'signalwire_api' | 'call_status' | 'webhook_response' | 'ring_timeout';
+  type: 'signalwire_api' | 'call_connection' | 'audio_stream' | 'ai_response';
   status: 'pending' | 'passed' | 'failed';
   details: string;
   timestamp: string;
