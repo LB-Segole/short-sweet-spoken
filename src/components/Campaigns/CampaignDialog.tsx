@@ -1,286 +1,158 @@
-import React, { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import React, { useState } from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Plus, Calendar, Users, Target, Phone } from 'lucide-react';
+import { useCampaigns } from '@/hooks/useCampaigns';
+import { useAssistants } from '@/hooks/useAssistants';
 import { toast } from 'sonner';
-import { Phone, TestTube, Loader2 } from 'lucide-react';
-import { callService } from '@/services/callService';
-import { callVerificationService } from '@/services/callVerification.service';
 
-export interface CampaignDialogProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSave: (data: any) => void;
-  campaign?: any;
-  isLoading?: boolean;
+interface CampaignDialogProps {
+  trigger?: React.ReactNode;
+  onSuccess?: () => void;
 }
 
-export const CampaignDialog: React.FC<CampaignDialogProps> = ({
-  isOpen,
-  onClose,
-  onSave,
-  campaign,
-  isLoading = false
-}) => {
+const CampaignDialog: React.FC<CampaignDialogProps> = ({ trigger, onSuccess }) => {
+  const [open, setOpen] = useState(false);
   const [formData, setFormData] = useState({
-    name: campaign?.name || '',
-    description: campaign?.description || '',
-    status: campaign?.status || 'active' as const,
-    script_id: campaign?.script_id || ''
+    name: '',
+    description: '',
+    assistant_id: '',
+    total_calls: 100,
+    status: 'draft' as const
   });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const [errors, setErrors] = useState<{ [key: string]: string }>({});
-  const [isTestingCall, setIsTestingCall] = useState(false);
-  const [scripts, setScripts] = useState<any[]>([]);
+  const { createCampaign } = useCampaigns();
+  const { assistants } = useAssistants();
 
-  useEffect(() => {
-    if (campaign) {
-      setFormData({
-        name: campaign.name || '',
-        description: campaign.description || '',
-        status: campaign.status || 'active',
-        script_id: campaign.script_id || ''
-      });
-    }
-  }, [campaign]);
-
-  useEffect(() => {
-    const fetchScripts = async () => {
-      try {
-        const response = await callService.getScripts()
-        setScripts(response.data)
-      } catch (error) {
-        toast.error('Failed to fetch scripts')
-      }
-    }
-
-    fetchScripts()
-  }, []);
-
-  const validateForm = () => {
-    const newErrors: { [key: string]: string } = {};
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     
     if (!formData.name.trim()) {
-      newErrors.name = 'Campaign name is required';
-    }
-    
-    if (formData.name.length > 100) {
-      newErrors.name = 'Campaign name must be less than 100 characters';
-    }
-    
-    if (formData.description.length > 500) {
-      newErrors.description = 'Description must be less than 500 characters';
-    }
-    
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSave = () => {
-    if (!validateForm()) return;
-    
-    onSave(formData);
-    onClose();
-    resetForm();
-  };
-
-  const handleClose = () => {
-    onClose();
-    resetForm();
-  };
-
-  const resetForm = () => {
-    setFormData({ name: '', description: '', status: 'active', script_id: '' });
-    setErrors({});
-  };
-
-  const handleTestCall = async () => {
-    if (!campaign?.id) {
-      toast.error('Please save the campaign first before testing');
+      toast.error('Campaign name is required');
       return;
     }
 
-    setIsTestingCall(true);
+    setIsSubmitting(true);
     
     try {
-      // Use a test phone number for verification
-      const testPhoneNumber = process.env.REACT_APP_TEST_PHONE_NUMBER || '+1234567890';
-      
-      toast.info('Initiating test call...');
-      
-      const callResponse = await callService.initiateCall({
-        contactId: 'test-contact-' + Date.now(),
-        campaignId: campaign.id,
-        phoneNumber: testPhoneNumber,
-        scriptId: formData.script_id
-      });
-
-      if (callResponse.success && callResponse.callId) {
-        toast.success('Test call initiated successfully');
-        
-        // Start verification
-        const verificationId = callVerificationService.startVerification(callResponse.callId);
-        
-        // Subscribe to verification updates
-        callVerificationService.subscribe(verificationId, (session) => {
-          console.log('Verification update:', session);
-          
-          const passedChecks = session.checks.filter(c => c.status === 'passed').length;
-          const totalChecks = session.checks.length;
-          
-          if (session.status === 'completed') {
-            toast.success(`Call verification completed: ${passedChecks}/${totalChecks} checks passed`);
-            callVerificationService.cleanup(verificationId);
-          } else if (session.status === 'failed') {
-            const failedChecks = session.checks.filter(c => c.status === 'failed');
-            toast.error(`Call verification failed: ${failedChecks.map(c => c.type).join(', ')}`);
-            callVerificationService.cleanup(verificationId);
-          } else {
-            // Show progress
-            toast.info(`Verification in progress: ${passedChecks}/${totalChecks} checks completed`);
-          }
+      const success = await createCampaign(formData);
+      if (success) {
+        toast.success('Campaign created successfully!');
+        setFormData({
+          name: '',
+          description: '',
+          assistant_id: '',
+          total_calls: 100,
+          status: 'draft'
         });
-        
-      } else {
-        toast.error(callResponse.error || 'Failed to initiate test call');
+        setOpen(false);
+        onSuccess?.();
       }
     } catch (error) {
-      console.error('Test call error:', error);
-      toast.error('Failed to start test call');
+      console.error('Error creating campaign:', error);
+      toast.error('Failed to create campaign');
     } finally {
-      setIsTestingCall(false);
+      setIsSubmitting(false);
     }
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={handleClose}>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        {trigger || (
+          <Button>
+            <Plus className="w-4 h-4 mr-2" />
+            Create Campaign
+          </Button>
+        )}
+      </DialogTrigger>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>
-            {campaign ? 'Edit Campaign' : 'Create New Campaign'}
-          </DialogTitle>
-          <DialogDescription>
-            {campaign 
-              ? 'Update your campaign details below.' 
-              : 'Create a new calling campaign to reach your contacts.'
-            }
-          </DialogDescription>
+          <DialogTitle>Create New Campaign</DialogTitle>
         </DialogHeader>
-        
-        <div className="grid gap-4 py-4">
-          <div className="grid gap-2">
-            <Label htmlFor="name">Campaign Name</Label>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">
+              Campaign Name *
+            </label>
             <Input
-              id="name"
               value={formData.name}
               onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
               placeholder="Enter campaign name"
-              className={errors.name ? 'border-red-500' : ''}
+              required
             />
-            {errors.name && <span className="text-sm text-red-500">{errors.name}</span>}
           </div>
 
-          <div className="grid gap-2">
-            <Label htmlFor="description">Description</Label>
+          <div>
+            <label className="block text-sm font-medium mb-1">
+              Description
+            </label>
             <Textarea
-              id="description"
               value={formData.description}
               onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-              placeholder="Enter campaign description"
-              className={errors.description ? 'border-red-500' : ''}
-              rows={3}
+              placeholder="Describe the purpose of this campaign"
+              className="min-h-[80px]"
             />
-            {errors.description && <span className="text-sm text-red-500">{errors.description}</span>}
           </div>
 
-          <div className="grid gap-2">
-            <Label htmlFor="status">Status</Label>
-            <Select
-              value={formData.status}
-              onValueChange={(value) => setFormData(prev => ({ ...prev, status: value as 'active' | 'paused' | 'completed' }))}
+          <div>
+            <label className="block text-sm font-medium mb-1">
+              AI Assistant
+            </label>
+            <Select 
+              value={formData.assistant_id} 
+              onValueChange={(value) => setFormData(prev => ({ ...prev, assistant_id: value }))}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select status" />
+                <SelectValue placeholder="Select an AI assistant" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="paused">Paused</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="script">Call Script</Label>
-            <Select
-              value={formData.script_id}
-              onValueChange={(value) => setFormData(prev => ({ ...prev, script_id: value }))}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select a script (optional)" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">No script</SelectItem>
-                {scripts.map((script) => (
-                  <SelectItem key={script.id} value={script.id}>
-                    {script.name}
+                {assistants.map((assistant) => (
+                  <SelectItem key={assistant.id} value={assistant.id}>
+                    {assistant.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
-          {campaign && (
-            <div className="grid gap-2">
-              <Label>Test Campaign</Label>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleTestCall}
-                disabled={isTestingCall}
-                className="w-full"
-              >
-                {isTestingCall ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Testing Call...
-                  </>
-                ) : (
-                  <>
-                    <TestTube className="h-4 w-4 mr-2" />
-                    Test AI Agent Call
-                  </>
-                )}
-              </Button>
-              <p className="text-xs text-muted-foreground">
-                This will initiate a test call to verify AI agent functionality
-              </p>
-            </div>
-          )}
-        </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">
+              Target Calls
+            </label>
+            <Input
+              type="number"
+              min="1"
+              value={formData.total_calls}
+              onChange={(e) => setFormData(prev => ({ ...prev, total_calls: parseInt(e.target.value) || 100 }))}
+              placeholder="Number of calls to make"
+            />
+          </div>
 
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={handleClose} disabled={isLoading}>
-            Cancel
-          </Button>
-          <Button onClick={handleSave} disabled={isLoading}>
-            {isLoading ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              <>
-                <Phone className="h-4 w-4 mr-2" />
-                {campaign ? 'Update Campaign' : 'Create Campaign'}
-              </>
-            )}
-          </Button>
-        </div>
+          <div className="flex justify-end space-x-2 pt-4">
+            <Button 
+              type="button" 
+              variant="outline" 
+              onClick={() => setOpen(false)}
+              disabled={isSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button 
+              type="submit" 
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? 'Creating...' : 'Create Campaign'}
+            </Button>
+          </div>
+        </form>
       </DialogContent>
     </Dialog>
   );
 };
+
+export default CampaignDialog;
