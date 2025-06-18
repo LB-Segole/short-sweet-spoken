@@ -1,8 +1,7 @@
-
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v3.2');
+console.log('🚀 Edge Function initialized - make-outbound-call v3.3');
 console.log('🔧 Environment check:', {
   SUPABASE_URL: Deno.env.get('SUPABASE_URL') ? '✅ Set' : '❌ Missing',
   SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? '✅ Set' : '❌ Missing',
@@ -25,6 +24,25 @@ interface CallRequest {
   contactId?: string
   squadId?: string
 }
+
+// Helper function to convert any phone number format to E.164
+const formatToE164 = (phoneNumber: string): string => {
+  // Remove all non-digit characters
+  const digitsOnly = phoneNumber.replace(/\D/g, '');
+  
+  // If it already starts with country code (11+ digits), add + prefix
+  if (digitsOnly.length >= 11) {
+    return `+${digitsOnly}`;
+  }
+  
+  // If it's 10 digits, assume US number and add +1
+  if (digitsOnly.length === 10) {
+    return `+1${digitsOnly}`;
+  }
+  
+  // Return with + prefix for other cases
+  return `+${digitsOnly}`;
+};
 
 serve(async (req) => {
   console.log('📞 make-outbound-call invoked:', {
@@ -212,9 +230,15 @@ serve(async (req) => {
     const signalwireProjectId = Deno.env.get('SIGNALWIRE_PROJECT_ID')!;
     const signalwireApiToken = Deno.env.get('SIGNALWIRE_TOKEN')!;
     const signalwireSpaceUrl = Deno.env.get('SIGNALWIRE_SPACE_URL')!;
-    const signalwirePhoneNumber = Deno.env.get('SIGNALWIRE_PHONE_NUMBER')!;
+    const rawSignalwirePhoneNumber = Deno.env.get('SIGNALWIRE_PHONE_NUMBER')!;
+    
+    // Convert SignalWire phone number to E.164 format
+    const signalwirePhoneNumber = formatToE164(rawSignalwirePhoneNumber);
 
-    console.log('📞 Using SignalWire phone number:', signalwirePhoneNumber.substring(0, 7) + '***');
+    console.log('📞 Phone number conversion:', {
+      raw: rawSignalwirePhoneNumber.substring(0, 7) + '***',
+      e164: signalwirePhoneNumber.substring(0, 7) + '***'
+    });
 
     // Construct webhook URLs properly
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -244,10 +268,10 @@ serve(async (req) => {
     console.log('📞 Initiating SignalWire call...');
     console.log('📝 SWML:', swml);
     
-    // Fixed call parameters - removed invalid parameters
+    // Fixed call parameters with properly formatted E.164 phone number
     const callParams = new URLSearchParams({
       To: phoneNumber,
-      From: signalwirePhoneNumber,
+      From: signalwirePhoneNumber, // Now properly formatted as E.164
       Twiml: swml,
       StatusCallback: statusCallbackUrl,
       StatusCallbackMethod: 'POST',
