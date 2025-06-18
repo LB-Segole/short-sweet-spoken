@@ -2,7 +2,15 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call');
+console.log('🚀 Edge Function initialized - make-outbound-call v2.0');
+console.log('🔧 Environment check:', {
+  SUPABASE_URL: Deno.env.get('SUPABASE_URL') ? '✅ Set' : '❌ Missing',
+  SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? '✅ Set' : '❌ Missing',
+  SIGNALWIRE_PROJECT_ID: Deno.env.get('SIGNALWIRE_PROJECT_ID') ? '✅ Set' : '❌ Missing',
+  SIGNALWIRE_TOKEN: Deno.env.get('SIGNALWIRE_TOKEN') ? '✅ Set' : '❌ Missing',
+  SIGNALWIRE_SPACE_URL: Deno.env.get('SIGNALWIRE_SPACE_URL') ? '✅ Set' : '❌ Missing',
+  SIGNALWIRE_PHONE_NUMBER: Deno.env.get('SIGNALWIRE_PHONE_NUMBER') ? '✅ Set' : '❌ Missing'
+});
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -19,139 +27,162 @@ interface CallRequest {
 }
 
 serve(async (req) => {
-  console.log('🚀 make-outbound-call function invoked', {
+  console.log('📞 make-outbound-call invoked:', {
     method: req.method,
     url: req.url,
-    headers: Object.fromEntries(req.headers.entries())
-  })
+    timestamp: new Date().toISOString()
+  });
 
   if (req.method === 'OPTIONS') {
-    console.log('✅ Handling CORS preflight request')
-    return new Response(null, { headers: corsHeaders })
-  }
-
-  let requestBody: CallRequest
-  try {
-    requestBody = await req.json()
-    console.log('📋 Request body parsed:', requestBody)
-  } catch (error) {
-    console.error('❌ Failed to parse request body:', error)
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: 'Invalid request body - must be valid JSON'
-      }),
-      {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 400,
-      }
-    )
-  }
-
-  // Log environment variables (safely)
-  const envVars = {
-    SUPABASE_URL: Deno.env.get('SUPABASE_URL') ? '✅ Set' : '❌ Missing',
-    SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? '✅ Set' : '❌ Missing',
-    SIGNALWIRE_PROJECT_ID: Deno.env.get('SIGNALWIRE_PROJECT_ID') ? '✅ Set' : '❌ Missing',
-    SIGNALWIRE_TOKEN: Deno.env.get('SIGNALWIRE_TOKEN') ? '✅ Set' : '❌ Missing',
-    SIGNALWIRE_SPACE_URL: Deno.env.get('SIGNALWIRE_SPACE_URL') ? '✅ Set' : '❌ Missing',
-    SIGNALWIRE_PHONE_NUMBER: Deno.env.get('SIGNALWIRE_PHONE_NUMBER') ? '✅ Set' : '❌ Missing'
-  };
-  console.log('🔧 Environment variables:', envVars);
-
-  const supabaseClient = createClient(
-    Deno.env.get('SUPABASE_URL') ?? '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-    {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      },
-      db: {
-        schema: 'public',
-      },
-      global: {
-        headers: {
-          'x-application-name': 'voice-ai-outbound-calls'
-        }
-      }
-    }
-  )
-
-  const { phoneNumber, assistantId, campaignId, contactId, squadId } = requestBody
-
-  // Improved phone number validation for E.164 format
-  const phoneRegex = /^\+[1-9]\d{10,14}$/
-  if (!phoneRegex.test(phoneNumber)) {
-    console.error('❌ Invalid phone number format:', phoneNumber, 'Expected E.164 format like +12345678901')
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: `Invalid phone number format: ${phoneNumber}. Must be in E.164 format (e.g., +12037936539)`
-      }),
-      {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 400,
-      }
-    )
+    console.log('✅ CORS preflight handled');
+    return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const authHeader = req.headers.get('Authorization')
-    if (!authHeader) {
-      console.error('❌ No authorization header provided')
-      throw new Error('No authorization header')
+    // Parse request body
+    let requestBody: CallRequest;
+    try {
+      requestBody = await req.json();
+      console.log('📋 Request parsed:', { 
+        phoneNumber: requestBody.phoneNumber?.substring(0, 5) + '***',
+        assistantId: requestBody.assistantId 
+      });
+    } catch (error) {
+      console.error('❌ Invalid JSON body:', error);
+      return new Response(
+        JSON.stringify({ success: false, error: 'Invalid JSON in request body' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+      );
     }
 
-    const token = authHeader.replace('Bearer ', '')
-    console.log('🔐 Attempting to verify user token')
-
-    const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token)
-
-    if (authError || !user) {
-      console.error('❌ Authentication failed:', authError)
-      throw new Error('Invalid authentication')
+    // Validate required environment variables
+    const requiredEnvVars = [
+      'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 
+      'SIGNALWIRE_PROJECT_ID', 'SIGNALWIRE_TOKEN', 'SIGNALWIRE_SPACE_URL'
+    ];
+    
+    for (const envVar of requiredEnvVars) {
+      if (!Deno.env.get(envVar)) {
+        console.error(`❌ Missing required env var: ${envVar}`);
+        return new Response(
+          JSON.stringify({ success: false, error: `Server configuration error: Missing ${envVar}` }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+        );
+      }
     }
 
-    console.log('✅ User authenticated:', user.id)
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+      {
+        auth: { autoRefreshToken: false, persistSession: false },
+        db: { schema: 'public' },
+        global: { headers: { 'x-application-name': 'voice-ai-outbound-calls' } }
+      }
+    );
 
-    // Check for active calls limit
-    const { count: activeCalls } = await supabaseClient
-      .from('calls')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', user.id)
-      .in('status', ['pending', 'calling', 'answered'])
+    const { phoneNumber, assistantId, campaignId, contactId, squadId } = requestBody;
 
-    const MAX_CONCURRENT_CALLS = 5
-    if (activeCalls >= MAX_CONCURRENT_CALLS) {
-      console.error('❌ User has too many active calls:', activeCalls)
+    // Enhanced phone number validation
+    const phoneRegex = /^\+[1-9]\d{10,14}$/;
+    if (!phoneRegex.test(phoneNumber)) {
+      console.error('❌ Invalid phone format:', phoneNumber);
       return new Response(
         JSON.stringify({
           success: false,
-          error: `Maximum concurrent calls limit reached (${MAX_CONCURRENT_CALLS})`,
-          activeCalls
+          error: `Invalid phone number format: ${phoneNumber}. Must be E.164 format (e.g., +12037936539)`
         }),
-        {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 429,
-        }
-      )
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+      );
     }
 
-    let assistant = null
+    // Authenticate user
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      console.error('❌ No authorization header');
+      return new Response(
+        JSON.stringify({ success: false, error: 'Authorization header required' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
+      );
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+    console.log('🔐 Verifying user token...');
+
+    const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token);
+
+    if (authError || !user) {
+      console.error('❌ Authentication failed:', authError);
+      return new Response(
+        JSON.stringify({ success: false, error: 'Invalid or expired token' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
+      );
+    }
+
+    console.log('✅ User authenticated:', user.id);
+
+    // Check active calls limit (but clean up old calls first)
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    
+    // Update old pending/calling calls to completed
+    const { error: cleanupError } = await supabaseClient
+      .from('calls')
+      .update({ status: 'completed', updated_at: new Date().toISOString() })
+      .eq('user_id', user.id)
+      .in('status', ['pending', 'calling'])
+      .lt('created_at', fiveMinutesAgo);
+
+    if (cleanupError) {
+      console.warn('⚠️ Cleanup error (non-critical):', cleanupError);
+    } else {
+      console.log('🧹 Cleaned up old pending calls');
+    }
+
+    // Check current active calls
+    const { count: activeCalls, error: countError } = await supabaseClient
+      .from('calls')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .in('status', ['pending', 'calling', 'answered']);
+
+    if (countError) {
+      console.warn('⚠️ Count error (proceeding anyway):', countError);
+    }
+
+    const MAX_CONCURRENT_CALLS = 3; // Reduced limit
+    if (activeCalls && activeCalls >= MAX_CONCURRENT_CALLS) {
+      console.error(`❌ Too many active calls: ${activeCalls}`);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `Maximum concurrent calls limit reached (${MAX_CONCURRENT_CALLS}). Please wait for current calls to complete.`,
+          activeCalls
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 429 }
+      );
+    }
+
+    // Load assistant
+    let assistant = null;
     if (assistantId) {
+      console.log('👤 Loading assistant:', assistantId);
       const { data: assistantData, error: assistantError } = await supabaseClient
         .from('assistants')
         .select('*')
         .eq('id', assistantId)
         .eq('user_id', user.id)
-        .single()
+        .single();
 
-      if (!assistantError) assistant = assistantData
-      console.log('👤 Assistant loaded:', assistant?.name || 'Default')
+      if (!assistantError && assistantData) {
+        assistant = assistantData;
+        console.log('✅ Assistant loaded:', assistant.name);
+      } else {
+        console.warn('⚠️ Assistant not found, using default');
+      }
     }
 
-    console.log('📝 Creating call record...')
+    // Create call record
+    console.log('📝 Creating call record...');
     const { data: callData, error: callError } = await supabaseClient
       .from('calls')
       .insert({
@@ -165,57 +196,58 @@ serve(async (req) => {
         created_at: new Date().toISOString()
       })
       .select()
-      .single()
+      .single();
 
     if (callError) {
-      console.error('❌ Failed to create call record:', callError)
-      throw new Error(`Failed to create call record: ${callError.message}`)
+      console.error('❌ Failed to create call record:', callError);
+      return new Response(
+        JSON.stringify({ success: false, error: `Database error: ${callError.message}` }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+      );
     }
 
-    console.log('✅ Call record created:', callData.id)
+    console.log('✅ Call record created:', callData.id);
 
-    const signalwireProjectId = Deno.env.get('SIGNALWIRE_PROJECT_ID')
-    const signalwireApiToken = Deno.env.get('SIGNALWIRE_TOKEN')
-    const signalwireSpaceUrl = Deno.env.get('SIGNALWIRE_SPACE_URL')
-    const signalwirePhoneNumber = Deno.env.get('SIGNALWIRE_PHONE_NUMBER')
+    // Prepare SignalWire call
+    const signalwireProjectId = Deno.env.get('SIGNALWIRE_PROJECT_ID');
+    const signalwireApiToken = Deno.env.get('SIGNALWIRE_TOKEN');
+    const signalwireSpaceUrl = Deno.env.get('SIGNALWIRE_SPACE_URL');
+    const signalwirePhoneNumber = Deno.env.get('SIGNALWIRE_PHONE_NUMBER') || '+12345678901';
 
-    const webhookBaseUrl = Deno.env.get('SUPABASE_URL')
-    if (!webhookBaseUrl || !webhookBaseUrl.startsWith('https://')) {
-      throw new Error('Invalid or missing SUPABASE_URL environment variable')
-    }
-
+    const webhookBaseUrl = Deno.env.get('SUPABASE_URL');
     const baseHost = webhookBaseUrl
-      .replace('https://', '')
+      ?.replace('https://', '')
       .replace('http://', '')
-      .replace('supabase.co', '.supabase.co')
+      .replace('supabase.co', '.supabase.co');
 
-    const wsUrl = `wss://${baseHost}/functions/v1/voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`
+    const wsUrl = `wss://${baseHost}/functions/v1/voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`;
 
-    // Create SWML for SignalWire AI Voice
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+    // Enhanced SWML with proper voice agent integration
+    const firstMessage = assistant?.first_message || 'Hello! This is your AI assistant. How can I help you today?';
+    const voiceId = assistant?.voice_id || 'alloy';
+    
+    const swml = `<?xml version="1.0" encoding="UTF-8"?>
     <Response>
       <Connect>
         <Stream url="${wsUrl}">
           <Parameter name="callId" value="${callData.id}" />
           <Parameter name="assistantId" value="${assistantId || 'demo'}" />
           <Parameter name="userId" value="${user.id}" />
-          <Parameter name="authToken" value="${token.substring(0, 32)}" />
         </Stream>
       </Connect>
-      <Say voice="alice">${assistant?.first_message || 'Hello! This is your AI assistant. How can I help you today?'}</Say>
-    </Response>`
+      <Say voice="${voiceId}">${firstMessage}</Say>
+    </Response>`;
 
-    const statusCallbackUrl = `${webhookBaseUrl}/functions/v1/call-webhook`
-    const fromNumber = signalwirePhoneNumber || '+12345678901'
+    const statusCallbackUrl = `${webhookBaseUrl}/functions/v1/call-webhook`;
 
-    console.log('📞 Preparing SignalWire call...')
+    console.log('📞 Initiating SignalWire call...');
     const callParams = new URLSearchParams({
       To: phoneNumber,
-      From: fromNumber,
-      Twiml: twiml,
+      From: signalwirePhoneNumber,
+      Twiml: swml,
       StatusCallback: statusCallbackUrl,
       'StatusCallbackEvent[]': 'initiated',
-      'StatusCallbackEvent[]': 'ringing',
+      'StatusCallbackEvent[]': 'ringing', 
       'StatusCallbackEvent[]': 'answered',
       'StatusCallbackEvent[]': 'completed',
       StatusCallbackMethod: 'POST',
@@ -223,16 +255,12 @@ serve(async (req) => {
       Record: 'record-from-answer',
       RecordingStatusCallback: statusCallbackUrl,
       RecordingChannels: 'dual',
-      'RecordingStatusCallbackEvent[]': 'completed',
-      MachineDetection: 'Enable',
-      MachineDetectionTimeout: '5',
-      MachineDetectionSpeechThreshold: '2400',
-      MachineDetectionSpeechEndThreshold: '1200'
-    })
+      'RecordingStatusCallbackEvent[]': 'completed'
+    });
 
-    const signalwireUrl = `https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`
+    const signalwireUrl = `https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
 
-    console.log('🔗 Making SignalWire API call to:', signalwireUrl)
+    console.log('🌐 SignalWire API call to:', signalwireUrl);
     const signalwireResponse = await fetch(signalwireUrl, {
       method: 'POST',
       headers: {
@@ -240,17 +268,31 @@ serve(async (req) => {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: callParams
-    })
+    });
 
     if (!signalwireResponse.ok) {
-      const errorText = await signalwireResponse.text()
-      console.error('❌ SignalWire API error:', signalwireResponse.status, errorText)
-      throw new Error(`SignalWire API error: ${signalwireResponse.status} - ${errorText}`)
+      const errorText = await signalwireResponse.text();
+      console.error('❌ SignalWire API error:', signalwireResponse.status, errorText);
+      
+      // Update call record to failed
+      await supabaseClient
+        .from('calls')
+        .update({ status: 'failed', updated_at: new Date().toISOString() })
+        .eq('id', callData.id);
+
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `SignalWire API error: ${signalwireResponse.status} - ${errorText}`
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+      );
     }
 
-    const signalwireData = await signalwireResponse.json()
-    console.log('✅ SignalWire call created:', signalwireData.sid)
+    const signalwireData = await signalwireResponse.json();
+    console.log('✅ SignalWire call created:', signalwireData.sid);
 
+    // Update call record with SignalWire ID
     const { error: updateError } = await supabaseClient
       .from('calls')
       .update({
@@ -258,22 +300,25 @@ serve(async (req) => {
         status: 'calling',
         updated_at: new Date().toISOString()
       })
-      .eq('id', callData.id)
+      .eq('id', callData.id);
 
-    if (!updateError) {
-      await supabaseClient.from('webhook_logs').insert({
-        call_id: callData.id,
-        event_type: 'call_initiated',
-        event_data: {
-          signalwire_sid: signalwireData.sid,
-          phone_number: phoneNumber,
-          assistant_id: assistantId,
-          websocket_url: wsUrl
-        }
-      })
+    if (updateError) {
+      console.warn('⚠️ Call update error (non-critical):', updateError);
     }
 
-    console.log('🎉 Call successfully initiated!')
+    // Log webhook event
+    await supabaseClient.from('webhook_logs').insert({
+      call_id: callData.id,
+      event_type: 'call_initiated',
+      event_data: {
+        signalwire_sid: signalwireData.sid,
+        phone_number: phoneNumber,
+        assistant_id: assistantId,
+        websocket_url: wsUrl
+      }
+    });
+
+    console.log('🎉 Call successfully initiated!');
     return new Response(
       JSON.stringify({
         success: true,
@@ -283,35 +328,25 @@ serve(async (req) => {
         message: 'Call initiated successfully',
         websocketUrl: wsUrl
       }),
-      {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200,
-      }
-    )
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+    );
+
   } catch (error) {
-    console.error('❌ Critical error in make-outbound-call:', {
+    console.error('❌ Critical error:', {
       message: error.message,
       stack: error.stack,
-      name: error.name
-    })
+      name: error.name,
+      timestamp: new Date().toISOString()
+    });
 
     return new Response(
       JSON.stringify({
         success: false,
-        error: error.message,
+        error: `Internal server error: ${error.message}`,
         errorCode: error.name,
-        context: {
-          phoneNumber: phoneNumber?.substring(0, 5) + '***',
-          assistantId,
-          timestamp: new Date().toISOString(),
-          callId: typeof callData !== 'undefined' ? callData.id : null
-        },
-        details: Deno.env.get('NODE_ENV') === 'development' ? error.stack : undefined
+        timestamp: new Date().toISOString()
       }),
-      {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 500,
-      }
-    )
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+    );
   }
-})
+});
