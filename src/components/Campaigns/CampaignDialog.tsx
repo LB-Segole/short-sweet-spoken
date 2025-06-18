@@ -1,15 +1,4 @@
-  useEffect(() => {
-    const fetchScripts = async () => {
-      try {
-        const response = await callService.getScripts()
-        setScripts(response.data)
-      } catch (error) {
-        toast.error('Failed to fetch scripts')
-      }
-    }
-
-    fetchScripts()
-  }, [])import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -59,24 +48,17 @@ export const CampaignDialog: React.FC<CampaignDialogProps> = ({
   }, [campaign]);
 
   useEffect(() => {
-    // Load available scripts
-    loadScripts();
-  }, []);
-
-  const loadScripts = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('scripts')
-        .select('id, name, content')
-        .eq('status', 'active')
-        .order('name');
-
-      if (error) throw error;
-      setScripts(data || []);
-    } catch (error) {
-      console.error('Error loading scripts:', error);
+    const fetchScripts = async () => {
+      try {
+        const response = await callService.getScripts()
+        setScripts(response.data)
+      } catch (error) {
+        toast.error('Failed to fetch scripts')
+      }
     }
-  };
+
+    fetchScripts()
+  }, []);
 
   const validateForm = () => {
     const newErrors: { [key: string]: string } = {};
