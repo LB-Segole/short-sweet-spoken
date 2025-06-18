@@ -75,6 +75,24 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
     };
   }, [currentCallId]);
 
+  // Helper function to convert formatted phone number to E.164 format
+  const formatToE164 = (phoneNumber: string): string => {
+    const digits = phoneNumber.replace(/\D/g, '');
+    
+    // If it starts with 1 and has 11 digits total, it's already in the right format
+    if (digits.length === 11 && digits.startsWith('1')) {
+      return `+${digits}`;
+    }
+    
+    // If it has 10 digits, add country code 1
+    if (digits.length === 10) {
+      return `+1${digits}`;
+    }
+    
+    // Return as-is if it doesn't match expected patterns
+    return `+${digits}`;
+  };
+
   const handleMakeCall = async () => {
     if (!phoneNumber.trim()) {
       showErrorToast('Please enter a phone number');
@@ -91,19 +109,23 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
       setCallStatus('initiating');
       setStatusMessage('Preparing call request...');
 
-      // Validate phone number format
-      const cleanNumber = phoneNumber.replace(/\D/g, '');
-      if (cleanNumber.length < 10) {
+      // Convert to E.164 format for the API
+      const e164Number = formatToE164(phoneNumber);
+      
+      console.log('📞 Original number:', phoneNumber);
+      console.log('📞 E.164 format:', e164Number);
+
+      if (e164Number.replace(/\D/g, '').length < 11) {
         showErrorToast('Please enter a valid phone number (at least 10 digits)');
         setCallStatus('idle');
         setStatusMessage('');
         return;
       }
 
-      console.log('📞 Making call with assistant:', selectedAssistant?.name, 'to number:', phoneNumber);
+      console.log('📞 Making call with assistant:', selectedAssistant?.name, 'to number:', e164Number);
       
       const callParams = {
-        phoneNumber: phoneNumber,
+        phoneNumber: e164Number, // Use E.164 format
         assistantId: selectedAssistantId,
         campaignId: null,
         contactId: null
@@ -341,7 +363,7 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
                 disabled={callStatus !== 'idle'}
               />
               <p className="text-xs text-gray-500">
-                Enter the phone number to call. This is a real call with no time limits.
+                Enter the phone number to call. Format will be converted to E.164 automatically.
               </p>
             </div>
 
@@ -362,17 +384,15 @@ const CallInterface: React.FC<CallInterfaceProps> = ({ assistants }) => {
               </div>
             )}
 
-            {/* Enhanced debugging info for troubleshooting */}
-            {callStatus === 'idle' && (
+            {/* Enhanced debugging info */}
+            {callStatus === 'idle' && phoneNumber && (
               <div className="p-3 bg-gray-50 border border-gray-200 rounded-md">
                 <div className="text-xs text-gray-600 space-y-1">
                   <div>💡 Debug Info:</div>
+                  <div>• Display Format: {phoneNumber}</div>
+                  <div>• E.164 Format: {formatToE164(phoneNumber)}</div>
                   <div>• Selected Assistant: {selectedAssistant?.name || 'None'}</div>
-                  <div>• Phone Number: {phoneNumber || 'None'}</div>
                   <div>• Call Status: {callStatus}</div>
-                  {selectedAssistant && (
-                    <div>• Voice Provider: {selectedAssistant.voice_provider}</div>
-                  )}
                 </div>
               </div>
             )}
