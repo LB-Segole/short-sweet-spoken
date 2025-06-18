@@ -9,12 +9,28 @@ import { supabase } from '@/integrations/supabase/client';
 interface CallRecord {
   id: string;
   created_at: string | null;
-  phone_number: string;
+  phone_number: string | null;
   status: string;
   duration: number | null;
   signalwire_call_id: string | null;
   assistant_id: string | null;
   user_id: string;
+  analytics?: any;
+  call_cost?: number | null;
+  call_summary?: string | null;
+  campaign_id?: string | null;
+  completed_at?: string | null;
+  contact_id?: string | null;
+  ended_at?: string | null;
+  external_id?: string | null;
+  intent_matched?: string | null;
+  recording_url?: string | null;
+  squad_id?: string | null;
+  success_score?: number | null;
+  summary?: string | null;
+  transcript?: string | null;
+  transfer_reason?: string | null;
+  updated_at?: string | null;
 }
 
 const RealCallHistoryTable = () => {
@@ -36,9 +52,9 @@ const RealCallHistoryTable = () => {
         if (error) {
           setError(error.message);
         } else {
-          // Filter out records with null created_at
-          const validCalls = (data || []).filter((call): call is CallRecord => 
-            call.created_at !== null
+          // Filter out records with null created_at and ensure proper typing
+          const validCalls = (data || []).filter((call: any): call is CallRecord => 
+            call && call.created_at !== null
           );
           setCalls(validCalls);
         }
@@ -116,7 +132,7 @@ const RealCallHistoryTable = () => {
                       {formatDate(call.created_at)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {call.phone_number}
+                      {call.phone_number || 'N/A'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <Badge
