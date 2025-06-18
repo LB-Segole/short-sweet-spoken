@@ -2,7 +2,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v3.1');
+console.log('🚀 Edge Function initialized - make-outbound-call v3.2');
 console.log('🔧 Environment check:', {
   SUPABASE_URL: Deno.env.get('SUPABASE_URL') ? '✅ Set' : '❌ Missing',
   SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? '✅ Set' : '❌ Missing',
@@ -228,10 +228,10 @@ serve(async (req) => {
 
     // Enhanced SWML with proper voice agent integration
     const firstMessage = assistant?.first_message || 'Hello! This is your AI assistant. How can I help you today?';
-    const voiceId = assistant?.voice_id || 'alloy';
     
     const swml = `<?xml version="1.0" encoding="UTF-8"?>
     <Response>
+      <Say voice="alice">${firstMessage}</Say>
       <Connect>
         <Stream url="${wsUrl}">
           <Parameter name="callId" value="${callData.id}" />
@@ -239,10 +239,10 @@ serve(async (req) => {
           <Parameter name="userId" value="${user.id}" />
         </Stream>
       </Connect>
-      <Say voice="${voiceId}">${firstMessage}</Say>
     </Response>`;
 
     console.log('📞 Initiating SignalWire call...');
+    console.log('📝 SWML:', swml);
     
     // Fixed call parameters - removed invalid parameters
     const callParams = new URLSearchParams({
@@ -251,9 +251,7 @@ serve(async (req) => {
       Twiml: swml,
       StatusCallback: statusCallbackUrl,
       StatusCallbackMethod: 'POST',
-      Timeout: '30',
-      Record: 'record-from-answer',
-      RecordingStatusCallback: statusCallbackUrl
+      Timeout: '30'
     });
 
     // Add status callback events individually
@@ -330,7 +328,8 @@ serve(async (req) => {
         phone_number: phoneNumber,
         assistant_id: assistantId,
         websocket_url: wsUrl,
-        from_number: signalwirePhoneNumber
+        from_number: signalwirePhoneNumber,
+        swml_used: swml
       }
     });
 
