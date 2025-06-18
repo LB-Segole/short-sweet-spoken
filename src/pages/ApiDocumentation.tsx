@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import Footer from '@/components/Landing/Footer';
@@ -6,7 +5,7 @@ import Navbar from '@/components/Landing/Navbar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from '@/components/ui/card';
 
-const CodeBlock = ({ code, language = 'javascript' }: { code: string, language?: string }) => (
+const CodeBlock = ({ code }: { code: string }) => (
   <div className="bg-gray-900 rounded-md p-4 overflow-x-auto">
     <pre className="text-gray-300 text-sm">
       <code>{code}</code>

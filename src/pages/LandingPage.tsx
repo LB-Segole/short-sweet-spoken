@@ -1,178 +1,167 @@
-
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { 
-  Phone, 
-  Bot, 
-  BarChart3, 
-  Shield, 
-  Clock, 
-  Zap, 
-  CheckCircle,
-  ArrowRight,
-  Star,
-  Play
-} from 'lucide-react';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import Navbar from '@/components/Landing/Navbar';
 import Footer from '@/components/Landing/Footer';
-import DemoCallModal from '@/components/Landing/DemoCallModal';
-import PaymentModal from '@/components/Payment/PaymentModal';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import {
+  Phone,
+  Clock,
+  Users,
+  TrendingUp,
+  Star,
+  ArrowRight,
+  Mic,
+  MessageSquare,
+  BarChart3,
+  Shield
+} from 'lucide-react';
 
 const LandingPage = () => {
-  const navigate = useNavigate();
-  const [showDemoModal, setShowDemoModal] = useState(false);
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-
-  const features = [
+  const [stats] = useState([
     {
-      icon: Bot,
-      title: "AI Voice Agents",
-      description: "Create intelligent voice agents that handle customer interactions with natural conversation flows and advanced AI capabilities."
-    },
-    {
+      title: 'Calls Made',
+      value: '4,587',
       icon: Phone,
-      title: "Automated Calling",
-      description: "Scale your outreach with automated calling campaigns that deliver personalized messages at the perfect time."
+      description: 'Total number of calls made through the platform',
     },
     {
-      icon: BarChart3,
-      title: "Real-time Analytics",
-      description: "Track performance metrics, conversation insights, and ROI with comprehensive analytics and reporting tools."
+      title: 'Active Users',
+      value: '1,245',
+      icon: Users,
+      description: 'Number of users actively using the platform',
     },
     {
-      icon: Shield,
-      title: "Enterprise Security",
-      description: "Bank-level security with SOC 2 compliance, data encryption, and privacy controls to protect your business data."
+      title: 'Customer Satisfaction',
+      value: '4.8',
+      icon: Star,
+      description: 'Average customer satisfaction rating (out of 5)',
     },
     {
+      title: 'Call Duration',
+      value: '3:45',
       icon: Clock,
-      title: "24/7 Availability",
-      description: "Your AI agents work around the clock, handling customer inquiries and generating leads even while you sleep."
+      description: 'Average call duration in minutes',
     },
-    {
-      icon: Zap,
-      title: "Instant Deployment",
-      description: "Get started in minutes with our intuitive platform. No technical expertise required to create powerful voice agents."
-    }
-  ];
+  ]);
 
-  const stats = [
-    { value: "98%", label: "Customer Satisfaction" },
-    { value: "3x", label: "Faster Response Time" },
-    { value: "65%", label: "Cost Reduction" },
-    { value: "24/7", label: "Availability" }
-  ];
-
-  const testimonials = [
+  const [features] = useState([
     {
-      content: "First Choice LLC's AI voice platform transformed our customer service. We've seen a 40% increase in customer satisfaction and our team can focus on high-value tasks.",
-      author: "Sarah Johnson",
-      role: "Customer Success Director",
-      avatar: "/placeholder.svg"
+      title: 'AI-Powered Voice Agents',
+      description:
+        'Create intelligent voice agents that can handle customer inquiries, automate sales calls, and more.',
+      icon: Mic,
     },
     {
-      content: "The AI agents sound so natural, our customers often don't realize they're talking to AI. It's incredible technology that's boosted our sales by 35%.",
-      author: "Michael Chen",
-      role: "Sales Manager",
-      avatar: "/placeholder.svg"
+      title: 'Real-Time Analytics',
+      description:
+        'Track key metrics such as call volume, customer satisfaction, and agent performance in real-time.',
+      icon: BarChart3,
     },
     {
-      content: "Implementation was seamless and the ROI was immediate. We're handling 3x more inquiries with the same team size. This platform is a game-changer.",
-      author: "Emily Rodriguez",
-      role: "Operations Director",
-      avatar: "/placeholder.svg"
-    }
-  ];
+      title: 'Secure and Reliable',
+      description:
+        'Our platform is built with security in mind, ensuring that your data is always safe and protected.',
+      icon: Shield,
+    },
+    {
+      title: 'Seamless Integration',
+      description:
+        'Integrate our platform with your existing CRM, marketing automation, and other business systems.',
+      icon: MessageSquare,
+    },
+  ]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+    <div className="min-h-screen flex flex-col">
       <Navbar />
 
       {/* Hero Section */}
-      <section className="pt-32 pb-20 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center">
-            <Badge className="mb-4 bg-blue-100 text-blue-800 hover:bg-blue-200">
-              🚀 Next-Generation Voice AI Platform
-            </Badge>
-            <h1 className="text-4xl md:text-6xl font-bold text-gray-900 mb-6">
-              Transform Your Business with
-              <span className="text-blue-600"> AI Voice Agents</span>
-            </h1>
-            <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto">
-              Automate customer interactions, sales calls, and support with intelligent AI agents that sound natural and deliver results 24/7.
-            </p>
-            
-            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-              <Button 
-                size="lg" 
-                className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3"
-                onClick={() => setShowPaymentModal(true)}
-              >
-                Start Free Trial
-                <ArrowRight className="ml-2 h-5 w-5" />
-              </Button>
-              <Button 
-                variant="outline" 
-                size="lg"
-                className="px-8 py-3"
-                onClick={() => setShowDemoModal(true)}
-              >
-                <Play className="mr-2 h-5 w-5" />
-                Try Demo Call
-              </Button>
+      <section className="bg-gray-50 py-24">
+        <div className="container mx-auto px-4">
+          <div className="grid md:grid-cols-2 gap-8 items-center">
+            <div>
+              <h1 className="text-4xl md:text-5xl font-bold mb-6">
+                Transform Your Business with AI-Powered Voice Calling
+              </h1>
+              <p className="text-xl text-gray-600 mb-8">
+                Automate your customer interactions, generate leads, and improve
+                customer satisfaction with our cutting-edge AI voice technology.
+              </p>
+              <div className="flex flex-wrap gap-4">
+                <Link to="/dashboard">
+                  <Button size="lg" className="bg-indigo-600 hover:bg-indigo-700">
+                    Start Free Trial
+                  </Button>
+                </Link>
+                <Link to="/contact-sales">
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="border-indigo-600 text-indigo-600 hover:bg-indigo-50"
+                  >
+                    Contact Sales
+                  </Button>
+                </Link>
+              </div>
             </div>
-
-            <p className="text-sm text-gray-500 mt-4">
-              30-day free trial • No credit card required • Cancel anytime
-            </p>
+            <div>
+              <img
+                src="/hero-image.svg"
+                alt="AI Voice Calling"
+                className="rounded-lg shadow-lg"
+              />
+            </div>
           </div>
         </div>
       </section>
 
       {/* Stats Section */}
-      <section className="py-16 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 text-center">
+      <section className="py-16">
+        <div className="container mx-auto px-4">
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
             {stats.map((stat, index) => (
-              <div key={index}>
-                <div className="text-3xl font-bold text-blue-600 mb-2">{stat.value}</div>
-                <div className="text-gray-600">{stat.label}</div>
-              </div>
+              <Card key={index}>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">
+                    {stat.title}
+                  </CardTitle>
+                  <stat.icon className="h-4 w-4 text-gray-500" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{stat.value}</div>
+                  <p className="text-sm text-gray-500">{stat.description}</p>
+                </CardContent>
+              </Card>
             ))}
           </div>
         </div>
       </section>
 
       {/* Features Section */}
-      <section className="py-20 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
-              Everything You Need for Voice AI Success
+      <section className="bg-gray-100 py-16">
+        <div className="container mx-auto px-4">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl font-bold mb-4">
+              Key Features of AIVoiceCaller
             </h2>
-            <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-              Our comprehensive platform includes all the tools you need to create, deploy, and manage AI voice agents that deliver exceptional results.
+            <p className="text-xl text-gray-600">
+              Explore the powerful features that make our platform the best choice
+              for AI-powered voice calling.
             </p>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
             {features.map((feature, index) => (
-              <Card key={index} className="border-none shadow-lg hover:shadow-xl transition-shadow duration-300">
-                <CardHeader>
-                  <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4">
-                    <feature.icon className="h-6 w-6 text-blue-600" />
-                  </div>
-                  <CardTitle className="text-xl">{feature.title}</CardTitle>
+              <Card key={index} className="h-full">
+                <CardHeader className="space-y-2">
+                  <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                    <feature.icon className="h-5 w-5 text-indigo-500" />
+                    {feature.title}
+                  </CardTitle>
+                  <CardDescription>{feature.description}</CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <CardDescription className="text-gray-600 leading-relaxed">
-                    {feature.description}
-                  </CardDescription>
-                </CardContent>
+                <CardContent></CardContent>
               </Card>
             ))}
           </div>
@@ -180,81 +169,127 @@ const LandingPage = () => {
       </section>
 
       {/* Testimonials Section */}
-      <section className="py-20 bg-gray-50 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
-              Trusted by Industry Leaders
+      <section className="py-16">
+        <div className="container mx-auto px-4">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl font-bold mb-4">
+              What Our Customers Are Saying
             </h2>
             <p className="text-xl text-gray-600">
-              See how businesses are transforming their operations with our AI voice platform
+              Read why businesses across Pakistan and beyond are choosing
+              AIVoiceCaller to transform their communication.
             </p>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {testimonials.map((testimonial, index) => (
-              <Card key={index} className="border-none shadow-lg">
-                <CardContent className="pt-6">
-                  <div className="flex mb-4">
-                    {[...Array(5)].map((_, i) => (
-                      <Star key={i} className="h-5 w-5 text-yellow-400 fill-current" />
-                    ))}
-                  </div>
-                  <p className="text-gray-700 mb-6">"{testimonial.content}"</p>
-                  <div className="flex items-center">
-                    <img 
-                      src={testimonial.avatar} 
-                      alt={testimonial.author}
-                      className="w-12 h-12 rounded-full mr-4"
-                    />
-                    <div>
-                      <div className="font-semibold text-gray-900">{testimonial.author}</div>
-                      <div className="text-sm text-gray-600">{testimonial.role}</div>
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <Card>
+              <CardHeader>
+                <CardTitle>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-4">
+                      <img
+                        src="/company-logo-1.svg"
+                        alt="Company Logo"
+                        className="w-8 h-8 rounded-full"
+                      />
+                      <div>
+                        <h3 className="text-lg font-semibold">Acme Corp</h3>
+                        <p className="text-sm text-gray-500">Technology</p>
+                      </div>
                     </div>
+                    <Badge variant="secondary">4.5/5</Badge>
                   </div>
-                </CardContent>
-              </Card>
-            ))}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                "AIVoiceCaller has revolutionized our customer engagement. The AI
+                agents are incredibly effective and have significantly improved our
+                customer satisfaction."
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-4">
+                      <img
+                        src="/company-logo-2.svg"
+                        alt="Company Logo"
+                        className="w-8 h-8 rounded-full"
+                      />
+                      <div>
+                        <h3 className="text-lg font-semibold">Beta Inc</h3>
+                        <p className="text-sm text-gray-500">Healthcare</p>
+                      </div>
+                    </div>
+                    <Badge variant="secondary">4.7/5</Badge>
+                  </div>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                "We've seen a dramatic reduction in appointment no-shows since
+                implementing AIVoiceCaller. The automated reminders are a game-changer
+                for our practice."
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-4">
+                      <img
+                        src="/company-logo-3.svg"
+                        alt="Company Logo"
+                        className="w-8 h-8 rounded-full"
+                      />
+                      <div>
+                        <h3 className="text-lg font-semibold">Gamma Ltd</h3>
+                        <p className="text-sm text-gray-500">E-commerce</p>
+                      </div>
+                    </div>
+                    <Badge variant="secondary">4.9/5</Badge>
+                  </div>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                "Our sales team is now able to focus on high-value leads, thanks to
+                AIVoiceCaller's intelligent lead qualification. It's been a huge boost
+                to our bottom line."
+              </CardContent>
+            </Card>
           </div>
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section className="py-20 bg-blue-600 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-3xl md:text-4xl font-bold text-white mb-6">
+      {/* Call to Action Section */}
+      <section className="bg-indigo-50 py-24">
+        <div className="container mx-auto px-4 text-center">
+          <h2 className="text-3xl font-bold mb-6">
             Ready to Transform Your Business?
           </h2>
-          <p className="text-xl text-blue-100 mb-8">
-            Join thousands of companies using AI voice agents to automate calls, increase conversions, and scale their operations.
+          <p className="text-xl text-gray-700 mb-8">
+            Start your free trial today and experience the power of AI-powered
+            voice calling.
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Button 
-              size="lg" 
-              className="bg-white text-blue-600 hover:bg-gray-100 px-8 py-3"
-              onClick={() => setShowPaymentModal(true)}
-            >
-              Start Free Trial Today
-              <ArrowRight className="ml-2 h-5 w-5" />
-            </Button>
-            <Button 
-              variant="outline" 
-              size="lg"
-              className="border-white text-white hover:bg-white hover:text-blue-600 px-8 py-3"
-              onClick={() => setShowDemoModal(true)}
-            >
-              <Phone className="mr-2 h-5 w-5" />
-              Get Demo Call
-            </Button>
+          <div className="flex flex-wrap justify-center gap-4">
+            <Link to="/dashboard">
+              <Button size="lg" className="bg-indigo-600 hover:bg-indigo-700">
+                Start Free Trial
+              </Button>
+            </Link>
+            <Link to="/contact-sales">
+              <Button
+                size="lg"
+                variant="outline"
+                className="border-indigo-600 text-indigo-600 hover:bg-indigo-50"
+              >
+                Contact Sales
+              </Button>
+            </Link>
           </div>
         </div>
       </section>
 
       <Footer />
-
-      {/* Modals */}
-      <DemoCallModal isOpen={showDemoModal} onClose={() => setShowDemoModal(false)} />
-      <PaymentModal isOpen={showPaymentModal} onClose={() => setShowPaymentModal(false)} />
     </div>
   );
 };

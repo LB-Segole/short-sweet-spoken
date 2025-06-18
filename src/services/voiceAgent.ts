@@ -12,7 +12,7 @@ export interface VoiceAgentConfig {
   };
 }
 
-export class VoiceAgent {
+class VoiceAgentClass {
   private liveTranscription: LiveTranscription | null = null;
   private callId: string;
   private config: VoiceAgentConfig;
@@ -241,7 +241,7 @@ export class VoiceAgent {
   private calculateAverageConfidence(): number {
     const confidenceScores = this.conversationHistory
       .filter(msg => msg.role === 'user')
-      .map((_, index) => {
+      .map(() => {
         // In a real implementation, you'd store confidence with each message
         return 0.8; // Placeholder
       });
@@ -334,21 +334,21 @@ export class VoiceAgent {
 
 // Factory function to create and manage voice agents
 export class VoiceAgentManager {
-  private static agents: Map<string, VoiceAgent> = new Map();
+  private static agents: Map<string, VoiceAgentClass> = new Map();
 
-  static async createAgent(callId: string, config: VoiceAgentConfig): Promise<VoiceAgent> {
+  static async createAgent(callId: string, config: VoiceAgentConfig): Promise<VoiceAgentClass> {
     if (this.agents.has(callId)) {
       throw new Error(`Voice agent already exists for call ${callId}`);
     }
 
-    const agent = new VoiceAgent(callId, config);
+    const agent = new VoiceAgentClass(callId, config);
     this.agents.set(callId, agent);
     
     await agent.startCall();
     return agent;
   }
 
-  static getAgent(callId: string): VoiceAgent | undefined {
+  static getAgent(callId: string): VoiceAgentClass | undefined {
     return this.agents.get(callId);
   }
 
@@ -360,7 +360,7 @@ export class VoiceAgentManager {
     }
   }
 
-  static getAllActiveAgents(): VoiceAgent[] {
+  static getAllActiveAgents(): VoiceAgentClass[] {
     return Array.from(this.agents.values()).filter(agent => 
       agent.getCallStatus().isActive
     );
@@ -374,4 +374,4 @@ export class VoiceAgentManager {
   }
 }
 
-export { VoiceAgent };
+export { VoiceAgentClass as VoiceAgent };

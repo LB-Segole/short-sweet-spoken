@@ -1,14 +1,12 @@
-
 import React from 'react';
 import { Link } from 'react-router-dom';
 import Footer from '@/components/Landing/Footer';
 import Navbar from '@/components/Landing/Navbar';
 
-const BlogPost = ({ title, date, excerpt, image, slug }: { 
+const BlogPost = ({ title, date, excerpt, slug }: { 
   title: string, 
   date: string, 
   excerpt: string, 
-  image: string,
   slug: string 
 }) => (
   <div className="mb-12">
@@ -122,7 +120,6 @@ const Blog = () => {
                   title={post.title}
                   date={post.date}
                   excerpt={post.excerpt}
-                  image={post.image}
                   slug={post.slug}
                 />
               ))}
