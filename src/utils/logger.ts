@@ -1,4 +1,3 @@
-
 /**
  * Enhanced logger utility for the application with structured logging
  */
@@ -81,15 +80,6 @@ class Logger {
     const timestamp = new Date().toISOString();
     const mergedContext = { ...this.context, ...context };
     
-    // Create structured log entry
-    const logEntry = {
-      timestamp,
-      level,
-      message,
-      context: mergedContext,
-      ...(data && { data })
-    };
-
     // Format message for console
     const contextStr = Object.keys(mergedContext).length > 0 
       ? `[${Object.entries(mergedContext).map(([k, v]) => `${k}:${v}`).join(',')}]`
@@ -117,7 +107,7 @@ class Logger {
 
     // In production, you might want to send logs to a service
     if (!this.isDebugMode && level === LogLevel.ERROR) {
-      this.sendToLogService(logEntry);
+      this.sendToLogService({ timestamp, level, message, context: mergedContext, ...(data && { data }) });
     }
   }
 
@@ -126,6 +116,7 @@ class Logger {
     // Could send to Sentry, LogRocket, or custom endpoint
     try {
       // Example: fetch('/api/logs', { method: 'POST', body: JSON.stringify(logEntry) })
+      console.debug('Would send to log service:', logEntry);
     } catch (error) {
       // Silently fail to avoid logging loops
     }
