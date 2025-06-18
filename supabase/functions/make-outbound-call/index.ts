@@ -1,7 +1,8 @@
+
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v3.3');
+console.log('🚀 Edge Function initialized - make-outbound-call v3.4');
 console.log('🔧 Environment check:', {
   SUPABASE_URL: Deno.env.get('SUPABASE_URL') ? '✅ Set' : '❌ Missing',
   SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? '✅ Set' : '❌ Missing',
@@ -250,29 +251,39 @@ serve(async (req) => {
     console.log('🔗 WebSocket URL:', wsUrl);
     console.log('🔗 Status callback URL:', statusCallbackUrl);
 
-    // Enhanced SWML with proper voice agent integration
+    // Create proper TwiML with greeting and WebSocket connection
     const firstMessage = assistant?.first_message || 'Hello! This is your AI assistant. How can I help you today?';
     
-    const swml = `<?xml version="1.0" encoding="UTF-8"?>
-    <Response>
-      <Say voice="alice">${firstMessage}</Say>
-      <Connect>
-        <Stream url="${wsUrl}">
-          <Parameter name="callId" value="${callData.id}" />
-          <Parameter name="assistantId" value="${assistantId || 'demo'}" />
-          <Parameter name="userId" value="${user.id}" />
-        </Stream>
-      </Connect>
-    </Response>`;
+    // Escape XML special characters in the message
+    const escapeXml = (text: string) => {
+      return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+    };
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">${escapeXml(firstMessage)}</Say>
+  <Connect>
+    <Stream url="${wsUrl}">
+      <Parameter name="callId" value="${callData.id}" />
+      <Parameter name="assistantId" value="${assistantId || 'demo'}" />
+      <Parameter name="userId" value="${user.id}" />
+    </Stream>
+  </Connect>
+</Response>`;
 
     console.log('📞 Initiating SignalWire call...');
-    console.log('📝 SWML:', swml);
+    console.log('📝 TwiML:', twiml);
     
     // Fixed call parameters with properly formatted E.164 phone number
     const callParams = new URLSearchParams({
       To: phoneNumber,
       From: signalwirePhoneNumber, // Now properly formatted as E.164
-      Twiml: swml,
+      Twiml: twiml,
       StatusCallback: statusCallbackUrl,
       StatusCallbackMethod: 'POST',
       Timeout: '30'
@@ -353,7 +364,7 @@ serve(async (req) => {
         assistant_id: assistantId,
         websocket_url: wsUrl,
         from_number: signalwirePhoneNumber,
-        swml_used: swml
+        twiml_used: twiml
       }
     });
 
