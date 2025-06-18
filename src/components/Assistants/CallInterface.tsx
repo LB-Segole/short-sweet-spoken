@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -6,11 +5,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Phone, PhoneCall, PhoneOff, Mic, AlertCircle } from 'lucide-react';
+import { Phone, PhoneCall, PhoneOff, Mic, AlertCircle, Activity } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { showErrorToast, showSuccessToast } from '@/utils/errorHandling';
 import { Assistant } from '@/types/assistant';
 import VoiceInterface from '@/components/VoiceInterface';
+import RealtimeVoiceInterface from '@/components/RealtimeVoiceInterface';
 
 interface CallInterfaceProps {
   assistants: Assistant[];
