@@ -1,110 +1,60 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+
+import { Card, CardContent } from '@/components/ui/card';
 
 const Footer = () => {
   return (
-    <footer className="bg-gray-100 py-12">
+    <footer className="bg-gray-900 text-white py-12">
       <div className="container mx-auto px-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-          {/* First Section - Logo and Description */}
+        <div className="grid md:grid-cols-4 gap-8">
           <div>
-            <Link to="/" className="text-2xl font-bold text-indigo-600">
-              AIVoiceCaller
-            </Link>
-            <p className="text-gray-600 mt-4">
-              AI-powered voice solutions for businesses of all sizes.
+            <h3 className="text-lg font-semibold mb-4">Voice AI Platform</h3>
+            <p className="text-gray-400">
+              Advanced AI voice solutions for modern businesses.
             </p>
           </div>
-
-          {/* Second Section - Company */}
+          
           <div>
-            <h4 className="font-bold text-gray-800 mb-2">Company</h4>
-            <ul className="text-gray-600">
-              <li className="mb-2">
-                <Link to="/about" className="hover:text-indigo-600">
-                  About Us
-                </Link>
-              </li>
-              <li className="mb-2">
-                <Link to="/case-studies" className="hover:text-indigo-600">
-                  Case Studies
-                </Link>
-              </li>
-              <li className="mb-2">
-                <Link to="/blog" className="hover:text-indigo-600">
-                  Blog
-                </Link>
-              </li>
-              <li className="mb-2">
-                <Link to="/contact-sales" className="hover:text-indigo-600">
-                  Contact
-                </Link>
-              </li>
+            <h4 className="font-semibold mb-4">Product</h4>
+            <ul className="space-y-2 text-gray-400">
+              <li><a href="/features" className="hover:text-white">Features</a></li>
+              <li><a href="/pricing" className="hover:text-white">Pricing</a></li>
+              <li><a href="/documentation" className="hover:text-white">Documentation</a></li>
             </ul>
           </div>
-
-          {/* Third Section - Resources */}
+          
           <div>
-            <h4 className="font-bold text-gray-800 mb-2">Resources</h4>
-            <ul className="text-gray-600">
-              <li className="mb-2">
-                <Link to="/api-documentation" className="hover:text-indigo-600">
-                  API Documentation
-                </Link>
-              </li>
-              <li className="mb-2">
-                <a href="#" className="hover:text-indigo-600">
-                  Support
-                </a>
-              </li>
-              <li className="mb-2">
-                <a href="#" className="hover:text-indigo-600">
-                  Privacy Policy
-                </a>
-              </li>
-              <li className="mb-2">
-                <a href="#" className="hover:text-indigo-600">
-                  Terms of Service
-                </a>
-              </li>
+            <h4 className="font-semibold mb-4">Company</h4>
+            <ul className="space-y-2 text-gray-400">
+              <li><a href="/about" className="hover:text-white">About</a></li>
+              <li><a href="/careers" className="hover:text-white">Careers</a></li>
+              <li><a href="/contact" className="hover:text-white">Contact</a></li>
             </ul>
           </div>
-
-          {/* Fourth Section - Connect */}
+          
           <div>
-            <h4 className="font-bold text-gray-800 mb-2">Connect</h4>
-            <ul className="text-gray-600">
-              <li className="mb-2">
-                <a href="#" className="hover:text-indigo-600">
-                  Facebook
-                </a>
-              </li>
-              <li className="mb-2">
-                <a href="#" className="hover:text-indigo-600">
-                  Twitter
-                </a>
-              </li>
-              <li className="mb-2">
-                <a href="#" className="hover:text-indigo-600">
-                  LinkedIn
-                </a>
-              </li>
-              <li className="mb-2">
-                <a href="#" className="hover:text-indigo-600">
-                  Instagram
-                </a>
-              </li>
-            </ul>
+            <h4 className="font-semibold mb-4">Stay Updated</h4>
+            <p className="text-gray-400 mb-4">
+              Get the latest updates about our platform.
+            </p>
+            <Card className="bg-gray-800 border-gray-700">
+              <CardContent className="p-4">
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    placeholder="Enter your email"
+                    className="flex-1 px-3 py-2 bg-gray-700 text-white rounded border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors">
+                    Subscribe
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
-
-        {/* Bottom Section - Copyright */}
-        <div className="mt-12 text-center">
-          <p className="text-gray-500">
-            &copy; {new Date().getFullYear()} AIVoiceCaller. All rights reserved.
-          </p>
+        
+        <div className="border-t border-gray-800 mt-8 pt-8 text-center text-gray-400">
+          <p>&copy; 2024 Voice AI Platform. All rights reserved.</p>
         </div>
       </div>
     </footer>

@@ -1,15 +1,27 @@
-import React from 'react';
 
-export const Calls = () => {
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Phone } from 'lucide-react';
+
+const Calls = () => {
   return (
     <div className="container mx-auto px-4 py-8">
-      <h1 className="text-3xl font-bold mb-6">Call History</h1>
+      <h1 className="text-3xl font-bold mb-6">Calls</h1>
       
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="p-6 text-center text-gray-500">
-          No calls have been made yet. Start a campaign to begin making calls.
-        </div>
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Phone className="h-5 w-5" />
+            Call Management
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-gray-600">
+            Manage your voice AI calls and view detailed analytics.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 };
+
+export default Calls;

@@ -1,15 +1,23 @@
+
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, UPGRADE',
 }
 
 serve(async (req) => {
+  console.log('🔄 Voice WebSocket function called', {
+    method: req.method,
+    headers: Object.fromEntries(req.headers.entries()),
+    url: req.url
+  })
+
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
+    console.log('✅ Handling CORS preflight request')
     return new Response(null, { headers: corsHeaders })
   }
 
@@ -17,8 +25,12 @@ serve(async (req) => {
   const callId = url.searchParams.get('callId') || 'browser-test'
   const assistantId = url.searchParams.get('assistantId') || 'demo'
 
+  console.log('📋 WebSocket parameters', { callId, assistantId })
+
   // Check if this is a WebSocket upgrade request
-  if (req.headers.get('upgrade') !== 'websocket') {
+  const upgradeHeader = req.headers.get('upgrade')
+  if (upgradeHeader?.toLowerCase() !== 'websocket') {
+    console.log('❌ Not a WebSocket upgrade request', { upgrade: upgradeHeader })
     return new Response('Expected websocket connection', { 
       status: 400,
       headers: corsHeaders 
@@ -35,612 +47,399 @@ serve(async (req) => {
     })
   }
 
-  console.log('🔄 Upgrading to WebSocket connection...', { callId, assistantId })
-  const { socket, response } = Deno.upgradeWebSocket(req)
+  console.log('✅ OpenAI API key found, upgrading to WebSocket...')
 
-  const supabaseClient = createClient(
-    Deno.env.get('SUPABASE_URL') ?? '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-  )
+  try {
+    const { socket, response } = Deno.upgradeWebSocket(req)
 
-  let assistant: any = null
-  let conversationHistory: Array<{ role: string; content: string }> = []
-  let hasSpoken = false
-  let isCallActive = false
-  let audioBuffer: Array<string> = []
-  let lastProcessTime = Date.now()
-  let lastHeartbeat = Date.now()
-  let isProcessingAudio = false
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    )
 
-  // Enhanced logging function with detailed context
-  const log = (message: string, data?: any) => {
-    const timestamp = new Date().toISOString()
-    const context = {
-      callId,
-      assistantId,
-      hasSpoken,
-      isCallActive,
-      bufferLength: audioBuffer.length,
-      conversationLength: conversationHistory.length,
-      isProcessingAudio
+    let assistant: any = null
+    let conversationHistory: Array<{ role: string; content: string }> = []
+    let hasSpoken = false
+    let isCallActive = false
+    let audioBuffer: Array<string> = []
+    let lastProcessTime = Date.now()
+    let isProcessingAudio = false
+
+    // Enhanced logging function
+    const log = (message: string, data?: any) => {
+      const timestamp = new Date().toISOString()
+      console.log(`[${timestamp}] [Call: ${callId}] ${message}`, data || '')
     }
-    console.log(`[${timestamp}] [Call: ${callId}] ${message}`, data ? { ...context, data } : context)
-  }
 
-  // Get assistant configuration with error handling
-  if (assistantId && assistantId !== 'demo') {
-    try {
-      log('🔍 Fetching assistant configuration')
-      const { data: assistantData, error } = await supabaseClient
-        .from('assistants')
-        .select('*')
-        .eq('id', assistantId)
-        .single()
-      
-      if (error) {
-        log('⚠️ Error fetching assistant from database', error)
-      } else if (assistantData) {
-        assistant = assistantData
-        log('✅ Assistant loaded from database', { 
-          name: assistant.name, 
-          voice_provider: assistant.voice_provider,
-          model: assistant.model 
-        })
+    // Get assistant configuration
+    if (assistantId && assistantId !== 'demo') {
+      try {
+        log('🔍 Fetching assistant configuration')
+        const { data: assistantData, error } = await supabaseClient
+          .from('assistants')
+          .select('*')
+          .eq('id', assistantId)
+          .single()
+        
+        if (error) {
+          log('⚠️ Error fetching assistant from database', error)
+        } else if (assistantData) {
+          assistant = assistantData
+          log('✅ Assistant loaded from database', { 
+            name: assistant.name, 
+            voice_provider: assistant.voice_provider 
+          })
+        }
+      } catch (error) {
+        log('⚠️ Exception fetching assistant, using default', error)
       }
-    } catch (error) {
-      log('⚠️ Exception fetching assistant, using default', error)
     }
-  }
 
-  // Default assistant configuration with enhanced settings
-  if (!assistant) {
-    assistant = {
-      name: 'Demo Assistant',
-      system_prompt: 'You are a helpful AI assistant from First Choice LLC. Be friendly, professional, and concise. Keep responses under 2 sentences and under 30 words. Respond naturally to what the user says and ask engaging follow-up questions.',
-      first_message: 'Hello! This is your AI assistant from First Choice LLC. How are you doing today?',
-      voice_provider: 'openai',
-      voice_id: 'alloy',
-      model: 'gpt-4o-mini',
-      temperature: 0.8,
-      max_tokens: 50
-    }
-    log('✅ Using default assistant configuration')
-  }
-
-  // Initialize conversation with system prompt
-  conversationHistory.push({
-    role: 'system',
-    content: assistant.system_prompt
-  })
-
-  log('🎯 Conversation initialized', { systemPromptLength: assistant.system_prompt.length })
-
-  socket.onopen = async () => {
-    log('🔌 WebSocket connected successfully')
-    isCallActive = true
-    lastHeartbeat = Date.now()
-    
-    // Send connection acknowledgment with enhanced details
-    socket.send(JSON.stringify({
-      type: 'connection_established',
-      callId: callId,
-      assistantId: assistantId,
-      assistant: {
-        name: assistant.name,
-        voice_provider: assistant.voice_provider,
-        model: assistant.model
-      },
-      serverInfo: {
-        timestamp: Date.now(),
-        timezone: Deno.env.get('TZ') || 'UTC',
-        version: '1.0'
+    // Default assistant configuration
+    if (!assistant) {
+      assistant = {
+        name: 'Demo Assistant',
+        system_prompt: 'You are a helpful AI assistant. Be friendly, professional, and concise. Keep responses under 2 sentences.',
+        first_message: 'Hello! This is your AI assistant. How can I help you today?',
+        voice_provider: 'openai',
+        voice_id: 'alloy',
+        model: 'gpt-4o-mini',
+        temperature: 0.8,
+        max_tokens: 50
       }
-    }))
-
-    // Send greeting immediately after connection
-    if (!hasSpoken && assistant.first_message) {
-      log('🎤 Sending initial greeting')
-      setTimeout(async () => {
-        await sendAIResponse(assistant.first_message)
-        hasSpoken = true
-      }, 1000) // Small delay to ensure client is ready
+      log('✅ Using default assistant configuration')
     }
-  }
 
-  socket.onmessage = async (event) => {
-    try {
-      const message = JSON.parse(event.data)
-      lastHeartbeat = Date.now()
+    // Initialize conversation
+    conversationHistory.push({
+      role: 'system',
+      content: assistant.system_prompt
+    })
+
+    socket.onopen = async () => {
+      log('🔌 WebSocket connected successfully')
+      isCallActive = true
       
-      log('📨 Received message', { 
-        type: message.event || message.type,
-        hasPayload: !!message.media?.payload,
-        textLength: message.text?.length,
-        timestamp: Date.now()
-      })
-      
-      switch (message.event || message.type) {
-        case 'connected':
-        case 'connection_established':
-          log('✅ Client confirmed connection')
-          // Send greeting if not already sent
-          if (!hasSpoken && assistant.first_message) {
-            log('🎤 Sending greeting after client confirmation')
-            await sendAIResponse(assistant.first_message)
-            hasSpoken = true
-          }
-          break
-
-        case 'media':
-          if (isCallActive && message.media?.payload && !isProcessingAudio) {
-            log('🎵 Received audio data', { payloadLength: message.media.payload.length })
-            await handleIncomingAudio(message.media.payload)
-          } else {
-            if (isProcessingAudio) {
-              log('⚠️ Skipping audio - already processing')
-            } else {
-              log('⚠️ Received media message but missing payload or call inactive')
-            }
-          }
-          break
-
-        case 'text_input':
-          if (message.text && message.text.trim()) {
-            log('💬 Text input received', { text: message.text, length: message.text.length })
-            await processTextInput(message.text)
-          } else {
-            log('⚠️ Empty text input received')
-          }
-          break
-
-        case 'request_greeting':
-          log('🎤 Greeting requested by client')
-          if (assistant.first_message) {
-            await sendAIResponse(assistant.first_message)
-          }
-          break
-
-        case 'ping':
-          log('💓 Heartbeat ping received')
-          socket.send(JSON.stringify({
-            type: 'pong',
-            timestamp: Date.now(),
-            serverTime: new Date().toISOString()
-          }))
-          break
-
-        case 'stop':
-        case 'disconnect':
-          log('🛑 Call ended by client')
-          isCallActive = false
-          break
-
-        default:
-          log('❓ Unknown event received', { event: message.event || message.type })
-      }
-    } catch (error) {
-      log('❌ Error processing WebSocket message', error)
+      // Send connection acknowledgment
       socket.send(JSON.stringify({
-        type: 'error',
-        message: 'Error processing message',
-        details: error.message,
+        type: 'connection_established',
+        callId: callId,
+        assistantId: assistantId,
+        assistant: {
+          name: assistant.name,
+          voice_provider: assistant.voice_provider
+        },
         timestamp: Date.now()
       }))
-    }
-  }
 
-  socket.onclose = (event) => {
-    log('🔌 WebSocket closed', { code: event.code, reason: event.reason })
-    isCallActive = false
-    audioBuffer = [] // Clear buffer on close
-  }
-
-  socket.onerror = (error) => {
-    log('❌ WebSocket error', error)
-    isCallActive = false
-  }
-
-  // Enhanced audio handling with better validation and processing control
-  async function handleIncomingAudio(audioPayload: string) {
-    try {
-      if (!audioPayload || audioPayload.length < 10) {
-        log('⚠️ Audio payload too small, skipping', { length: audioPayload.length })
-        return
+      // Send greeting after short delay
+      if (!hasSpoken && assistant.first_message) {
+        log('🎤 Sending initial greeting')
+        setTimeout(async () => {
+          await sendAIResponse(assistant.first_message)
+          hasSpoken = true
+        }, 1000)
       }
+    }
 
-      // Add to buffer
-      audioBuffer.push(audioPayload)
-      log('📝 Added audio to buffer', { 
-        bufferLength: audioBuffer.length,
-        payloadLength: audioPayload.length 
-      })
-      
-      // Process audio every 3 seconds or when buffer reaches threshold
-      const now = Date.now()
-      const shouldProcess = (now - lastProcessTime > 3000) || (audioBuffer.length > 20)
-      
-      if (shouldProcess && !isProcessingAudio) {
-        isProcessingAudio = true
-        lastProcessTime = now
+    socket.onmessage = async (event) => {
+      try {
+        const message = JSON.parse(event.data)
+        log('📨 Received message', { type: message.event || message.type })
         
-        // Combine buffer and process
-        const combinedAudio = audioBuffer.join('')
-        audioBuffer = [] // Clear buffer immediately
-        
-        if (combinedAudio.length > 200) { // Increased minimum size
-          log('🎵 Processing combined audio chunk', { 
-            combinedLength: combinedAudio.length,
-            processingDelay: now - lastProcessTime 
-          })
-          await processAudioChunk(combinedAudio)
-        } else {
-          log('⚠️ Combined audio too small, skipping processing', { length: combinedAudio.length })
+        switch (message.event || message.type) {
+          case 'connected':
+          case 'connection_established':
+            log('✅ Client confirmed connection')
+            if (!hasSpoken && assistant.first_message) {
+              await sendAIResponse(assistant.first_message)
+              hasSpoken = true
+            }
+            break
+
+          case 'media':
+            if (isCallActive && message.media?.payload && !isProcessingAudio) {
+              await handleIncomingAudio(message.media.payload)
+            }
+            break
+
+          case 'text_input':
+            if (message.text && message.text.trim()) {
+              log('💬 Text input received', { text: message.text })
+              await processTextInput(message.text)
+            }
+            break
+
+          case 'request_greeting':
+            log('🎤 Greeting requested by client')
+            if (assistant.first_message) {
+              await sendAIResponse(assistant.first_message)
+            }
+            break
+
+          case 'ping':
+            socket.send(JSON.stringify({
+              type: 'pong',
+              timestamp: Date.now()
+            }))
+            break
+
+          case 'stop':
+          case 'disconnect':
+            log('🛑 Call ended by client')
+            isCallActive = false
+            break
+
+          default:
+            log('❓ Unknown event received', { event: message.event || message.type })
         }
+      } catch (error) {
+        log('❌ Error processing WebSocket message', error)
+        socket.send(JSON.stringify({
+          type: 'error',
+          message: 'Error processing message',
+          timestamp: Date.now()
+        }))
+      }
+    }
+
+    socket.onclose = (event) => {
+      log('🔌 WebSocket closed', { code: event.code, reason: event.reason })
+      isCallActive = false
+    }
+
+    socket.onerror = (error) => {
+      log('❌ WebSocket error', error)
+      isCallActive = false
+    }
+
+    async function handleIncomingAudio(audioPayload: string) {
+      try {
+        audioBuffer.push(audioPayload)
         
+        const now = Date.now()
+        if ((now - lastProcessTime > 3000) || (audioBuffer.length > 15)) {
+          isProcessingAudio = true
+          lastProcessTime = now
+          
+          const combinedAudio = audioBuffer.join('')
+          audioBuffer = []
+          
+          if (combinedAudio.length > 100) {
+            await processAudioChunk(combinedAudio)
+          }
+          
+          isProcessingAudio = false
+        }
+      } catch (error) {
+        log('❌ Error handling incoming audio', error)
         isProcessingAudio = false
       }
-    } catch (error) {
-      log('❌ Error handling incoming audio', error)
-      isProcessingAudio = false
     }
-  }
 
-  async function processTextInput(text: string) {
-    try {
-      log('💭 Processing text input', { text, length: text.length })
-      
-      // Add user message to conversation
-      conversationHistory.push({
-        role: 'user',
-        content: text
-      })
-
-      log('📚 Updated conversation history', { messageCount: conversationHistory.length })
-
-      // Generate AI response
-      const aiResponse = await generateAIResponse()
-      
-      if (aiResponse) {
-        log('🤖 AI response generated', { response: aiResponse, length: aiResponse.length })
-        await sendAIResponse(aiResponse)
-        
-        // Add AI response to conversation
-        conversationHistory.push({
-          role: 'assistant',
-          content: aiResponse
-        })
-
-        // Log conversation to database
-        await logConversation(text, aiResponse)
-      } else {
-        log('⚠️ No AI response generated')
-      }
-    } catch (error) {
-      log('❌ Error processing text input', error)
-      await sendErrorResponse('I apologize, I\'m having trouble processing that. Could you try again?')
-    }
-  }
-
-  async function processAudioChunk(audioData: string) {
-    try {
-      log('🎤 Starting audio transcription', { 
-        dataLength: audioData.length,
-        estimatedDuration: Math.round(audioData.length / 4000) // Rough estimate
-      })
-      
-      const startTime = Date.now()
-      const transcript = await transcribeAudio(audioData)
-      const transcriptionTime = Date.now() - startTime
-      
-      if (transcript && transcript.trim().length > 3) { // Increased minimum length
-        log('👤 User said', { 
-          transcript, 
-          transcriptionTime,
-          confidence: transcript.length > 15 ? 'high' : 'medium'
-        })
-        
-        // Send transcript event to client
-        socket.send(JSON.stringify({
-          type: 'transcript',
-          text: transcript,
-          confidence: transcript.length > 15 ? 0.9 : 0.7,
-          transcriptionTime: transcriptionTime,
-          timestamp: Date.now()
-        }))
-        
-        // Process as text input
-        await processTextInput(transcript)
-      } else {
-        log('🔇 No meaningful transcript received', {
-          transcript: transcript || '(empty)',
-          transcriptionTime,
-          audioDataLength: audioData.length
-        })
-      }
-    } catch (error) {
-      log('❌ Error processing audio chunk', error)
-      // Send error notification to client
-      socket.send(JSON.stringify({
-        type: 'error',
-        message: 'Error processing audio. Please try speaking again.',
-        details: error.message,
-        timestamp: Date.now()
-      }))
-    }
-  }
-
-  async function transcribeAudio(audioData: string): Promise<string> {
-    try {
-      log('🎤 Transcribing audio with OpenAI Whisper', { dataLength: audioData.length })
-      
-      // Decode base64 audio with enhanced error handling
-      let binaryData: Uint8Array
+    async function processTextInput(text: string) {
       try {
-        binaryData = Uint8Array.from(atob(audioData), c => c.charCodeAt(0))
-        log('✅ Decoded binary data', { binaryDataLength: binaryData.length })
-      } catch (decodeError) {
-        log('❌ Base64 decode error', decodeError)
+        log('💭 Processing text input', { text })
+        
+        conversationHistory.push({
+          role: 'user',
+          content: text
+        })
+
+        const aiResponse = await generateAIResponse()
+        
+        if (aiResponse) {
+          await sendAIResponse(aiResponse)
+          conversationHistory.push({
+            role: 'assistant',
+            content: aiResponse
+          })
+        }
+      } catch (error) {
+        log('❌ Error processing text input', error)
+        await sendErrorResponse('I apologize, I\'m having trouble processing that. Could you try again?')
+      }
+    }
+
+    async function processAudioChunk(audioData: string) {
+      try {
+        log('🎤 Starting audio transcription', { dataLength: audioData.length })
+        
+        const transcript = await transcribeAudio(audioData)
+        
+        if (transcript && transcript.trim().length > 3) {
+          log('👤 User said', { transcript })
+          
+          socket.send(JSON.stringify({
+            type: 'transcript',
+            text: transcript,
+            timestamp: Date.now()
+          }))
+          
+          await processTextInput(transcript)
+        }
+      } catch (error) {
+        log('❌ Error processing audio chunk', error)
+      }
+    }
+
+    async function transcribeAudio(audioData: string): Promise<string> {
+      try {
+        const binaryData = Uint8Array.from(atob(audioData), c => c.charCodeAt(0))
+        
+        const formData = new FormData()
+        const audioBlob = new Blob([binaryData], { type: 'audio/wav' })
+        formData.append('file', audioBlob, 'audio.wav')
+        formData.append('model', 'whisper-1')
+        formData.append('language', 'en')
+
+        const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${openaiApiKey}`
+          },
+          body: formData
+        })
+
+        if (!response.ok) {
+          log('❌ Transcription API error', { status: response.status })
+          return ''
+        }
+
+        const result = await response.json()
+        return result.text || ''
+      } catch (error) {
+        log('❌ Transcription error', error)
         return ''
       }
-      
-      // Create form data for OpenAI Whisper
-      const formData = new FormData()
-      const audioBlob = new Blob([binaryData], { type: 'audio/wav' })
-      formData.append('file', audioBlob, 'audio.wav')
-      formData.append('model', 'whisper-1')
-      formData.append('language', 'en')
-      formData.append('response_format', 'json')
-      formData.append('temperature', '0.2') // Lower temperature for more accurate transcription
-
-      log('📡 Sending request to OpenAI Whisper API')
-      const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${openaiApiKey}`
-        },
-        body: formData
-      })
-
-      if (!response.ok) {
-        const errorText = await response.text()
-        log('❌ OpenAI Whisper API error', {
-          status: response.status,
-          statusText: response.statusText,
-          error: errorText
-        })
-        return ''
-      }
-
-      const result = await response.json()
-      const transcript = result.text || ''
-      
-      log('✅ Transcription successful', {
-        transcript,
-        length: transcript.length,
-        duration: result.duration,
-        language: result.language
-      })
-
-      return transcript.trim()
-    } catch (error) {
-      log('❌ Transcription error', error)
-      return ''
     }
-  }
 
-  async function generateAIResponse(): Promise<string> {
-    try {
-      log('🧠 Generating AI response', { 
-        model: assistant.model,
-        historyLength: conversationHistory.length 
-      })
+    async function generateAIResponse(): Promise<string> {
+      try {
+        log('🧠 Generating AI response')
 
-      // Keep only recent conversation history to stay within token limits
-      const recentHistory = conversationHistory.slice(-10) // Increased from 8 to 10
-      
-      const requestBody = {
-        model: assistant.model || 'gpt-4o-mini',
-        messages: recentHistory,
-        temperature: assistant.temperature || 0.8,
-        max_tokens: assistant.max_tokens || 60, // Increased slightly
-        presence_penalty: 0.1,
-        frequency_penalty: 0.1,
-        top_p: 0.9
-      }
-
-      log('📡 Calling OpenAI API', { 
-        model: requestBody.model,
-        messageCount: recentHistory.length,
-        maxTokens: requestBody.max_tokens
-      })
-
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${openaiApiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
-      })
-
-      if (!response.ok) {
-        const errorText = await response.text()
-        log('❌ OpenAI API error', { 
-          status: response.status, 
-          statusText: response.statusText,
-          error: errorText 
+        const recentHistory = conversationHistory.slice(-8)
+        
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${openaiApiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: assistant.model || 'gpt-4o-mini',
+            messages: recentHistory,
+            temperature: assistant.temperature || 0.8,
+            max_tokens: assistant.max_tokens || 60
+          })
         })
-        throw new Error(`OpenAI API error: ${response.status}`)
+
+        if (!response.ok) {
+          log('❌ AI generation error', { status: response.status })
+          return 'I\'m having trouble processing that right now. Could you try again?'
+        }
+
+        const result = await response.json()
+        const aiResponse = result.choices?.[0]?.message?.content || 'I didn\'t catch that. Could you repeat?'
+        
+        log('✅ AI response generated', { response: aiResponse })
+        return aiResponse.trim()
+      } catch (error) {
+        log('❌ AI response generation error', error)
+        return 'I\'m having trouble processing that right now. Could you try again?'
       }
-
-      const result = await response.json()
-      const aiResponse = result.choices?.[0]?.message?.content || 'I apologize, but I didn\'t catch that. Could you please repeat?'
-      
-      log('✅ OpenAI response received', { 
-        response: aiResponse,
-        usage: result.usage,
-        finishReason: result.choices?.[0]?.finish_reason
-      })
-      
-      return aiResponse.trim()
-    } catch (error) {
-      log('❌ AI response generation error', error)
-      return 'I\'m having trouble processing that right now. Could you try again?'
     }
-  }
 
-  async function sendAIResponse(text: string) {
-    try {
-      log('🔊 Converting text to speech', { text, length: text.length })
-      
-      // Generate speech from text
-      const audioData = await textToSpeech(text)
-      
-      if (audioData) {
-        log('📤 Sending audio response via WebSocket', { audioLength: audioData.length })
+    async function sendAIResponse(text: string) {
+      try {
+        log('🔊 Converting text to speech', { text })
         
-        // Send audio response
-        socket.send(JSON.stringify({
-          type: 'audio_response',
-          audio: audioData,
-          text: text,
-          timestamp: Date.now(),
-          voice: assistant.voice_id,
-          duration: Math.round(text.length * 0.1) // Rough estimate
-        }))
+        const audioData = await textToSpeech(text)
         
-        // Also send text response for UI display
-        socket.send(JSON.stringify({
-          type: 'ai_response',
-          text: text,
-          timestamp: Date.now()
-        }))
-        
-        log('✅ Audio response sent successfully')
-      } else {
-        log('❌ Failed to generate audio, sending text only')
+        if (audioData) {
+          socket.send(JSON.stringify({
+            type: 'audio_response',
+            audio: audioData,
+            text: text,
+            timestamp: Date.now()
+          }))
+          
+          socket.send(JSON.stringify({
+            type: 'ai_response',
+            text: text,
+            timestamp: Date.now()
+          }))
+          
+          log('✅ Audio response sent successfully')
+        } else {
+          await sendErrorResponse(text)
+        }
+      } catch (error) {
+        log('❌ Error sending AI response', error)
         await sendErrorResponse(text)
       }
-    } catch (error) {
-      log('❌ Error sending AI response', error)
-      await sendErrorResponse(text)
     }
-  }
 
-  async function sendErrorResponse(text: string) {
-    try {
-      // Send text-only response as fallback
-      socket.send(JSON.stringify({
-        type: 'text_response',
-        text: text,
-        timestamp: Date.now(),
-        fallback: true
-      }))
-      log('📤 Sent text-only response')
-    } catch (error) {
-      log('❌ Error sending error response', error)
-    }
-  }
-
-  async function textToSpeech(text: string): Promise<string> {
-    try {
-      return await openAITTS(text)
-    } catch (error) {
-      log('❌ TTS error', error)
-      return ''
-    }
-  }
-
-  async function openAITTS(text: string): Promise<string> {
-    try {
-      log('🎙️ Calling OpenAI TTS API', { text, voice: assistant.voice_id })
-
-      const response = await fetch('https://api.openai.com/v1/audio/speech', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${openaiApiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'tts-1',
-          voice: assistant.voice_id || 'alloy',
-          input: text,
-          response_format: 'wav',
-          speed: 1.0
-        })
-      })
-
-      if (!response.ok) {
-        const errorText = await response.text()
-        log('❌ OpenAI TTS error', { 
-          status: response.status, 
-          statusText: response.statusText,
-          error: errorText 
-        })
-        throw new Error(`OpenAI TTS error: ${response.status}`)
+    async function sendErrorResponse(text: string) {
+      try {
+        socket.send(JSON.stringify({
+          type: 'text_response',
+          text: text,
+          timestamp: Date.now(),
+          fallback: true
+        }))
+      } catch (error) {
+        log('❌ Error sending error response', error)
       }
-
-      const audioBuffer = await response.arrayBuffer()
-      const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)))
-      
-      log('✅ OpenAI TTS successful', { 
-        audioLength: audioBuffer.byteLength,
-        base64Length: base64Audio.length 
-      })
-      
-      return base64Audio
-    } catch (error) {
-      log('❌ OpenAI TTS failed', error)
-      throw error
     }
-  }
 
-  async function logConversation(userMessage: string, aiResponse: string) {
-    try {
-      const { error } = await supabaseClient
-        .from('conversation_logs')
-        .insert([
-          {
-            call_id: callId,
-            speaker: 'user',
-            message: userMessage,
-            timestamp: new Date().toISOString()
+    async function textToSpeech(text: string): Promise<string> {
+      try {
+        const response = await fetch('https://api.openai.com/v1/audio/speech', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${openaiApiKey}`,
+            'Content-Type': 'application/json'
           },
-          {
-            call_id: callId,
-            speaker: 'assistant',
-            message: aiResponse,
-            timestamp: new Date().toISOString()
-          }
-        ])
-      
-      if (error) {
-        log('⚠️ Error logging conversation to database', error)
-      } else {
-        log('✅ Conversation logged successfully')
+          body: JSON.stringify({
+            model: 'tts-1',
+            voice: assistant.voice_id || 'alloy',
+            input: text,
+            response_format: 'wav'
+          })
+        })
+
+        if (!response.ok) {
+          log('❌ TTS error', { status: response.status })
+          return ''
+        }
+
+        const audioBuffer = await response.arrayBuffer()
+        const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)))
+        
+        log('✅ TTS successful', { audioLength: audioBuffer.byteLength })
+        return base64Audio
+      } catch (error) {
+        log('❌ TTS failed', error)
+        return ''
       }
-    } catch (error) {
-      log('⚠️ Exception logging conversation', error)
     }
+
+    log('✅ WebSocket handlers configured, returning response')
+    return response
+
+  } catch (error) {
+    console.error('❌ Critical error in voice-websocket function:', error)
+    return new Response(
+      JSON.stringify({ 
+        error: 'Internal server error',
+        details: error.message,
+        timestamp: Date.now()
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      }
+    )
   }
-
-  // Enhanced heartbeat monitor to detect dead connections
-  const heartbeatMonitor = setInterval(() => {
-    const now = Date.now()
-    if (now - lastHeartbeat > 90000) { // 90 seconds timeout (increased)
-      log('💔 Heartbeat timeout, closing connection')
-      socket.close(1000, 'Heartbeat timeout')
-      clearInterval(heartbeatMonitor)
-    } else if (now - lastHeartbeat > 60000) {
-      // Send warning at 60 seconds
-      log('⚠️ Heartbeat warning - no activity for 60 seconds')
-      socket.send(JSON.stringify({
-        type: 'heartbeat_warning',
-        lastActivity: lastHeartbeat,
-        timestamp: now
-      }))
-    }
-  }, 30000) // Check every 30 seconds
-
-  return response
 })

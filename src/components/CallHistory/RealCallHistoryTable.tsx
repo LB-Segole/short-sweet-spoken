@@ -1,13 +1,14 @@
+
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Phone, Clock, User, TrendingUp } from 'lucide-react';
+import { Clock } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 
 interface CallRecord {
   id: string;
-  created_at: string;
+  created_at: string | null;
   phone_number: string;
   status: string;
   duration: number | null;
@@ -35,7 +36,11 @@ const RealCallHistoryTable = () => {
         if (error) {
           setError(error.message);
         } else {
-          setCalls(data || []);
+          // Filter out records with null created_at
+          const validCalls = (data || []).filter((call): call is CallRecord => 
+            call.created_at !== null
+          );
+          setCalls(validCalls);
         }
       } catch (err: any) {
         setError(err.message || 'An unexpected error occurred');
@@ -47,7 +52,8 @@ const RealCallHistoryTable = () => {
     fetchCallHistory();
   }, []);
 
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString: string | null) => {
+    if (!dateString) return 'N/A';
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', {
       year: 'numeric',
@@ -116,7 +122,7 @@ const RealCallHistoryTable = () => {
                       <Badge
                         variant={
                           call.status === 'completed'
-                            ? 'success'
+                            ? 'default'
                             : call.status === 'failed'
                             ? 'destructive'
                             : 'secondary'
