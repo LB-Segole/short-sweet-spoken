@@ -1,10 +1,11 @@
+
 import React, { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Calendar, Users, Target, Phone } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { useCampaigns } from '@/hooks/useCampaigns';
 import { useAssistants } from '@/hooks/useAssistants';
 import { toast } from 'sonner';
@@ -39,19 +40,17 @@ const CampaignDialog: React.FC<CampaignDialogProps> = ({ trigger, onSuccess }) =
     setIsSubmitting(true);
     
     try {
-      const success = await createCampaign(formData);
-      if (success) {
-        toast.success('Campaign created successfully!');
-        setFormData({
-          name: '',
-          description: '',
-          assistant_id: '',
-          total_calls: 100,
-          status: 'draft'
-        });
-        setOpen(false);
-        onSuccess?.();
-      }
+      await createCampaign.mutateAsync(formData);
+      toast.success('Campaign created successfully!');
+      setFormData({
+        name: '',
+        description: '',
+        assistant_id: '',
+        total_calls: 100,
+        status: 'draft'
+      });
+      setOpen(false);
+      onSuccess?.();
     } catch (error) {
       console.error('Error creating campaign:', error);
       toast.error('Failed to create campaign');

@@ -9,7 +9,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Plus, Search, Edit, Trash2, Play, Pause, MoreHorizontal } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useCampaigns, Campaign } from '@/hooks/useCampaigns';
-import { CampaignDialog } from '@/components/Campaigns/CampaignDialog';
+import CampaignDialog from '@/components/Campaigns/CampaignDialog';
 import { formatDistanceToNow } from 'date-fns';
 
 const Campaigns = () => {
@@ -27,15 +27,6 @@ const Campaigns = () => {
     return matchesSearch && matchesStatus;
   });
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'active': return 'bg-green-500';
-      case 'paused': return 'bg-yellow-500';
-      case 'completed': return 'bg-gray-500';
-      default: return 'bg-gray-400';
-    }
-  };
-
   const getStatusVariant = (status: string) => {
     switch (status) {
       case 'active': return 'default';
@@ -45,15 +36,12 @@ const Campaigns = () => {
     }
   };
 
-  const handleCreateCampaign = (campaignData: Omit<Campaign, 'id' | 'created_at' | 'updated_at'>) => {
-    createCampaign.mutate(campaignData);
+  const handleCreateCampaign = () => {
+    setIsCreateDialogOpen(false);
   };
 
-  const handleUpdateCampaign = (campaignData: Omit<Campaign, 'id' | 'created_at' | 'updated_at'>) => {
-    if (editingCampaign) {
-      updateCampaign.mutate({ id: editingCampaign.id, ...campaignData });
-      setEditingCampaign(null);
-    }
+  const handleUpdateCampaign = () => {
+    setEditingCampaign(null);
   };
 
   const handleDeleteCampaign = () => {
@@ -223,20 +211,17 @@ const Campaigns = () => {
 
       {/* Create Campaign Dialog */}
       <CampaignDialog
-        isOpen={isCreateDialogOpen}
-        onClose={() => setIsCreateDialogOpen(false)}
-        onSave={handleCreateCampaign}
-        isLoading={createCampaign.isPending}
+        trigger={null}
+        onSuccess={handleCreateCampaign}
       />
 
       {/* Edit Campaign Dialog */}
-      <CampaignDialog
-        isOpen={!!editingCampaign}
-        onClose={() => setEditingCampaign(null)}
-        onSave={handleUpdateCampaign}
-        campaign={editingCampaign || undefined}
-        isLoading={updateCampaign.isPending}
-      />
+      {editingCampaign && (
+        <CampaignDialog
+          trigger={null}
+          onSuccess={handleUpdateCampaign}
+        />
+      )}
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!deletingCampaign} onOpenChange={() => setDeletingCampaign(null)}>
