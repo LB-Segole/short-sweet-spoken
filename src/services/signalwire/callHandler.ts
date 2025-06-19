@@ -1,5 +1,5 @@
 
-import { SignalWireConfig, MediaFrame, CallWebhookData, StreamEvent } from './types';
+import { SignalWireConfig, CallWebhookData } from './types';
 
 export class SignalWireCallHandler {
   private config: SignalWireConfig;

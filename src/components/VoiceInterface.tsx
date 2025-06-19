@@ -3,7 +3,7 @@ import React, { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Mic, MicOff, Phone, PhoneOff, Volume2, AlertCircle, Loader2, Activity } from 'lucide-react';
+import { Mic, MicOff, Phone, PhoneOff, Volume2, AlertCircle, Activity } from 'lucide-react';
 import { useVoiceOrchestrator } from '../hooks/useVoiceOrchestrator';
 import { toast } from 'sonner';
 
@@ -87,14 +87,8 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
     state,
     connect,
     disconnect,
-    handleSignalWireStream,
     initiateCall
-  } = useVoiceOrchestrator({
-    ...config,
-    onConnectionChange: handleConnectionChange,
-    onMessage: handleMessage,
-    onError: handleError
-  });
+  } = useVoiceOrchestrator(config);
 
   const handleConnect = async () => {
     try {
@@ -107,10 +101,12 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
       addLog('🔄 Connecting to DeepGram voice services...');
       
       await connect();
+      handleConnectionChange(true);
     } catch (error) {
       toast.error('Microphone access denied');
       addLog(`❌ Microphone access denied: ${error}`);
       console.error('Microphone Error:', error);
+      handleError(`Microphone access denied: ${error}`);
     }
   };
 
@@ -119,6 +115,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
     disconnect();
     setLastResponse('');
     setAudioActivity(false);
+    handleConnectionChange(false);
   };
 
   const handleTestCall = async () => {
@@ -131,6 +128,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
       addLog('✅ Test call initiated successfully');
     } catch (error) {
       addLog(`❌ Test call failed: ${error}`);
+      handleError(`Test call failed: ${error}`);
     }
   };
 

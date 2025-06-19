@@ -21,14 +21,6 @@ export const generateConversationResponse = async (
   context: ConversationContext
 ): Promise<ConversationResponse> => {
   try {
-    // Get conversation history
-    const { data: callLogs } = await supabase
-      .from('call_logs')
-      .select('speaker, message')
-      .eq('call_id', context.callId)
-      .order('timestamp', { ascending: true })
-      .limit(10);
-
     // Simple rule-based responses
     const input = userInput.toLowerCase().trim();
     
@@ -123,7 +115,7 @@ export const analyzeCustomerSentiment = (text: string): {
   const negativeWords = ['no', 'not interested', 'busy', 'stop', 'remove', 'annoying'];
   
   const positiveCount = positiveWords.filter(word => input.includes(word)).length;
-  const negativeCount = negativeWords.filter(word => input.includes(word)).length;
+  const negativeCount = negativeWords.filter(wor => input.includes(word)).length;
   
   let sentiment: 'positive' | 'neutral' | 'negative' = 'neutral';
   let intent = 'general';
@@ -143,6 +135,6 @@ export const analyzeCustomerSentiment = (text: string): {
 };
 
 // Generate follow-up messages
-export const generateFollowUp = (callSummary: string, customerInfo: any): string => {
+export const generateFollowUp = (callSummary: string): string => {
   return `Thank you for speaking with us today about ${callSummary}. We appreciate your interest in First Choice Solutions and look forward to helping your business succeed. Our team will follow up with you soon with more information tailored to your needs.`;
 };

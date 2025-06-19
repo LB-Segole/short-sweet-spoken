@@ -1,9 +1,9 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Phone, PhoneOff, Mic, MicOff, Volume2 } from 'lucide-react';
+import { Phone, PhoneOff, Mic, Volume2 } from 'lucide-react';
 import { useVoiceOrchestrator } from '../hooks/useVoiceOrchestrator';
 
 interface VoiceCallInterfaceProps {
@@ -27,8 +27,7 @@ const VoiceCallInterface: React.FC<VoiceCallInterfaceProps> = ({
     state,
     connect,
     disconnect,
-    initiateCall,
-    handleSignalWireStream
+    initiateCall
   } = useVoiceOrchestrator({
     deepgramApiKey,
     signalwireConfig

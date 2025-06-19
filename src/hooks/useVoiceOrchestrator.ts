@@ -35,7 +35,6 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
   const sttClient = useRef<DeepgramSTTClient | null>(null);
   const ttsClient = useRef<DeepgramTTSClient | null>(null);
   const callHandler = useRef<SignalWireCallHandler | null>(null);
-  const audioBuffer = useRef<Uint8Array[]>([]);
   const streamSid = useRef<string | null>(null);
 
   useEffect(() => {
