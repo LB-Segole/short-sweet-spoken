@@ -1,8 +1,9 @@
+
 import { createClient, LiveTranscriptionEvents } from '@deepgram/sdk';
 
-const deepgram = createClient(process.env.Deepgram_API!);
+const deepgram = createClient(import.meta.env.VITE_DEEPGRAM_API_KEY || '');
 
-export interface TranscriptionResult {
+export interface TranscriptResult {
   transcript: string;
   confidence: number;
   words: Array<{
@@ -13,7 +14,7 @@ export interface TranscriptionResult {
   }>;
 }
 
-export const transcribeAudio = async (audioBuffer: Buffer): Promise<TranscriptionResult> => {
+export const transcribeAudio = async (audioBuffer: Buffer): Promise<TranscriptResult> => {
   try {
     const { result, error } = await deepgram.listen.prerecorded.transcribeFile(
       audioBuffer,
@@ -50,7 +51,7 @@ export const transcribeAudio = async (audioBuffer: Buffer): Promise<Transcriptio
   }
 };
 
-export const transcribeAudioFromUrl = async (audioUrl: string): Promise<TranscriptionResult> => {
+export const transcribeAudioFromUrl = async (audioUrl: string): Promise<TranscriptResult> => {
   try {
     const { result, error } = await deepgram.listen.prerecorded.transcribeUrl(
       { url: audioUrl },
@@ -83,7 +84,7 @@ export const transcribeAudioFromUrl = async (audioUrl: string): Promise<Transcri
   }
 };
 
-// Real-time transcription for live calls
+// Real-time transcription for live calls using DeepGram only
 export class LiveTranscription {
   private connection: any;
   private isConnected: boolean = false;
@@ -144,3 +145,26 @@ export class LiveTranscription {
     }
   }
 }
+
+// Text-to-Speech using DeepGram
+export const generateSpeech = async (text: string): Promise<ArrayBuffer> => {
+  try {
+    const response = await fetch('https://api.deepgram.com/v1/speak?model=aura-asteria-en', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Token ${import.meta.env.VITE_DEEPGRAM_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ text })
+    });
+
+    if (!response.ok) {
+      throw new Error(`DeepGram TTS error: ${response.status}`);
+    }
+
+    return await response.arrayBuffer();
+  } catch (error) {
+    console.error('DeepGram TTS failed:', error);
+    throw new Error('Speech generation failed');
+  }
+};

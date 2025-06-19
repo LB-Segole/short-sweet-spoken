@@ -2,15 +2,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v3.5');
-console.log('🔧 Environment check:', {
-  SUPABASE_URL: Deno.env.get('SUPABASE_URL') ? '✅ Set' : '❌ Missing',
-  SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? '✅ Set' : '❌ Missing',
-  SIGNALWIRE_PROJECT_ID: Deno.env.get('SIGNALWIRE_PROJECT_ID') ? '✅ Set' : '❌ Missing',
-  SIGNALWIRE_TOKEN: Deno.env.get('SIGNALWIRE_TOKEN') ? '✅ Set' : '❌ Missing',
-  SIGNALWIRE_SPACE_URL: Deno.env.get('SIGNALWIRE_SPACE_URL') ? '✅ Set' : '❌ Missing',
-  SIGNALWIRE_PHONE_NUMBER: Deno.env.get('SIGNALWIRE_PHONE_NUMBER') ? '✅ Set' : '❌ Missing'
-});
+console.log('🚀 Edge Function initialized - make-outbound-call v4.0 (DeepGram Only)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -26,26 +18,20 @@ interface CallRequest {
   squadId?: string
 }
 
-// Helper function to convert any phone number format to E.164
 const formatToE164 = (phoneNumber: string): string => {
-  // Remove all non-digit characters
   const digitsOnly = phoneNumber.replace(/\D/g, '');
   
-  // If it already starts with country code (11+ digits), add + prefix
   if (digitsOnly.length >= 11) {
     return `+${digitsOnly}`;
   }
   
-  // If it's 10 digits, assume US number and add +1
   if (digitsOnly.length === 10) {
     return `+1${digitsOnly}`;
   }
   
-  // Return with + prefix for other cases
   return `+${digitsOnly}`;
 };
 
-// Proper XML escaping function for LaML/TwiML
 const escapeXmlContent = (text: string): string => {
   if (!text) return '';
   return text
@@ -54,29 +40,21 @@ const escapeXmlContent = (text: string): string => {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ''); // Remove control characters
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
 };
 
-// Generate valid TwiML/LaML document
-const generateValidTwiML = (greeting: string, websocketUrl: string, callId: string, assistantId: string, userId: string): string => {
-  // Ensure greeting is safe for XML
+const generateValidTwiML = (greeting: string, websocketUrl: string): string => {
   const safeGreeting = escapeXmlContent(greeting || 'Hello! You are now connected to your AI assistant.');
   
-  // Validate WebSocket URL format
   if (!websocketUrl.startsWith('wss://') && !websocketUrl.startsWith('ws://')) {
     throw new Error('Invalid WebSocket URL format');
   }
 
-  // Generate clean, valid TwiML
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="alice">${safeGreeting}</Say>
   <Connect>
-    <Stream url="${websocketUrl}">
-      <Parameter name="callId" value="${callId}" />
-      <Parameter name="assistantId" value="${assistantId}" />
-      <Parameter name="userId" value="${userId}" />
-    </Stream>
+    <Stream url="${websocketUrl}" />
   </Connect>
 </Response>`;
 
@@ -84,45 +62,35 @@ const generateValidTwiML = (greeting: string, websocketUrl: string, callId: stri
 };
 
 serve(async (req) => {
-  console.log('📞 make-outbound-call invoked:', {
+  console.log('📞 make-outbound-call invoked (DeepGram only):', {
     method: req.method,
     url: req.url,
     timestamp: new Date().toISOString()
   });
 
   if (req.method === 'OPTIONS') {
-    console.log('✅ CORS preflight handled');
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    // Parse request body
-    let requestBody: CallRequest;
-    try {
-      requestBody = await req.json();
-      console.log('📋 Request parsed:', { 
-        phoneNumber: requestBody.phoneNumber?.substring(0, 7) + '***',
-        assistantId: requestBody.assistantId 
-      });
-    } catch (error) {
-      console.error('❌ Invalid JSON body:', error);
-      return new Response(
-        JSON.stringify({ success: false, error: 'Invalid JSON in request body' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-      );
-    }
+    const requestBody: CallRequest = await req.json();
+    console.log('📋 Request parsed:', { 
+      phoneNumber: requestBody.phoneNumber?.substring(0, 7) + '***',
+      assistantId: requestBody.assistantId 
+    });
 
-    // Validate required environment variables - including SIGNALWIRE_PHONE_NUMBER
+    // Validate required environment variables (removed OpenAI check)
     const requiredEnvVars = [
       'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 
-      'SIGNALWIRE_PROJECT_ID', 'SIGNALWIRE_TOKEN', 'SIGNALWIRE_SPACE_URL', 'SIGNALWIRE_PHONE_NUMBER'
+      'SIGNALWIRE_PROJECT_ID', 'SIGNALWIRE_TOKEN', 'SIGNALWIRE_SPACE_URL', 'SIGNALWIRE_PHONE_NUMBER',
+      'DEEPGRAM_API_KEY'
     ];
     
     for (const envVar of requiredEnvVars) {
       if (!Deno.env.get(envVar)) {
         console.error(`❌ Missing required env var: ${envVar}`);
         return new Response(
-          JSON.stringify({ success: false, error: `Server configuration error: Missing ${envVar}. Please configure this in Supabase Edge Function secrets.` }),
+          JSON.stringify({ success: false, error: `Server configuration error: Missing ${envVar}` }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
         );
       }
@@ -130,24 +98,18 @@ serve(async (req) => {
 
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-      {
-        auth: { autoRefreshToken: false, persistSession: false },
-        db: { schema: 'public' },
-        global: { headers: { 'x-application-name': 'voice-ai-outbound-calls' } }
-      }
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
     const { phoneNumber, assistantId, campaignId, contactId, squadId } = requestBody;
 
-    // Enhanced phone number validation
+    // Validate phone number format
     const phoneRegex = /^\+[1-9]\d{10,14}$/;
     if (!phoneRegex.test(phoneNumber)) {
-      console.error('❌ Invalid phone format:', phoneNumber);
       return new Response(
         JSON.stringify({
           success: false,
-          error: `Invalid phone number format: ${phoneNumber}. Must be E.164 format (e.g., +12037936539)`
+          error: `Invalid phone number format: ${phoneNumber}. Must be E.164 format`
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       );
@@ -156,7 +118,6 @@ serve(async (req) => {
     // Authenticate user
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
-      console.error('❌ No authorization header');
       return new Response(
         JSON.stringify({ success: false, error: 'Authorization header required' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
@@ -164,12 +125,9 @@ serve(async (req) => {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    console.log('🔐 Verifying user token...');
-
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token);
 
     if (authError || !user) {
-      console.error('❌ Authentication failed:', authError);
       return new Response(
         JSON.stringify({ success: false, error: 'Invalid or expired token' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
@@ -178,68 +136,23 @@ serve(async (req) => {
 
     console.log('✅ User authenticated:', user.id);
 
-    // Check active calls limit (but clean up old calls first)
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-    
-    // Update old pending/calling calls to completed
-    const { error: cleanupError } = await supabaseClient
-      .from('calls')
-      .update({ status: 'completed', updated_at: new Date().toISOString() })
-      .eq('user_id', user.id)
-      .in('status', ['pending', 'calling'])
-      .lt('created_at', fiveMinutesAgo);
-
-    if (cleanupError) {
-      console.warn('⚠️ Cleanup error (non-critical):', cleanupError);
-    } else {
-      console.log('🧹 Cleaned up old pending calls');
-    }
-
-    // Check current active calls
-    const { count: activeCalls, error: countError } = await supabaseClient
-      .from('calls')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', user.id)
-      .in('status', ['pending', 'calling', 'answered']);
-
-    if (countError) {
-      console.warn('⚠️ Count error (proceeding anyway):', countError);
-    }
-
-    const MAX_CONCURRENT_CALLS = 3;
-    if (activeCalls && activeCalls >= MAX_CONCURRENT_CALLS) {
-      console.error(`❌ Too many active calls: ${activeCalls}`);
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: `Maximum concurrent calls limit reached (${MAX_CONCURRENT_CALLS}). Please wait for current calls to complete.`,
-          activeCalls
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 429 }
-      );
-    }
-
-    // Load assistant
+    // Load assistant configuration
     let assistant = null;
     if (assistantId) {
-      console.log('👤 Loading assistant:', assistantId);
-      const { data: assistantData, error: assistantError } = await supabaseClient
+      const { data: assistantData } = await supabaseClient
         .from('assistants')
         .select('*')
         .eq('id', assistantId)
         .eq('user_id', user.id)
         .single();
 
-      if (!assistantError && assistantData) {
+      if (assistantData) {
         assistant = assistantData;
         console.log('✅ Assistant loaded:', assistant.name);
-      } else {
-        console.warn('⚠️ Assistant not found, using default');
       }
     }
 
     // Create call record
-    console.log('📝 Creating call record...');
     const { data: callData, error: callError } = await supabaseClient
       .from('calls')
       .insert({
@@ -256,14 +169,11 @@ serve(async (req) => {
       .single();
 
     if (callError) {
-      console.error('❌ Failed to create call record:', callError);
       return new Response(
         JSON.stringify({ success: false, error: `Database error: ${callError.message}` }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
       );
     }
-
-    console.log('✅ Call record created:', callData.id);
 
     // Get SignalWire configuration
     const signalwireProjectId = Deno.env.get('SIGNALWIRE_PROJECT_ID')!;
@@ -271,73 +181,27 @@ serve(async (req) => {
     const signalwireSpaceUrl = Deno.env.get('SIGNALWIRE_SPACE_URL')!;
     const rawSignalwirePhoneNumber = Deno.env.get('SIGNALWIRE_PHONE_NUMBER')!;
     
-    // Convert SignalWire phone number to E.164 format
     const signalwirePhoneNumber = formatToE164(rawSignalwirePhoneNumber);
 
-    console.log('📞 Phone number conversion:', {
-      raw: rawSignalwirePhoneNumber.substring(0, 7) + '***',
-      e164: signalwirePhoneNumber.substring(0, 7) + '***'
-    });
-
-    // Construct webhook URLs properly
+    // Construct URLs
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const statusCallbackUrl = `${supabaseUrl}/functions/v1/call-webhook`;
-    
-    // Construct WebSocket URL properly  
-    const wsUrl = `wss://${supabaseUrl.replace('https://', '').replace('http://', '')}/functions/v1/voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`;
+    const wsUrl = `wss://${supabaseUrl.replace('https://', '').replace('http://', '')}/functions/v1/deepgram-voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`;
 
-    console.log('🔗 WebSocket URL:', wsUrl);
-    console.log('🔗 Status callback URL:', statusCallbackUrl);
+    // Generate TwiML
+    const firstMessage = assistant?.first_message || 'Hello! You are now connected to your AI assistant powered by DeepGram.';
+    const twiml = generateValidTwiML(firstMessage, wsUrl);
 
-    // Generate valid TwiML with proper escaping and formatting
-    const firstMessage = assistant?.first_message || 'Hello! You are now connected to your AI assistant. How can I help you today?';
-    
-    let twiml: string;
-    try {
-      twiml = generateValidTwiML(
-        firstMessage,
-        wsUrl,
-        callData.id,
-        assistantId || 'demo',
-        user.id
-      );
-      console.log('✅ Valid TwiML generated');
-      console.log('📝 TwiML content:', twiml);
-    } catch (twimlError) {
-      console.error('❌ TwiML generation error:', twimlError);
-      return new Response(
-        JSON.stringify({ success: false, error: `TwiML generation error: ${twimlError.message}` }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-      );
-    }
-
-    console.log('📞 Initiating SignalWire call...');
-    
-    // Fixed call parameters with properly formatted E.164 phone number
+    // Make SignalWire API call
     const callParams = new URLSearchParams({
       To: phoneNumber,
       From: signalwirePhoneNumber,
       Twiml: twiml,
       StatusCallback: statusCallbackUrl,
-      StatusCallbackMethod: 'POST',
-      Timeout: '30'
+      StatusCallbackMethod: 'POST'
     });
-
-    // Add status callback events individually
-    callParams.append('StatusCallbackEvent', 'initiated');
-    callParams.append('StatusCallbackEvent', 'ringing');
-    callParams.append('StatusCallbackEvent', 'answered');
-    callParams.append('StatusCallbackEvent', 'completed');
 
     const signalwireUrl = `https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
-
-    console.log('🌐 SignalWire API call to:', signalwireUrl);
-    console.log('📞 Call params:', {
-      To: phoneNumber,
-      From: signalwirePhoneNumber,
-      StatusCallback: statusCallbackUrl,
-      TwimlLength: twiml.length
-    });
 
     const signalwireResponse = await fetch(signalwireUrl, {
       method: 'POST',
@@ -352,7 +216,6 @@ serve(async (req) => {
       const errorText = await signalwireResponse.text();
       console.error('❌ SignalWire API error:', signalwireResponse.status, errorText);
       
-      // Update call record to failed
       await supabaseClient
         .from('calls')
         .update({ status: 'failed', updated_at: new Date().toISOString() })
@@ -361,13 +224,7 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({
           success: false,
-          error: `SignalWire API error: ${signalwireResponse.status} - ${errorText}`,
-          details: {
-            fromNumber: signalwirePhoneNumber,
-            toNumber: phoneNumber,
-            statusCode: signalwireResponse.status,
-            twimlLength: twiml.length
-          }
+          error: `SignalWire API error: ${signalwireResponse.status} - ${errorText}`
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
       );
@@ -376,8 +233,8 @@ serve(async (req) => {
     const signalwireData = await signalwireResponse.json();
     console.log('✅ SignalWire call created:', signalwireData.sid);
 
-    // Update call record with SignalWire ID
-    const { error: updateError } = await supabaseClient
+    // Update call record
+    await supabaseClient
       .from('calls')
       .update({
         signalwire_call_id: signalwireData.sid,
@@ -386,55 +243,24 @@ serve(async (req) => {
       })
       .eq('id', callData.id);
 
-    if (updateError) {
-      console.warn('⚠️ Call update error (non-critical):', updateError);
-    }
-
-    // Log webhook event
-    await supabaseClient.from('webhook_logs').insert({
-      call_id: callData.id,
-      event_type: 'call_initiated',
-      event_data: {
-        signalwire_sid: signalwireData.sid,
-        phone_number: phoneNumber,
-        assistant_id: assistantId,
-        websocket_url: wsUrl,
-        from_number: signalwirePhoneNumber,
-        twiml_used: twiml,
-        twiml_valid: true
-      }
-    });
-
-    console.log('🎉 Call successfully initiated with valid TwiML!');
     return new Response(
       JSON.stringify({
         success: true,
         callId: signalwireData.sid,
         dbCallId: callData.id,
         status: 'calling',
-        message: 'Call initiated successfully with valid TwiML',
-        websocketUrl: wsUrl,
-        fromNumber: signalwirePhoneNumber,
-        toNumber: phoneNumber,
-        twimlValid: true
+        message: 'Call initiated successfully with DeepGram integration',
+        websocketUrl: wsUrl
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     );
 
   } catch (error) {
-    console.error('❌ Critical error:', {
-      message: error.message,
-      stack: error.stack,
-      name: error.name,
-      timestamp: new Date().toISOString()
-    });
-
+    console.error('❌ Critical error:', error);
     return new Response(
       JSON.stringify({
         success: false,
-        error: `Internal server error: ${error.message}`,
-        errorCode: error.name,
-        timestamp: new Date().toISOString()
+        error: `Internal server error: ${error.message}`
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
     );
