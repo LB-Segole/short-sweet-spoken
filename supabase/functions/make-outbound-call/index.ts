@@ -2,12 +2,36 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
 
-console.log('🚀 Edge Function initialized - make-outbound-call v18.0 (Enhanced Debugging)');
+console.log('🚀 Edge Function initialized - make-outbound-call v19.0 (Fixed E.164 formatting)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS'
+};
+
+// Helper function to format phone number to E.164
+const formatToE164 = (phoneNumber: string): string => {
+  // Remove all non-digit characters
+  const digits = phoneNumber.replace(/\D/g, '');
+  
+  // If it already starts with country code and has correct length
+  if (digits.length === 11 && digits.startsWith('1')) {
+    return `+${digits}`;
+  }
+  
+  // If it's a 10-digit US number, add country code
+  if (digits.length === 10) {
+    return `+1${digits}`;
+  }
+  
+  // If it's longer, assume it already has country code
+  if (digits.length > 10) {
+    return `+${digits}`;
+  }
+  
+  // If it's shorter, it's probably invalid
+  throw new Error(`Invalid phone number format: ${phoneNumber}`);
 };
 
 serve(async (req) => {
@@ -92,6 +116,23 @@ serve(async (req) => {
       });
     }
 
+    // Format SignalWire phone number to E.164
+    let formattedFromNumber;
+    try {
+      formattedFromNumber = formatToE164(signalwirePhoneNumber);
+      console.log(`📞 Formatted SignalWire phone number: ${signalwirePhoneNumber} → ${formattedFromNumber}`);
+    } catch (error) {
+      console.log(`❌ Invalid SignalWire phone number format: ${signalwirePhoneNumber}`);
+      return new Response(JSON.stringify({ 
+        error: 'Invalid SignalWire phone number configuration',
+        message: `SignalWire phone number must be in valid format, got: ${signalwirePhoneNumber}`,
+        timestamp
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
     // Get auth token from request
     const authHeader = req.headers.get('Authorization');
     console.log(`🔐 Auth header: ${authHeader ? 'Present' : 'MISSING'}`);
@@ -169,6 +210,23 @@ serve(async (req) => {
       });
     }
 
+    // Validate and format the destination phone number
+    let formattedToNumber;
+    try {
+      formattedToNumber = formatToE164(phoneNumber);
+      console.log(`📞 Formatted destination phone number: ${phoneNumber} → ${formattedToNumber}`);
+    } catch (error) {
+      console.log(`❌ Invalid destination phone number format: ${phoneNumber}`);
+      return new Response(JSON.stringify({ 
+        error: 'Invalid phone number format',
+        message: `Phone number must be in valid format, got: ${phoneNumber}`,
+        timestamp
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
     // Get assistant details
     const { data: assistant, error: assistantError } = await supabase
       .from('assistants')
@@ -232,8 +290,8 @@ serve(async (req) => {
     const signalwireUrl = `https://${signalwireSpace}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
     
     const formData = new URLSearchParams({
-      To: phoneNumber,
-      From: signalwirePhoneNumber,
+      To: formattedToNumber,
+      From: formattedFromNumber, // Use the properly formatted E.164 number
       Twiml: laml,
       StatusCallback: statusCallback,
       StatusCallbackMethod: 'POST'
@@ -241,8 +299,8 @@ serve(async (req) => {
 
     console.log(`📡 Making SignalWire API call: {
   url: "${signalwireUrl}",
-  to: "${phoneNumber}",
-  from: "${signalwirePhoneNumber}"
+  to: "${formattedToNumber}",
+  from: "${formattedFromNumber}"
 }`);
 
     const response = await fetch(signalwireUrl, {
@@ -285,7 +343,7 @@ serve(async (req) => {
         assistant_id: assistantId,
         campaign_id: campaignId || null,
         contact_id: contactId || null,
-        phone_number: phoneNumber,
+        phone_number: formattedToNumber,
         status: 'initiated',
         created_at: new Date().toISOString()
       });
