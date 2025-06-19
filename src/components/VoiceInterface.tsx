@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -43,32 +42,6 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
       toast.info('Voice connection closed');
       addLog('❌ Voice connection closed');
       setAudioActivity(false);
-    }
-  }, []);
-
-  const handleMessage = useCallback((message: any) => {
-    console.log('📨 Voice message received:', message);
-    
-    if (message.type === 'log') {
-      addLog(`📝 ${message.data.message}`);
-    } else if (message.type === 'transcript') {
-      addLog(`👤 You: "${message.data.text}" (confidence: ${message.data.confidence || 'unknown'})`);
-      toast.info(`You said: "${message.data.text}"`);
-    } else if (message.type === 'ai_response') {
-      const responseText = message.data.text || message.data;
-      addLog(`🤖 AI: "${responseText}"`);
-      setLastResponse(responseText);
-      toast.success(`AI responded: "${responseText}"`);
-    } else if (message.type === 'audio_response') {
-      addLog(`🔊 Audio response received: "${message.data.text}"`);
-      setAudioActivity(true);
-      setTimeout(() => setAudioActivity(false), 2000);
-    } else if (message.type === 'connection_established') {
-      addLog(`🤝 Connected to DeepGram assistant: ${message.data.assistant?.name || 'Unknown'}`);
-    } else if (message.type === 'greeting_sent') {
-      addLog(`👋 Greeting sent successfully via DeepGram TTS`);
-    } else {
-      addLog(`📨 ${message.type}: ${JSON.stringify(message.data).substring(0, 100)}...`);
     }
   }, []);
 

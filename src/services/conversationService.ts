@@ -1,5 +1,6 @@
 
-import { supabase } from '@/lib/supabase';
+
+import { ConversationResponse, ConversationContext } from './types';
 
 export interface ConversationResponse {
   text: string;
@@ -17,8 +18,7 @@ export interface ConversationContext {
 
 // Simple rule-based conversation system to replace OpenAI
 export const generateConversationResponse = async (
-  userInput: string, 
-  context: ConversationContext
+  userInput: string
 ): Promise<ConversationResponse> => {
   try {
     // Simple rule-based responses
@@ -115,7 +115,7 @@ export const analyzeCustomerSentiment = (text: string): {
   const negativeWords = ['no', 'not interested', 'busy', 'stop', 'remove', 'annoying'];
   
   const positiveCount = positiveWords.filter(word => input.includes(word)).length;
-  const negativeCount = negativeWords.filter(wor => input.includes(word)).length;
+  const negativeCount = negativeWords.filter(word => input.includes(word)).length;
   
   let sentiment: 'positive' | 'neutral' | 'negative' = 'neutral';
   let intent = 'general';
@@ -138,3 +138,4 @@ export const analyzeCustomerSentiment = (text: string): {
 export const generateFollowUp = (callSummary: string): string => {
   return `Thank you for speaking with us today about ${callSummary}. We appreciate your interest in First Choice Solutions and look forward to helping your business succeed. Our team will follow up with you soon with more information tailored to your needs.`;
 };
+
