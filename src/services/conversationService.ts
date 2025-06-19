@@ -1,5 +1,3 @@
-import { ConversationResponse, ConversationContext } from './types';
-
 export interface ConversationResponse {
   text: string;
   shouldTransfer: boolean;
