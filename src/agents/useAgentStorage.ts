@@ -36,14 +36,16 @@ export const useAgentStorage = () => {
       ...agentData,
       id: `agent_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       voiceSettings: {
-        model: agentData.voiceSettings?.model || 'aura-asteria-en',
-        speed: agentData.voiceSettings?.speed || 1.0,
-        stability: agentData.voiceSettings?.stability || 0.8
+        model: 'aura-asteria-en',
+        speed: 1.0,
+        stability: 0.8,
+        ...agentData.voiceSettings
       },
       conversationSettings: {
-        maxTurnLength: agentData.conversationSettings?.maxTurnLength || 200,
-        responseDelay: agentData.conversationSettings?.responseDelay || 500,
-        endCallPhrases: agentData.conversationSettings?.endCallPhrases || ['goodbye', 'end call', 'hang up']
+        maxTurnLength: 200,
+        responseDelay: 500,
+        endCallPhrases: ['goodbye', 'end call', 'hang up'],
+        ...agentData.conversationSettings
       },
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -57,22 +59,11 @@ export const useAgentStorage = () => {
   const updateAgent = async (agentId: string, agentData: Partial<CreateAgentRequest>): Promise<Agent | null> => {
     const newAgents = agents.map(agent => {
       if (agent.id === agentId) {
-        const updatedAgent: Agent = {
+        return {
           ...agent,
           ...agentData,
-          voiceSettings: {
-            model: agentData.voiceSettings?.model || agent.voiceSettings.model,
-            speed: agentData.voiceSettings?.speed || agent.voiceSettings.speed,
-            stability: agentData.voiceSettings?.stability || agent.voiceSettings.stability
-          },
-          conversationSettings: {
-            maxTurnLength: agentData.conversationSettings?.maxTurnLength || agent.conversationSettings.maxTurnLength,
-            responseDelay: agentData.conversationSettings?.responseDelay || agent.conversationSettings.responseDelay,
-            endCallPhrases: agentData.conversationSettings?.endCallPhrases || agent.conversationSettings.endCallPhrases
-          },
           updatedAt: new Date().toISOString()
         };
-        return updatedAgent;
       }
       return agent;
     });
