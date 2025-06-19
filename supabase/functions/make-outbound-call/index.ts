@@ -1,7 +1,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
 
-console.log('🚀 Edge Function initialized - make-outbound-call v22.0 (Fixed LaML URL encoding)');
+console.log('🚀 Edge Function initialized - make-outbound-call v23.0 (Fixed database insertion)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -335,13 +335,13 @@ serve(async (req) => {
     const callData = await response.json();
     console.log(`✅ Call initiated successfully: ${callData.sid}`);
 
-    // Store call record in database
+    // Store call record in database with correct field mapping
     const { error: dbError } = await supabase
       .from('calls')
       .insert({
         id: callId,
         user_id: user.id,
-        external_id: callData.sid,
+        signalwire_call_id: callData.sid, // Use signalwire_call_id instead of external_id
         assistant_id: assistantId,
         campaign_id: campaignId || null,
         contact_id: contactId || null,
