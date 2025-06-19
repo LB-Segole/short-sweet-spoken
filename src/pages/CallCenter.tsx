@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Phone } from 'lucide-react';
@@ -183,30 +184,6 @@ const CallCenter = () => {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const endCall = () => {
-    setIsCallActive(false);
-    setCallStatus('completed');
-    setCurrentCallId(null);
-    toast.success('Call ended');
-    
-    setTimeout(() => {
-      setCallStatus('idle');
-      setCallDuration(0);
-      setCurrentContact('');
-    }, 2000);
-  };
-
-  const toggleMute = () => {
-    setIsMuted(prev => !prev);
-    toast.info(isMuted ? 'Unmuted' : 'Muted');
-  };
-
-  const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   return (
