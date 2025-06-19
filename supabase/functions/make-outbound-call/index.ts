@@ -1,9 +1,7 @@
-
-
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
 
-console.log('🚀 Edge Function initialized - make-outbound-call v21.0 (Fixed LaML XML structure)');
+console.log('🚀 Edge Function initialized - make-outbound-call v22.0 (Fixed LaML URL encoding)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -263,7 +261,7 @@ serve(async (req) => {
   websocketUrl: "${websocketUrl.substring(0, 80)}..."
 }`);
 
-    // Generate LaML with corrected XML structure
+    // Generate LaML with proper XML encoding for all content
     const firstMessage = assistant.first_message || 'Hello! How can I help you today?';
     
     const escapeXml = (text: string): string => {
@@ -276,13 +274,14 @@ serve(async (req) => {
     };
 
     const escapedGreeting = escapeXml(firstMessage);
+    const escapedWebsocketUrl = escapeXml(websocketUrl);
 
-    // Fixed LaML structure - proper XML formatting
+    // Fixed LaML structure with properly escaped URLs
     const laml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="alice">${escapedGreeting}</Say>
   <Connect>
-    <Stream url="${websocketUrl}"></Stream>
+    <Stream url="${escapedWebsocketUrl}"></Stream>
   </Connect>
 </Response>`;
 
@@ -388,4 +387,3 @@ serve(async (req) => {
     });
   }
 });
-
