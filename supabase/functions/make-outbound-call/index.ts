@@ -2,7 +2,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v6.0 (Fixed LaML)');
+console.log('🚀 Edge Function initialized - make-outbound-call v7.0 (Fixed TwiML Structure)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -46,21 +46,32 @@ const escapeXmlContent = (text: string): string => {
 const generateValidTwiML = (greeting: string, websocketUrl: string): string => {
   const safeGreeting = escapeXmlContent(greeting || 'Hello! You are now connected to your AI assistant.');
   
-  // Validate WebSocket URL format
+  // Validate WebSocket URL format - must be properly formatted
   if (!websocketUrl.startsWith('wss://') && !websocketUrl.startsWith('ws://')) {
+    console.error('❌ Invalid WebSocket URL format:', websocketUrl);
     throw new Error('Invalid WebSocket URL format - must start with wss:// or ws://');
   }
 
-  // Generate proper TwiML with correct structure
+  // Generate proper SignalWire-compatible TwiML
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="alice">${safeGreeting}</Say>
   <Connect>
-    <Stream url="${websocketUrl}" />
+    <Stream url="${websocketUrl}"/>
   </Connect>
 </Response>`;
 
   console.log('📄 Generated TwiML:', twiml);
+  
+  // Validate TwiML structure before returning
+  if (!twiml.includes('<Response>') || !twiml.includes('</Response>')) {
+    throw new Error('Invalid TwiML structure - missing Response tags');
+  }
+  
+  if (!twiml.includes('<Stream url=')) {
+    throw new Error('Invalid TwiML structure - missing Stream element');
+  }
+
   return twiml;
 };
 
@@ -186,19 +197,19 @@ serve(async (req) => {
     
     const signalwirePhoneNumber = formatToE164(rawSignalwirePhoneNumber);
 
-    // Construct URLs - Fix the WebSocket URL construction
+    // Construct URLs - Fixed WebSocket URL to use deepgram-voice-websocket
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const statusCallbackUrl = `${supabaseUrl}/functions/v1/call-webhook`;
     
-    // Fixed WebSocket URL - use proper format
-    const wsUrl = `${supabaseUrl.replace('https://', 'wss://').replace('http://', 'ws://')}/functions/v1/voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`;
+    // Use the correct websocket endpoint
+    const wsUrl = `${supabaseUrl.replace('https://', 'wss://').replace('http://', 'ws://')}/functions/v1/deepgram-voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`;
 
     console.log('🔗 URLs constructed:', {
       statusCallback: statusCallbackUrl,
       websocket: wsUrl
     });
 
-    // Generate TwiML with proper structure
+    // Generate TwiML with proper structure and validation
     const firstMessage = assistant?.first_message || 'Hello! You are now connected to your AI assistant.';
     const twiml = generateValidTwiML(firstMessage, wsUrl);
 
@@ -271,7 +282,7 @@ serve(async (req) => {
         callId: signalwireData.sid,
         dbCallId: callData.id,
         status: 'calling',
-        message: 'Call initiated successfully with corrected LaML',
+        message: 'Call initiated successfully with fixed TwiML structure',
         websocketUrl: wsUrl,
         assistant: assistant ? {
           name: assistant.name,

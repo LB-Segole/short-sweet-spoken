@@ -1,7 +1,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 
-console.log('🎙️ Text-to-Speech Function initialized v2.0');
+console.log('🎙️ Text-to-Speech Function initialized v3.0 - Fixed API key handling');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -73,13 +73,16 @@ serve(async (req) => {
 
 async function openAITTS(text: string, voice: string): Promise<string> {
   const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
+  
+  // Better error handling with more specific message
   if (!openaiApiKey) {
-    console.error('❌ OpenAI API key not found in environment')
-    throw new Error('OpenAI API key not configured. Please set OPENAI_API_KEY in your Supabase secrets.')
+    console.error('❌ OpenAI API key not configured');
+    console.log('💡 Please set OPENAI_API_KEY in Supabase project settings > Edge Functions > Environment Variables');
+    throw new Error('OpenAI API key not configured. Please set OPENAI_API_KEY in your Supabase project settings.');
   }
 
   console.log('🎙️ OpenAI TTS: Converting text to speech');
-  console.log('📝 Text length:', text.length);
+  console.log('📝 Text:', text.substring(0, 100) + (text.length > 100 ? '...' : ''));
   console.log('🎵 Voice:', voice || 'alloy');
 
   const response = await fetch('https://api.openai.com/v1/audio/speech', {
@@ -119,13 +122,15 @@ async function openAITTS(text: string, voice: string): Promise<string> {
 
 async function elevenLabsTTS(text: string, voiceId: string): Promise<string> {
   const elevenLabsApiKey = Deno.env.get('ELEVENLABS_API_KEY')
+  
   if (!elevenLabsApiKey) {
-    console.error('❌ ElevenLabs API key not found in environment')
-    throw new Error('ElevenLabs API key not configured. Please set ELEVENLABS_API_KEY in your Supabase secrets.')
+    console.error('❌ ElevenLabs API key not configured');
+    console.log('💡 Please set ELEVENLABS_API_KEY in Supabase project settings > Edge Functions > Environment Variables');
+    throw new Error('ElevenLabs API key not configured. Please set ELEVENLABS_API_KEY in your Supabase project settings.');
   }
 
   console.log('🎙️ ElevenLabs TTS: Converting text to speech');
-  console.log('📝 Text length:', text.length);
+  console.log('📝 Text:', text.substring(0, 100) + (text.length > 100 ? '...' : ''));
   console.log('🎵 Voice ID:', voiceId || '9BWtsMINqrJLrRacOk9x');
 
   const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId || '9BWtsMINqrJLrRacOk9x'}`, {
