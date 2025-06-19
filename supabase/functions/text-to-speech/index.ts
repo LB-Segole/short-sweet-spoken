@@ -1,6 +1,8 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 
+console.log('🎙️ Text-to-Speech Function initialized v2.0');
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -19,11 +21,19 @@ serve(async (req) => {
   }
 
   try {
+    console.log('🔊 TTS request received');
+    
     const { text, voice, voice_provider }: TTSRequest = await req.json()
 
     if (!text) {
       throw new Error('Text is required')
     }
+
+    console.log('📝 TTS parameters:', {
+      textLength: text.length,
+      voice: voice,
+      provider: voice_provider
+    });
 
     let audioContent: string
 
@@ -32,6 +42,8 @@ serve(async (req) => {
     } else {
       audioContent = await openAITTS(text, voice)
     }
+
+    console.log('✅ TTS successful, audio length:', audioContent.length);
 
     return new Response(
       JSON.stringify({
@@ -45,7 +57,7 @@ serve(async (req) => {
     )
 
   } catch (error) {
-    console.error('TTS error:', error)
+    console.error('❌ TTS error:', error)
     return new Response(
       JSON.stringify({
         success: false,
@@ -62,10 +74,13 @@ serve(async (req) => {
 async function openAITTS(text: string, voice: string): Promise<string> {
   const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
   if (!openaiApiKey) {
-    throw new Error('OpenAI API key not configured')
+    console.error('❌ OpenAI API key not found in environment')
+    throw new Error('OpenAI API key not configured. Please set OPENAI_API_KEY in your Supabase secrets.')
   }
 
-  console.log('🎙️ OpenAI TTS: Converting text to speech:', text)
+  console.log('🎙️ OpenAI TTS: Converting text to speech');
+  console.log('📝 Text length:', text.length);
+  console.log('🎵 Voice:', voice || 'alloy');
 
   const response = await fetch('https://api.openai.com/v1/audio/speech', {
     method: 'POST',
@@ -83,14 +98,21 @@ async function openAITTS(text: string, voice: string): Promise<string> {
 
   if (!response.ok) {
     const errorText = await response.text()
-    console.error('OpenAI TTS API error:', { status: response.status, error: errorText })
+    console.error('❌ OpenAI TTS API error:', { 
+      status: response.status, 
+      statusText: response.statusText,
+      error: errorText 
+    })
     throw new Error(`OpenAI TTS error: ${response.status} - ${errorText}`)
   }
 
   const audioBuffer = await response.arrayBuffer()
   const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)))
   
-  console.log('✅ OpenAI TTS successful:', { audioLength: audioBuffer.byteLength })
+  console.log('✅ OpenAI TTS successful:', { 
+    audioLength: audioBuffer.byteLength,
+    base64Length: base64Audio.length
+  })
   
   return base64Audio
 }
@@ -98,8 +120,13 @@ async function openAITTS(text: string, voice: string): Promise<string> {
 async function elevenLabsTTS(text: string, voiceId: string): Promise<string> {
   const elevenLabsApiKey = Deno.env.get('ELEVENLABS_API_KEY')
   if (!elevenLabsApiKey) {
-    throw new Error('ElevenLabs API key not configured')
+    console.error('❌ ElevenLabs API key not found in environment')
+    throw new Error('ElevenLabs API key not configured. Please set ELEVENLABS_API_KEY in your Supabase secrets.')
   }
+
+  console.log('🎙️ ElevenLabs TTS: Converting text to speech');
+  console.log('📝 Text length:', text.length);
+  console.log('🎵 Voice ID:', voiceId || '9BWtsMINqrJLrRacOk9x');
 
   const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId || '9BWtsMINqrJLrRacOk9x'}`, {
     method: 'POST',
@@ -119,9 +146,21 @@ async function elevenLabsTTS(text: string, voiceId: string): Promise<string> {
 
   if (!response.ok) {
     const errorText = await response.text()
+    console.error('❌ ElevenLabs TTS API error:', { 
+      status: response.status, 
+      statusText: response.statusText,
+      error: errorText 
+    })
     throw new Error(`ElevenLabs TTS error: ${response.status} - ${errorText}`)
   }
 
   const audioBuffer = await response.arrayBuffer()
-  return btoa(String.fromCharCode(...new Uint8Array(audioBuffer)))
+  const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)))
+  
+  console.log('✅ ElevenLabs TTS successful:', { 
+    audioLength: audioBuffer.byteLength,
+    base64Length: base64Audio.length
+  })
+  
+  return base64Audio
 }
