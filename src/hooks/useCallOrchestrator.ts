@@ -135,14 +135,14 @@ export const useCallOrchestrator = (config: CallOrchestratorConfig) => {
     }
   }, []);
 
-  const connectToStreaming = useCallback(async (agent: Agent) => {
+  const connectToStreaming = useCallback(async (currentAgent: Agent) => {
     try {
       addLog('🔄 Connecting to streaming services...');
 
       // Initialize TTS with agent's voice settings
       const ttsConfig: TTSConfig = {
         apiKey: config.deepgramApiKey,
-        model: agent.voiceSettings.model,
+        model: currentAgent.voiceSettings.model,
         encoding: 'linear16',
         sampleRate: 8000,
         container: 'none'
@@ -269,7 +269,7 @@ export const useCallOrchestrator = (config: CallOrchestratorConfig) => {
       if (signalwireClient.current) {
         const result = await signalwireClient.current.initiateCall({
           phoneNumber,
-          ag entId: agent.id,
+          agentId: agent.id,
           webhookUrl,
           streamUrl
         });
