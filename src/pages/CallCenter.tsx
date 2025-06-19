@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Phone } from 'lucide-react';
@@ -79,51 +78,105 @@ const CallCenter = () => {
       }
       formattedNumber = '+' + formattedNumber;
 
-      console.log('Initiating call to:', formattedNumber);
+      console.log('🔄 Initiating call to:', formattedNumber);
+      
+      // Get the current session
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session?.access_token) {
+        throw new Error('No authentication token available');
+      }
+
+      console.log('🔐 Authentication token available:', !!session.access_token);
+
+      // Create a demo assistant if none exists
+      const { data: assistants } = await supabase
+        .from('assistants')
+        .select('id')
+        .limit(1);
+
+      let assistantId = assistants?.[0]?.id;
+      
+      if (!assistantId) {
+        console.log('🤖 Creating demo assistant...');
+        const { data: newAssistant, error: assistantError } = await supabase
+          .from('assistants')
+          .insert({
+            name: 'Demo Assistant',
+            system_prompt: 'You are a helpful AI assistant for phone calls.',
+            first_message: 'Hello! This is your AI assistant. How can I help you today?',
+            voice_provider: 'deepgram',
+            voice_id: 'aura-asteria-en',
+            model: 'gpt-4o'
+          })
+          .select('id')
+          .single();
+
+        if (assistantError) {
+          console.error('Failed to create demo assistant:', assistantError);
+          throw new Error('Failed to create demo assistant');
+        }
+        
+        assistantId = newAssistant.id;
+        console.log('✅ Demo assistant created:', assistantId);
+      }
+
+      const callParams = {
+        phoneNumber: formattedNumber,
+        assistantId: assistantId,
+        campaignId: null,
+        contactId: null
+      };
+
+      console.log('📞 Call parameters:', callParams);
+      console.log('🔗 Making request to make-outbound-call function...');
       
       const { data, error } = await supabase.functions.invoke('make-outbound-call', {
-        body: {
-          phoneNumber: formattedNumber,
-          campaignId: null,
-          contactId: null,
-          assistantId: null,
-          squadId: null
+        body: callParams,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
         }
       });
 
+      console.log('📡 Function response received:', { data, error });
+
       if (error) {
-        throw new Error(error.message || 'Failed to initiate call');
+        console.error('📞 Supabase function error:', error);
+        throw new Error(`Function error: ${error.message || error}`);
       }
 
-      if (!data?.success) {
-        throw new Error(data?.error || 'Call failed');
-      }
-
-      setIsCallActive(true);
-      setCallStatus('calling');
-      setCurrentContact(formattedNumber);
-      setCallDuration(0);
-      setCurrentCallId(data.dbCallId);
-      
-      // Start ring verification
-      if (data.dbCallId) {
-        try {
-          await startVerification(data.dbCallId, formattedNumber);
-          console.log('✅ Ring verification started for call:', data.dbCallId);
-        } catch (verificationError) {
-          console.error('Failed to start ring verification:', verificationError);
+      if (data?.success) {
+        console.log('📞 Call initiated successfully, Call ID:', data.callId);
+        setCurrentCallId(data.callId);
+        setIsCallActive(true);
+        setCallStatus('calling');
+        setCurrentContact(formattedNumber);
+        setCallDuration(0);
+        
+        // Start ring verification
+        if (data.callId) {
+          try {
+            await startVerification(data.callId, formattedNumber);
+            console.log('✅ Ring verification started for call:', data.callId);
+          } catch (verificationError) {
+            console.error('Failed to start ring verification:', verificationError);
+          }
         }
+        
+        toast.success('Call initiated with ring verification!');
+        
+        // Simulate call connection after 3 seconds
+        setTimeout(() => {
+          setCallStatus('connected');
+          toast.success('Call connected!');
+        }, 3000);
+      } else {
+        console.error('📞 Call initiation failed:', data);
+        throw new Error(data?.error || 'Failed to initiate call - no success response');
       }
-      
-      toast.success('Call initiated with ring verification!');
-      
-      // Simulate call connection after 3 seconds
-      setTimeout(() => {
-        setCallStatus('connected');
-        toast.success('Call connected!');
-      }, 3000);
     } catch (error) {
-      console.error('Error starting call:', error);
+      console.error('❌ Error starting call:', error);
       const errorMsg = error instanceof Error ? error.message : 'Failed to start call';
       setError(errorMsg);
       toast.error(`Failed to start call: ${errorMsg}`);
@@ -191,14 +244,32 @@ const CallCenter = () => {
                 callStatus={callStatus}
                 currentContact={currentContact}
                 callDuration={callDuration}
-                formatDuration={formatDuration}
+                formatDuration={(seconds: number) => {
+                  const mins = Math.floor(seconds / 60);
+                  const secs = seconds % 60;
+                  return `${mins}:${secs.toString().padStart(2, '0')}`;
+                }}
               />
               
               {isCallActive && (
                 <CallActionButtons
                   isMuted={isMuted}
-                  onToggleMute={toggleMute}
-                  onEndCall={endCall}
+                  onToggleMute={() => {
+                    setIsMuted(prev => !prev);
+                    toast.info(isMuted ? 'Unmuted' : 'Muted');
+                  }}
+                  onEndCall={() => {
+                    setIsCallActive(false);
+                    setCallStatus('completed');
+                    setCurrentCallId(null);
+                    toast.success('Call ended');
+                    
+                    setTimeout(() => {
+                      setCallStatus('idle');
+                      setCallDuration(0);
+                      setCurrentContact('');
+                    }, 2000);
+                  }}
                 />
               )}
             </div>
