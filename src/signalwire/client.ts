@@ -73,6 +73,3 @@ export class SignalWireClient {
     console.log('📤 Sending audio to call:', streamSid, audioData.length, 'bytes');
   }
 }
-
-// Export the types using 'export type' for isolated modules compatibility
-export type { SignalWireConfig, CallRequest, CallResponse } from './types';

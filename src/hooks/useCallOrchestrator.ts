@@ -80,7 +80,7 @@ export const useCallOrchestrator = (config: CallOrchestratorConfig) => {
 
     if (event.isFinal && event.transcript.trim() && state.currentAgent) {
       addLog(`👤 User: ${event.transcript}`);
-      processConversation(event.transcript);
+      processConversation(event.transcript, state.currentAgent);
     }
   }, [state.currentAgent]);
 
@@ -108,7 +108,7 @@ export const useCallOrchestrator = (config: CallOrchestratorConfig) => {
     }, 1000);
   }, []);
 
-  const processConversation = useCallback(async (transcript: string) => {
+  const processConversation = useCallback(async (transcript: string, agent: Agent) => {
     try {
       addLog('🧠 Processing conversation...');
       
@@ -128,8 +128,7 @@ export const useCallOrchestrator = (config: CallOrchestratorConfig) => {
         }, 2000);
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      addLog(`❌ Conversation error: ${errorMessage}`);
+      addLog(`❌ Conversation error: ${error}`);
       console.error('Conversation processing error:', error);
     }
   }, []);
@@ -167,8 +166,7 @@ export const useCallOrchestrator = (config: CallOrchestratorConfig) => {
       addLog('✅ Streaming services connected');
 
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      addLog(`❌ Streaming connection failed: ${errorMessage}`);
+      addLog(`❌ Streaming connection failed: ${error}`);
       throw error;
     }
   }, [config.deepgramApiKey, handleSTTTranscript, handleTTSAudio]);
@@ -282,9 +280,8 @@ export const useCallOrchestrator = (config: CallOrchestratorConfig) => {
       }
 
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      addLog(`❌ Call start failed: ${errorMessage}`);
-      setState(prev => ({ ...prev, error: errorMessage, isActive: false }));
+      addLog(`❌ Call start failed: ${error}`);
+      setState(prev => ({ ...prev, error: error.toString(), isActive: false }));
       throw error;
     }
   }, [connectToStreaming, setupWebSocketConnection]);
