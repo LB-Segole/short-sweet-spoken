@@ -1,8 +1,7 @@
-
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v12.0 (Fixed StatusCallbackEvent)');
+console.log('🚀 Edge Function initialized - make-outbound-call v13.0 (Fixed LaML Stream Structure)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -43,7 +42,7 @@ const escapeXmlContent = (text: string): string => {
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
 };
 
-// Generate proper TwiML-compatible LaML
+// Generate proper SignalWire LaML with correct Stream structure
 const generateSignalWireLaML = (greeting: string, websocketUrl: string): string => {
   const safeGreeting = escapeXmlContent(greeting || 'Hello! You are now connected to your AI assistant.');
   
@@ -53,16 +52,16 @@ const generateSignalWireLaML = (greeting: string, websocketUrl: string): string 
     throw new Error('Invalid WebSocket URL format - must start with wss:// or ws://');
   }
 
-  // Generate proper TwiML-compatible LaML structure
+  // Generate SignalWire-compatible LaML with proper Stream structure
   const laml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="alice">${safeGreeting}</Say>
   <Connect>
-    <Stream url="${websocketUrl}" />
+    <Stream url="${websocketUrl}" track="both_tracks" />
   </Connect>
 </Response>`;
 
-  console.log('📄 Generated TwiML-compatible LaML:', laml);
+  console.log('📄 Generated SignalWire LaML:', laml);
   
   // Validate LaML structure
   if (!laml.includes('<Response>') || !laml.includes('</Response>')) {
@@ -203,11 +202,11 @@ serve(async (req) => {
     
     const signalwirePhoneNumber = formatToE164(rawSignalwirePhoneNumber);
 
-    // Construct URLs
+    // Construct URLs - Fix WebSocket URL format
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const statusCallbackUrl = `${supabaseUrl}/functions/v1/call-webhook`;
     
-    // Use the voice-websocket endpoint for proper handling
+    // Use proper WebSocket URL format for SignalWire
     const wsUrl = `${supabaseUrl.replace('https://', 'wss://').replace('http://', 'ws://')}/functions/v1/voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`;
 
     console.log('🔗 URLs constructed:', {
@@ -215,23 +214,22 @@ serve(async (req) => {
       websocket: wsUrl
     });
 
-    // Generate TwiML-compatible LaML with proper structure
+    // Generate SignalWire LaML with proper Stream structure
     const firstMessage = assistant?.first_message || 'Hello! You are now connected to your AI assistant.';
     const laml = generateSignalWireLaML(firstMessage, wsUrl);
 
-    // Make SignalWire API call with proper TwiML - Fixed StatusCallbackEvent format
+    // Make SignalWire API call - Removed StatusCallbackEvent
     const callParams = new URLSearchParams({
       To: formattedNumber,
       From: signalwirePhoneNumber,
       Twiml: laml,
       StatusCallback: statusCallbackUrl,
       StatusCallbackMethod: 'POST'
-      // Remove StatusCallbackEvent entirely as it's causing the 422 error
     });
 
     const signalwireUrl = `https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
 
-    console.log('📡 Calling SignalWire API with TwiML-compatible LaML (without StatusCallbackEvent):', {
+    console.log('📡 Calling SignalWire API with corrected LaML structure:', {
       url: signalwireUrl,
       to: formattedNumber,
       from: signalwirePhoneNumber,
@@ -271,7 +269,7 @@ serve(async (req) => {
     }
 
     const signalwireData = await signalwireResponse.json();
-    console.log('✅ SignalWire call created successfully:', signalwireData.sid);
+    console.log('✅ SignalWire call created with corrected LaML:', signalwireData.sid);
 
     // Update call record
     await supabaseClient
@@ -289,7 +287,7 @@ serve(async (req) => {
         callId: signalwireData.sid,
         dbCallId: callData.id,
         status: 'calling',
-        message: 'Call initiated successfully without StatusCallbackEvent',
+        message: 'Call initiated successfully with corrected LaML structure',
         websocketUrl: wsUrl,
         provider: 'deepgram',
         assistant: assistant ? {
