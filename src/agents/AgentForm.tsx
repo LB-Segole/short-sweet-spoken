@@ -37,18 +37,18 @@ export const AgentForm: React.FC<AgentFormProps> = ({ initialData, onSubmit, onC
     onSubmit(formData);
   };
 
-  const updateFormData = (field: string, value: any) => {
+  const updateFormData = (field: keyof CreateAgentRequest, value: any) => {
     setFormData(prev => ({
       ...prev,
       [field]: value
     }));
   };
 
-  const updateNestedFormData = (section: string, field: string, value: any) => {
+  const updateNestedFormData = (section: 'voiceSettings' | 'conversationSettings', field: string, value: any) => {
     setFormData(prev => ({
       ...prev,
       [section]: {
-        ...prev[section as keyof CreateAgentRequest],
+        ...(prev[section] || {}),
         [field]: value
       }
     }));

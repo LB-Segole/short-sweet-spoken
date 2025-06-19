@@ -3,7 +3,8 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { Agent } from '../types/agent';
 import { DeepgramSTTClient, STTConfig, TranscriptEvent } from '../deepgram/stt';
 import { DeepgramTTSClient, TTSConfig, AudioChunk } from '../deepgram/tts';
-import { SignalWireClient, SignalWireConfig } from '../signalwire/client';
+import { SignalWireClient } from '../signalwire/client';
+import { SignalWireConfig } from '../signalwire/types';
 import { generateConversationResponse } from '../services/conversationService';
 
 interface CallOrchestratorConfig {
@@ -108,7 +109,7 @@ export const useCallOrchestrator = (config: CallOrchestratorConfig) => {
     }, 1000);
   }, []);
 
-  const processConversation = useCallback(async (transcript: string, agent: Agent) => {
+  const processConversation = useCallback(async (transcript: string, currentAgent: Agent) => {
     try {
       addLog('🧠 Processing conversation...');
       
@@ -128,7 +129,8 @@ export const useCallOrchestrator = (config: CallOrchestratorConfig) => {
         }, 2000);
       }
     } catch (error) {
-      addLog(`❌ Conversation error: ${error}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      addLog(`❌ Conversation error: ${errorMessage}`);
       console.error('Conversation processing error:', error);
     }
   }, []);
@@ -166,7 +168,8 @@ export const useCallOrchestrator = (config: CallOrchestratorConfig) => {
       addLog('✅ Streaming services connected');
 
     } catch (error) {
-      addLog(`❌ Streaming connection failed: ${error}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      addLog(`❌ Streaming connection failed: ${errorMessage}`);
       throw error;
     }
   }, [config.deepgramApiKey, handleSTTTranscript, handleTTSAudio]);
@@ -266,7 +269,7 @@ export const useCallOrchestrator = (config: CallOrchestratorConfig) => {
       if (signalwireClient.current) {
         const result = await signalwireClient.current.initiateCall({
           phoneNumber,
-          agentId: agent.id,
+          ag entId: agent.id,
           webhookUrl,
           streamUrl
         });
@@ -280,8 +283,9 @@ export const useCallOrchestrator = (config: CallOrchestratorConfig) => {
       }
 
     } catch (error) {
-      addLog(`❌ Call start failed: ${error}`);
-      setState(prev => ({ ...prev, error: error.toString(), isActive: false }));
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      addLog(`❌ Call start failed: ${errorMessage}`);
+      setState(prev => ({ ...prev, error: errorMessage, isActive: false }));
       throw error;
     }
   }, [connectToStreaming, setupWebSocketConnection]);
