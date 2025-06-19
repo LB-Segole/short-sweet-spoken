@@ -9,7 +9,7 @@ const corsHeaders = {
 }
 
 serve(async (req) => {
-  console.log('🚀 voice-websocket function invoked', {
+  console.log('🚀 voice-websocket function invoked (DeepGram-only version)', {
     method: req.method,
     url: req.url,
     headers: Object.fromEntries(req.headers.entries()),
@@ -45,22 +45,20 @@ serve(async (req) => {
     })
   }
 
-  // Environment variables check
-  const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
+  // Environment variables check - DeepGram only
   const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
 
   console.log('🔧 Environment variables check:', {
-    openaiApiKeyExists: !!openaiApiKey,
     deepgramApiKeyExists: !!deepgramApiKey,
     supabaseUrlExists: !!supabaseUrl,
     supabaseServiceKeyExists: !!supabaseServiceKey,
   })
 
-  if (!openaiApiKey) {
-    console.error('❌ Missing OpenAI API key')
-    return new Response('Server configuration error: Missing OpenAI API key', { status: 500, headers: corsHeaders })
+  if (!deepgramApiKey) {
+    console.error('❌ Missing DeepGram API key')
+    return new Response('Server configuration error: Missing DeepGram API key', { status: 500, headers: corsHeaders })
   }
 
   try {
@@ -145,11 +143,6 @@ serve(async (req) => {
 
     // Initialize Deepgram WebSocket for STT
     const initializeDeepgram = () => {
-      if (!deepgramApiKey) {
-        log('⚠️ Deepgram API key not available, using OpenAI Whisper for transcription')
-        return
-      }
-
       try {
         const deepgramUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&endpointing=300`
         deepgramWs = new WebSocket(deepgramUrl, ['token', deepgramApiKey])
@@ -213,16 +206,16 @@ serve(async (req) => {
 
     if (!assistant) {
       assistant = {
-        name: 'Demo Assistant',
-        system_prompt: 'You are a helpful AI assistant. Be friendly, professional, and concise. Keep responses under 2 sentences.',
-        first_message: 'Hello! This is your AI assistant. How can I help you today?',
-        voice_provider: 'openai',
-        voice_id: 'alloy',
-        model: 'gpt-4o-mini',
+        name: 'DeepGram Assistant',
+        system_prompt: 'You are a helpful AI assistant powered by DeepGram. Be friendly, professional, and concise. Keep responses under 2 sentences.',
+        first_message: 'Hello! This is your AI assistant powered by DeepGram. How can I help you today?',
+        voice_provider: 'deepgram',
+        voice_id: 'aura-asteria-en',
+        model: 'nova-2',
         temperature: 0.8,
         max_tokens: 100,
       }
-      log('✅ Using default assistant configuration')
+      log('✅ Using default DeepGram assistant configuration')
     }
     
     conversationHistory.push({ role: 'system', content: assistant.system_prompt })
@@ -237,7 +230,7 @@ serve(async (req) => {
         type: 'connection_established',
         callId,
         assistantId,
-        assistant: { name: assistant.name, voice_provider: assistant.voice_provider },
+        assistant: { name: assistant.name, voice_provider: 'deepgram' },
         timestamp: Date.now(),
       }))
       
@@ -325,27 +318,7 @@ serve(async (req) => {
             return
           }
 
-          // Fallback to buffer-based processing for OpenAI Whisper
-          audioBuffer.push(payload)
-          const now = Date.now()
-          const timeout = now - lastProcessTime > 2000
-          const bufferFull = audioBuffer.length > 10
-          
-          if ((timeout || bufferFull) && !isProcessingAudio) {
-            isProcessingAudio = true
-            lastProcessTime = now
-            const combined = audioBuffer.join('')
-            audioBuffer = []
-            
-            if (combined.length > 50) {
-              log('🎤 Processing audio chunk', { 
-                length: combined.length, 
-                reason: timeout ? 'timeout' : 'buffer_full' 
-              })
-              await processAudioChunk(combined)
-            }
-            isProcessingAudio = false
-          }
+          log('⚠️ Deepgram WebSocket not available for audio processing')
         } catch (err) {
           log('❌ Error in audio handler:', err)
           isProcessingAudio = false
@@ -353,71 +326,7 @@ serve(async (req) => {
       })
     }
 
-    // Process audio chunk with OpenAI Whisper
-    async function processAudioChunk(data: string) {
-      log('🎤 Transcribing audio chunk with Whisper', { length: data.length })
-      const transcript = await transcribeAudioWithWhisper(data)
-      if (transcript.trim().length > 3) {
-        socket.send(JSON.stringify({ 
-          type: 'transcript', 
-          text: transcript, 
-          timestamp: Date.now() 
-        }))
-        await processTextInput(transcript)
-      }
-    }
-
-    // Transcription with OpenAI Whisper
-    async function transcribeAudioWithWhisper(audioData: string): Promise<string> {
-      const id = userId || callId
-      if (!rateLimiter.canProceed('transcription', id)) {
-        log('⚠️ Transcription rate limit exceeded')
-        return ''
-      }
-
-      const maxRetries = 2
-      for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-          log(`🔊 Whisper transcription attempt ${attempt}`)
-          const binaryData = Uint8Array.from(atob(audioData), c => c.charCodeAt(0))
-          
-          if (binaryData.length < 1000) {
-            log('⚠️ Audio too small for transcription')
-            return ''
-          }
-
-          const formData = new FormData()
-          formData.append('file', new Blob([binaryData], { type: 'audio/wav' }), 'audio.wav')
-          formData.append('model', 'whisper-1')
-          formData.append('language', 'en')
-
-          const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${openaiApiKey}` },
-            body: formData,
-            signal: AbortSignal.timeout(15000),
-          })
-
-          if (!response.ok) {
-            const errorText = await response.text().catch(() => 'Unknown error')
-            log(`⚠️ Whisper transcription error, status ${response.status}:`, errorText)
-            if (response.status >= 400 && response.status < 500) return ''
-            if (attempt < maxRetries) await new Promise(r => setTimeout(r, 1000 * attempt))
-            continue
-          }
-
-          const result = await response.json()
-          log('✅ Whisper transcription success:', result.text)
-          return result.text.trim()
-        } catch (err) {
-          log(`❌ Whisper transcription exception (attempt ${attempt}):`, err)
-          if (attempt < maxRetries) await new Promise(r => setTimeout(r, 1000 * attempt))
-        }
-      }
-      return ''
-    }
-
-    // Text-to-Speech with enhanced provider support
+    // Text-to-Speech with DeepGram
     async function textToSpeech(text: string): Promise<string> {
       const id = userId || callId
       if (!rateLimiter.canProceed('tts', id)) {
@@ -433,63 +342,23 @@ serve(async (req) => {
       const truncatedText = text.length > 500 ? text.slice(0, 500) + '...' : text
       const maxRetries = 2
 
-      // Try Deepgram TTS first if available
-      if (deepgramApiKey && assistant.voice_provider === 'deepgram') {
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-          try {
-            log(`🎵 Deepgram TTS attempt ${attempt}`)
-            const response = await fetch('https://api.deepgram.com/v1/speak?model=aura-asteria-en', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Token ${deepgramApiKey}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ text: truncatedText }),
-              signal: AbortSignal.timeout(30000),
-            })
-
-            if (!response.ok) {
-              const errorText = await response.text().catch(() => 'Unknown error')
-              log(`⚠️ Deepgram TTS error, status ${response.status}:`, errorText)
-              if (response.status >= 400 && response.status < 500) break
-              if (attempt < maxRetries) await new Promise(r => setTimeout(r, 1000 * attempt))
-              continue
-            }
-
-            const audioBuffer = await response.arrayBuffer()
-            const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)))
-            log('✅ Deepgram TTS success', { bytes: audioBuffer.byteLength })
-            return base64Audio
-          } catch (err) {
-            log(`❌ Deepgram TTS exception (attempt ${attempt}):`, err)
-            if (attempt < maxRetries) await new Promise(r => setTimeout(r, 1000 * attempt))
-          }
-        }
-      }
-
-      // Fallback to OpenAI TTS
+      // Use DeepGram TTS
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          log(`🎵 OpenAI TTS attempt ${attempt}`)
-          const response = await fetch('https://api.openai.com/v1/audio/speech', {
+          log(`🎵 DeepGram TTS attempt ${attempt}`)
+          const response = await fetch(`https://api.deepgram.com/v1/speak?model=${assistant.voice_id || 'aura-asteria-en'}`, {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${openaiApiKey}`,
+              'Authorization': `Token ${deepgramApiKey}`,
               'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-              model: 'tts-1',
-              voice: assistant.voice_id || 'alloy',
-              input: truncatedText,
-              response_format: 'wav',
-              speed: 1.0
-            }),
+            body: JSON.stringify({ text: truncatedText }),
             signal: AbortSignal.timeout(30000),
           })
 
           if (!response.ok) {
             const errorText = await response.text().catch(() => 'Unknown error')
-            log(`⚠️ OpenAI TTS error, status ${response.status}:`, errorText)
+            log(`⚠️ DeepGram TTS error, status ${response.status}:`, errorText)
             if (response.status >= 400 && response.status < 500) return ''
             if (attempt < maxRetries) await new Promise(r => setTimeout(r, 1000 * attempt))
             continue
@@ -497,23 +366,24 @@ serve(async (req) => {
 
           const audioBuffer = await response.arrayBuffer()
           const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)))
-          log('✅ OpenAI TTS success', { bytes: audioBuffer.byteLength })
+          log('✅ DeepGram TTS success', { bytes: audioBuffer.byteLength })
           return base64Audio
         } catch (err) {
-          log(`❌ OpenAI TTS exception (attempt ${attempt}):`, err)
+          log(`❌ DeepGram TTS exception (attempt ${attempt}):`, err)
           if (attempt < maxRetries) await new Promise(r => setTimeout(r, 1000 * attempt))
         }
       }
       return ''
     }
 
-    // Process text input and generate AI response
+    // Process text input and generate simple AI response
     async function processTextInput(text: string) {
       log('💭 Processing text input:', text)
       conversationHistory.push({ role: 'user', content: text })
       
       try {
-        const aiResponse = await generateAIResponse()
+        // Simple response generation (no OpenAI)
+        const aiResponse = generateSimpleResponse(text)
         conversationHistory.push({ role: 'assistant', content: aiResponse })
         await sendAIResponse(aiResponse)
       } catch (err) {
@@ -522,35 +392,21 @@ serve(async (req) => {
       }
     }
 
-    // Generate AI response using OpenAI
-    async function generateAIResponse(): Promise<string> {
-      log('🧠 Generating AI response')
-      const messages = conversationHistory.slice(-8) // Keep recent context
+    // Simple response generation without OpenAI
+    function generateSimpleResponse(text: string): string {
+      const input = text.toLowerCase().trim()
       
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${openaiApiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: assistant.model || 'gpt-4o-mini',
-          messages,
-          temperature: assistant.temperature || 0.8,
-          max_tokens: assistant.max_tokens || 100,
-        }),
-        signal: AbortSignal.timeout(30000),
-      })
-
-      if (!response.ok) {
-        log('❌ OpenAI API error:', response.status)
-        return 'I apologize, but I\'m having trouble processing your request right now.'
+      if (input.includes('hello') || input.includes('hi')) {
+        return 'Hello! How can I help you today?'
+      } else if (input.includes('help')) {
+        return 'I\'m here to assist you. What do you need help with?'
+      } else if (input.includes('thank')) {
+        return 'You\'re welcome! Is there anything else I can help you with?'
+      } else if (input.includes('bye') || input.includes('goodbye')) {
+        return 'Goodbye! Have a great day!'
+      } else {
+        return 'I understand. Could you tell me more about that?'
       }
-
-      const data = await response.json()
-      const content = data.choices[0].message.content.trim()
-      log('✅ AI response generated:', content)
-      return content
     }
 
     // Send AI response with audio

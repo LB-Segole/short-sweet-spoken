@@ -1,7 +1,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 
-console.log('🎙️ Text-to-Speech Function initialized v3.0 - Fixed API key handling');
+console.log('🎙️ DeepGram Text-to-Speech Function initialized v4.0 - Pure DeepGram implementation');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -11,8 +11,8 @@ const corsHeaders = {
 
 interface TTSRequest {
   text: string
-  voice: string
-  voice_provider: string
+  voice?: string
+  model?: string
 }
 
 serve(async (req) => {
@@ -21,34 +21,68 @@ serve(async (req) => {
   }
 
   try {
-    console.log('🔊 TTS request received');
+    console.log('🔊 DeepGram TTS request received');
     
-    const { text, voice, voice_provider }: TTSRequest = await req.json()
+    const { text, voice, model }: TTSRequest = await req.json()
 
-    if (!text) {
-      throw new Error('Text is required')
+    if (!text || !text.trim()) {
+      throw new Error('Text is required and cannot be empty')
     }
 
     console.log('📝 TTS parameters:', {
       textLength: text.length,
-      voice: voice,
-      provider: voice_provider
+      voice: voice || 'aura-asteria-en',
+      model: model || 'aura-asteria-en'
     });
 
-    let audioContent: string
-
-    if (voice_provider === 'elevenlabs') {
-      audioContent = await elevenLabsTTS(text, voice)
-    } else {
-      audioContent = await openAITTS(text, voice)
+    const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')
+    
+    if (!deepgramApiKey) {
+      console.error('❌ DeepGram API key not configured');
+      console.log('💡 Please set DEEPGRAM_API_KEY in Supabase project settings > Edge Functions > Environment Variables');
+      throw new Error('DeepGram API key not configured. Please set DEEPGRAM_API_KEY in your Supabase project settings.');
     }
 
-    console.log('✅ TTS successful, audio length:', audioContent.length);
+    console.log('🎵 DeepGram TTS: Converting text to speech with DeepGram');
+    console.log('📝 Text preview:', text.substring(0, 100) + (text.length > 100 ? '...' : ''));
+    console.log('🎵 Voice model:', voice || 'aura-asteria-en');
+
+    // DeepGram TTS API call
+    const response = await fetch('https://api.deepgram.com/v1/speak?model=' + encodeURIComponent(voice || 'aura-asteria-en'), {
+      method: 'POST',
+      headers: {
+        'Authorization': `Token ${deepgramApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        text: text.trim()
+      })
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('❌ DeepGram TTS API error:', { 
+        status: response.status, 
+        statusText: response.statusText,
+        error: errorText 
+      })
+      throw new Error(`DeepGram TTS error: ${response.status} - ${errorText}`)
+    }
+
+    const audioBuffer = await response.arrayBuffer()
+    const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)))
+    
+    console.log('✅ DeepGram TTS successful:', { 
+      audioLength: audioBuffer.byteLength,
+      base64Length: base64Audio.length
+    })
 
     return new Response(
       JSON.stringify({
         success: true,
-        audioContent
+        audioContent: base64Audio,
+        format: 'wav',
+        provider: 'deepgram'
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -61,7 +95,8 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: false,
-        error: error.message
+        error: error.message,
+        provider: 'deepgram'
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -70,102 +105,3 @@ serve(async (req) => {
     )
   }
 })
-
-async function openAITTS(text: string, voice: string): Promise<string> {
-  const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
-  
-  // Better error handling with more specific message
-  if (!openaiApiKey) {
-    console.error('❌ OpenAI API key not configured');
-    console.log('💡 Please set OPENAI_API_KEY in Supabase project settings > Edge Functions > Environment Variables');
-    throw new Error('OpenAI API key not configured. Please set OPENAI_API_KEY in your Supabase project settings.');
-  }
-
-  console.log('🎙️ OpenAI TTS: Converting text to speech');
-  console.log('📝 Text:', text.substring(0, 100) + (text.length > 100 ? '...' : ''));
-  console.log('🎵 Voice:', voice || 'alloy');
-
-  const response = await fetch('https://api.openai.com/v1/audio/speech', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${openaiApiKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: 'tts-1',
-      voice: voice || 'alloy',
-      input: text,
-      response_format: 'mp3'
-    })
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    console.error('❌ OpenAI TTS API error:', { 
-      status: response.status, 
-      statusText: response.statusText,
-      error: errorText 
-    })
-    throw new Error(`OpenAI TTS error: ${response.status} - ${errorText}`)
-  }
-
-  const audioBuffer = await response.arrayBuffer()
-  const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)))
-  
-  console.log('✅ OpenAI TTS successful:', { 
-    audioLength: audioBuffer.byteLength,
-    base64Length: base64Audio.length
-  })
-  
-  return base64Audio
-}
-
-async function elevenLabsTTS(text: string, voiceId: string): Promise<string> {
-  const elevenLabsApiKey = Deno.env.get('ELEVENLABS_API_KEY')
-  
-  if (!elevenLabsApiKey) {
-    console.error('❌ ElevenLabs API key not configured');
-    console.log('💡 Please set ELEVENLABS_API_KEY in Supabase project settings > Edge Functions > Environment Variables');
-    throw new Error('ElevenLabs API key not configured. Please set ELEVENLABS_API_KEY in your Supabase project settings.');
-  }
-
-  console.log('🎙️ ElevenLabs TTS: Converting text to speech');
-  console.log('📝 Text:', text.substring(0, 100) + (text.length > 100 ? '...' : ''));
-  console.log('🎵 Voice ID:', voiceId || '9BWtsMINqrJLrRacOk9x');
-
-  const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId || '9BWtsMINqrJLrRacOk9x'}`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${elevenLabsApiKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      text: text,
-      model_id: 'eleven_monolingual_v1',
-      voice_settings: {
-        stability: 0.5,
-        similarity_boost: 0.5
-      }
-    })
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    console.error('❌ ElevenLabs TTS API error:', { 
-      status: response.status, 
-      statusText: response.statusText,
-      error: errorText 
-    })
-    throw new Error(`ElevenLabs TTS error: ${response.status} - ${errorText}`)
-  }
-
-  const audioBuffer = await response.arrayBuffer()
-  const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)))
-  
-  console.log('✅ ElevenLabs TTS successful:', { 
-    audioLength: audioBuffer.byteLength,
-    base64Length: base64Audio.length
-  })
-  
-  return base64Audio
-}
