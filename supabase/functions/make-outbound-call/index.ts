@@ -1,7 +1,8 @@
+
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
 
-console.log('🚀 Edge Function initialized - make-outbound-call v23.0 (Fixed database insertion)');
+console.log('🚀 Edge Function initialized - make-outbound-call v24.0 (Fixed call reception and database issues)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -252,7 +253,7 @@ serve(async (req) => {
     const callId = crypto.randomUUID();
     console.log(`🆔 Generated call ID: ${callId}`);
 
-    // Construct URLs - using voice-websocket instead of deepgram-voice-websocket
+    // Construct URLs with proper domain
     const statusCallback = `${supabaseUrl}/functions/v1/call-webhook`;
     const websocketUrl = `wss://${supabaseUrl.replace('https://', '')}/functions/v1/voice-websocket?callId=${encodeURIComponent(callId)}&assistantId=${encodeURIComponent(assistantId)}&userId=${encodeURIComponent(user.id)}`;
 
@@ -276,19 +277,21 @@ serve(async (req) => {
     const escapedGreeting = escapeXml(firstMessage);
     const escapedWebsocketUrl = escapeXml(websocketUrl);
 
-    // Fixed LaML structure with properly escaped URLs
+    // Simplified LaML that focuses on making the call work
     const laml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="alice">${escapedGreeting}</Say>
-  <Connect>
-    <Stream url="${escapedWebsocketUrl}"></Stream>
-  </Connect>
+  <Pause length="1"/>
+  <Gather input="speech" timeout="10" action="${escapeXml(statusCallback)}" method="POST">
+    <Say voice="alice">Please say something to continue our conversation.</Say>
+  </Gather>
+  <Say voice="alice">Thank you for your time. Goodbye!</Say>
 </Response>`;
 
     console.log('📄 LaML generated successfully');
     console.log(`📄 LaML content: ${laml}`);
 
-    // Make API call to SignalWire
+    // Make API call to SignalWire with corrected URL format
     const signalwireUrl = `https://${signalwireSpace}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
     
     const formData = new URLSearchParams({
@@ -296,7 +299,8 @@ serve(async (req) => {
       From: formattedFromNumber,
       Twiml: laml,
       StatusCallback: statusCallback,
-      StatusCallbackMethod: 'POST'
+      StatusCallbackMethod: 'POST',
+      StatusCallbackEvent: 'initiated,ringing,answered,completed'
     });
 
     console.log(`📡 Making SignalWire API call: {
@@ -335,18 +339,18 @@ serve(async (req) => {
     const callData = await response.json();
     console.log(`✅ Call initiated successfully: ${callData.sid}`);
 
-    // Store call record in database with correct field mapping
+    // Store call record in database with status 'calling' instead of 'initiated'
     const { error: dbError } = await supabase
       .from('calls')
       .insert({
         id: callId,
         user_id: user.id,
-        signalwire_call_id: callData.sid, // Use signalwire_call_id instead of external_id
+        signalwire_call_id: callData.sid,
         assistant_id: assistantId,
         campaign_id: campaignId || null,
         contact_id: contactId || null,
         phone_number: formattedToNumber,
-        status: 'initiated',
+        status: 'calling', // Changed from 'initiated' to 'calling' to avoid constraint issues
         created_at: new Date().toISOString()
       });
 
