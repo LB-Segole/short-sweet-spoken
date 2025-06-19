@@ -2,7 +2,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v10.0 (Fixed SWML + DeepGram)');
+console.log('🚀 Edge Function initialized - make-outbound-call v11.0 (Fixed LaML Structure)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -43,27 +43,8 @@ const escapeXmlContent = (text: string): string => {
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
 };
 
-// Map OpenAI voice models to DeepGram equivalents
-const mapVoiceToDeepgram = (voiceId: string): string => {
-  const voiceMap: Record<string, string> = {
-    'alloy': 'aura-asteria-en',
-    'echo': 'aura-luna-en', 
-    'fable': 'aura-stella-en',
-    'onyx': 'aura-zeus-en',
-    'nova': 'aura-hera-en',
-    'shimmer': 'aura-orion-en'
-  };
-  
-  // If it's already a DeepGram voice, return as-is
-  if (voiceId.startsWith('aura-')) {
-    return voiceId;
-  }
-  
-  // Map OpenAI voices to DeepGram equivalents
-  return voiceMap[voiceId] || 'aura-asteria-en';
-};
-
-const generateSignalWireSWML = (greeting: string, websocketUrl: string): string => {
+// Generate proper TwiML-compatible LaML
+const generateSignalWireLaML = (greeting: string, websocketUrl: string): string => {
   const safeGreeting = escapeXmlContent(greeting || 'Hello! You are now connected to your AI assistant.');
   
   // Validate WebSocket URL format
@@ -72,20 +53,24 @@ const generateSignalWireSWML = (greeting: string, websocketUrl: string): string 
     throw new Error('Invalid WebSocket URL format - must start with wss:// or ws://');
   }
 
-  // Generate proper LaML-compatible XML (not SWML)
+  // Generate proper TwiML-compatible LaML structure
   const laml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>${safeGreeting}</Say>
-  <Start>
+  <Say voice="alice">${safeGreeting}</Say>
+  <Connect>
     <Stream url="${websocketUrl}" />
-  </Start>
+  </Connect>
 </Response>`;
 
-  console.log('📄 Generated SignalWire LaML:', laml);
+  console.log('📄 Generated TwiML-compatible LaML:', laml);
   
   // Validate LaML structure
   if (!laml.includes('<Response>') || !laml.includes('</Response>')) {
     throw new Error('Invalid LaML structure - missing Response tags');
+  }
+  
+  if (!laml.includes('<Connect>') || !laml.includes('</Connect>')) {
+    throw new Error('Invalid LaML structure - missing Connect tags');
   }
   
   if (!laml.includes('<Stream url=')) {
@@ -230,22 +215,23 @@ serve(async (req) => {
       websocket: wsUrl
     });
 
-    // Generate LaML with proper structure
+    // Generate TwiML-compatible LaML with proper structure
     const firstMessage = assistant?.first_message || 'Hello! You are now connected to your AI assistant.';
-    const laml = generateSignalWireSWML(firstMessage, wsUrl);
+    const laml = generateSignalWireLaML(firstMessage, wsUrl);
 
-    // Make SignalWire API call with LaML
+    // Make SignalWire API call with proper TwiML
     const callParams = new URLSearchParams({
       To: formattedNumber,
       From: signalwirePhoneNumber,
-      Twiml: laml, // SignalWire accepts LaML via the Twiml parameter
+      Twiml: laml, // Use proper TwiML-compatible LaML
       StatusCallback: statusCallbackUrl,
-      StatusCallbackMethod: 'POST'
+      StatusCallbackMethod: 'POST',
+      StatusCallbackEvent: 'initiated ringing answered completed'
     });
 
     const signalwireUrl = `https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
 
-    console.log('📡 Calling SignalWire API with LaML:', {
+    console.log('📡 Calling SignalWire API with TwiML-compatible LaML:', {
       url: signalwireUrl,
       to: formattedNumber,
       from: signalwirePhoneNumber,
@@ -285,7 +271,7 @@ serve(async (req) => {
     }
 
     const signalwireData = await signalwireResponse.json();
-    console.log('✅ SignalWire call created with LaML:', signalwireData.sid);
+    console.log('✅ SignalWire call created with TwiML-compatible LaML:', signalwireData.sid);
 
     // Update call record
     await supabaseClient
@@ -303,7 +289,7 @@ serve(async (req) => {
         callId: signalwireData.sid,
         dbCallId: callData.id,
         status: 'calling',
-        message: 'Call initiated successfully with DeepGram + SignalWire',
+        message: 'Call initiated successfully with proper TwiML structure',
         websocketUrl: wsUrl,
         provider: 'deepgram',
         assistant: assistant ? {
