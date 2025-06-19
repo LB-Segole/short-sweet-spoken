@@ -2,7 +2,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v11.0 (Fixed LaML Structure)');
+console.log('🚀 Edge Function initialized - make-outbound-call v12.0 (Fixed StatusCallbackEvent)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -219,19 +219,19 @@ serve(async (req) => {
     const firstMessage = assistant?.first_message || 'Hello! You are now connected to your AI assistant.';
     const laml = generateSignalWireLaML(firstMessage, wsUrl);
 
-    // Make SignalWire API call with proper TwiML
+    // Make SignalWire API call with proper TwiML - Fixed StatusCallbackEvent format
     const callParams = new URLSearchParams({
       To: formattedNumber,
       From: signalwirePhoneNumber,
-      Twiml: laml, // Use proper TwiML-compatible LaML
+      Twiml: laml,
       StatusCallback: statusCallbackUrl,
-      StatusCallbackMethod: 'POST',
-      StatusCallbackEvent: 'initiated ringing answered completed'
+      StatusCallbackMethod: 'POST'
+      // Remove StatusCallbackEvent entirely as it's causing the 422 error
     });
 
     const signalwireUrl = `https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
 
-    console.log('📡 Calling SignalWire API with TwiML-compatible LaML:', {
+    console.log('📡 Calling SignalWire API with TwiML-compatible LaML (without StatusCallbackEvent):', {
       url: signalwireUrl,
       to: formattedNumber,
       from: signalwirePhoneNumber,
@@ -271,7 +271,7 @@ serve(async (req) => {
     }
 
     const signalwireData = await signalwireResponse.json();
-    console.log('✅ SignalWire call created with TwiML-compatible LaML:', signalwireData.sid);
+    console.log('✅ SignalWire call created successfully:', signalwireData.sid);
 
     // Update call record
     await supabaseClient
@@ -289,7 +289,7 @@ serve(async (req) => {
         callId: signalwireData.sid,
         dbCallId: callData.id,
         status: 'calling',
-        message: 'Call initiated successfully with proper TwiML structure',
+        message: 'Call initiated successfully without StatusCallbackEvent',
         websocketUrl: wsUrl,
         provider: 'deepgram',
         assistant: assistant ? {
