@@ -9,7 +9,7 @@ const corsHeaders = {
 }
 
 serve(async (req) => {
-  console.log('🚀 voice-websocket function invoked (DeepGram-only version)', {
+  console.log('🚀 voice-websocket function invoked (DeepGram-only version v6.0)', {
     method: req.method,
     url: req.url,
     headers: Object.fromEntries(req.headers.entries()),
@@ -72,7 +72,7 @@ serve(async (req) => {
     const rateLimiter = {
       transcriptions: new Map<string, number[]>(),
       tts: new Map<string, number[]>(),
-      canProceed(type: 'transcription' | 'tts', identifier: string, maxPerMinute = 10) {
+      canProceed(type: 'transcription' | 'tts', identifier: string, maxPerMinute = 15) {
         const now = Date.now()
         const windowStart = now - 60000
         const map = type === 'transcription' ? this.transcriptions : this.tts
@@ -85,36 +85,11 @@ serve(async (req) => {
       },
     }
 
-    // Validate call record for authenticated calls
-    if (userId && authToken && callId !== 'browser-test') {
-      try {
-        const { data: callRecord, error: callError } = await supabaseClient
-          .from('calls')
-          .select('id, user_id, status')
-          .eq('id', callId)
-          .eq('user_id', userId)
-          .single()
-        
-        if (callError || !callRecord) {
-          console.log('❌ Invalid call record', callError)
-          return new Response('Invalid call session', { status: 403, headers: corsHeaders })
-        }
-        console.log('✅ Call record validated successfully')
-      } catch (err) {
-        console.log('❌ Error validating call record', err)
-        return new Response('Database error', { status: 500, headers: corsHeaders })
-      }
-    }
-
     // State variables for conversation
     let assistant: any = null
     const conversationHistory: Array<{ role: string; content: string }> = []
     let hasSpoken = false
     let isCallActive = false
-    let audioBuffer: string[] = []
-    let lastProcessTime = Date.now()
-    let isProcessingAudio = false
-    let audioProcessingQueue: Promise<void> = Promise.resolve()
     let deepgramWs: WebSocket | null = null
 
     const log = (msg: string, data?: any) => console.log(`[${new Date().toISOString()}] [Call: ${callId}] ${msg}`, data || '')
@@ -122,8 +97,6 @@ serve(async (req) => {
     // Cleanup function
     const cleanup = () => {
       isCallActive = false
-      isProcessingAudio = false
-      audioBuffer = []
       if (deepgramWs) {
         deepgramWs.close()
         deepgramWs = null
@@ -309,21 +282,16 @@ serve(async (req) => {
 
     // Audio handling with Deepgram integration
     async function handleIncomingAudio(payload: string) {
-      audioProcessingQueue = audioProcessingQueue.then(async () => {
-        try {
-          // Send to Deepgram if available
-          if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) {
-            const binaryAudio = Uint8Array.from(atob(payload), c => c.charCodeAt(0))
-            deepgramWs.send(binaryAudio)
-            return
-          }
-
-          log('⚠️ Deepgram WebSocket not available for audio processing')
-        } catch (err) {
-          log('❌ Error in audio handler:', err)
-          isProcessingAudio = false
+      try {
+        if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) {
+          const binaryAudio = Uint8Array.from(atob(payload), c => c.charCodeAt(0))
+          deepgramWs.send(binaryAudio)
+          return
         }
-      })
+        log('⚠️ Deepgram WebSocket not available for audio processing')
+      } catch (err) {
+        log('❌ Error in audio handler:', err)
+      }
     }
 
     // Text-to-Speech with DeepGram
@@ -376,13 +344,13 @@ serve(async (req) => {
       return ''
     }
 
-    // Process text input and generate simple AI response
+    // Process text input and generate simple AI response (no external LLM needed)
     async function processTextInput(text: string) {
       log('💭 Processing text input:', text)
       conversationHistory.push({ role: 'user', content: text })
       
       try {
-        // Simple response generation (no OpenAI)
+        // Simple response generation based on input patterns
         const aiResponse = generateSimpleResponse(text)
         conversationHistory.push({ role: 'assistant', content: aiResponse })
         await sendAIResponse(aiResponse)
@@ -392,7 +360,7 @@ serve(async (req) => {
       }
     }
 
-    // Simple response generation without OpenAI
+    // Simple response generation without external LLM
     function generateSimpleResponse(text: string): string {
       const input = text.toLowerCase().trim()
       

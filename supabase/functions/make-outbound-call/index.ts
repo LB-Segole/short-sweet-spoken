@@ -2,7 +2,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v8.0 (Pure DeepGram + SignalWire SWML)');
+console.log('🚀 Edge Function initialized - make-outbound-call v9.0 (Pure DeepGram + SignalWire SWML)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -43,7 +43,7 @@ const escapeXmlContent = (text: string): string => {
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
 };
 
-const generateSignalWireSWML = (greeting: string, websocketUrl: string, deepgramApiKey: string): string => {
+const generateSignalWireSWML = (greeting: string, websocketUrl: string): string => {
   const safeGreeting = escapeXmlContent(greeting || 'Hello! You are now connected to your AI assistant powered by DeepGram.');
   
   // Validate WebSocket URL format
@@ -52,17 +52,17 @@ const generateSignalWireSWML = (greeting: string, websocketUrl: string, deepgram
     throw new Error('Invalid WebSocket URL format - must start with wss:// or ws://');
   }
 
-  // Generate SignalWire SWML with DeepGram integration
+  // Generate pure SignalWire SWML
   const swml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="en-US-Wavenet-D">${safeGreeting}</Say>
-  <Connect>
+  <Say voice="alice">${safeGreeting}</Say>
+  <Start>
     <Stream url="${websocketUrl}">
       <Parameter name="provider" value="deepgram" />
       <Parameter name="stt_model" value="nova-2" />
       <Parameter name="language" value="en-US" />
     </Stream>
-  </Connect>
+  </Start>
 </Response>`;
 
   console.log('📄 Generated SignalWire SWML:', swml);
@@ -194,12 +194,11 @@ serve(async (req) => {
       );
     }
 
-    // Get SignalWire and DeepGram configuration
+    // Get SignalWire configuration
     const signalwireProjectId = Deno.env.get('SIGNALWIRE_PROJECT_ID')!;
     const signalwireApiToken = Deno.env.get('SIGNALWIRE_TOKEN')!;
     const signalwireSpaceUrl = Deno.env.get('SIGNALWIRE_SPACE_URL')!;
     const rawSignalwirePhoneNumber = Deno.env.get('SIGNALWIRE_PHONE_NUMBER')!;
-    const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')!;
     
     const signalwirePhoneNumber = formatToE164(rawSignalwirePhoneNumber);
 
@@ -207,7 +206,7 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const statusCallbackUrl = `${supabaseUrl}/functions/v1/call-webhook`;
     
-    // Use the deepgram-voice-websocket endpoint
+    // Use the deepgram-voice-websocket endpoint for proper SWML handling
     const wsUrl = `${supabaseUrl.replace('https://', 'wss://').replace('http://', 'ws://')}/functions/v1/deepgram-voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`;
 
     console.log('🔗 URLs constructed:', {
@@ -217,7 +216,7 @@ serve(async (req) => {
 
     // Generate SWML with DeepGram integration
     const firstMessage = assistant?.first_message || 'Hello! You are now connected to your AI assistant powered by DeepGram.';
-    const swml = generateSignalWireSWML(firstMessage, wsUrl, deepgramApiKey);
+    const swml = generateSignalWireSWML(firstMessage, wsUrl);
 
     // Make SignalWire API call with SWML
     const callParams = new URLSearchParams({

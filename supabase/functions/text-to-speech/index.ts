@@ -1,7 +1,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 
-console.log('🎙️ DeepGram Text-to-Speech Function initialized v4.0 - Pure DeepGram implementation');
+console.log('🎙️ DeepGram Text-to-Speech Function initialized v5.0 - Pure DeepGram REST API');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -39,16 +39,17 @@ serve(async (req) => {
     
     if (!deepgramApiKey) {
       console.error('❌ DeepGram API key not configured');
-      console.log('💡 Please set DEEPGRAM_API_KEY in Supabase project settings > Edge Functions > Environment Variables');
+      console.log('💡 Set DEEPGRAM_API_KEY in Supabase project settings > Edge Functions > Environment Variables');
       throw new Error('DeepGram API key not configured. Please set DEEPGRAM_API_KEY in your Supabase project settings.');
     }
 
-    console.log('🎵 DeepGram TTS: Converting text to speech with DeepGram');
+    const voiceModel = voice || model || 'aura-asteria-en';
+    console.log('🎵 DeepGram TTS: Converting text to speech');
     console.log('📝 Text preview:', text.substring(0, 100) + (text.length > 100 ? '...' : ''));
-    console.log('🎵 Voice model:', voice || 'aura-asteria-en');
+    console.log('🎵 Voice model:', voiceModel);
 
-    // DeepGram TTS API call
-    const response = await fetch('https://api.deepgram.com/v1/speak?model=' + encodeURIComponent(voice || 'aura-asteria-en'), {
+    // DeepGram TTS REST API call
+    const response = await fetch(`https://api.deepgram.com/v1/speak?model=${encodeURIComponent(voiceModel)}`, {
       method: 'POST',
       headers: {
         'Authorization': `Token ${deepgramApiKey}`,
@@ -82,7 +83,8 @@ serve(async (req) => {
         success: true,
         audioContent: base64Audio,
         format: 'wav',
-        provider: 'deepgram'
+        provider: 'deepgram',
+        voice: voiceModel
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
