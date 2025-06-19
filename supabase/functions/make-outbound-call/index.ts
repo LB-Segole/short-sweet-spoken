@@ -2,7 +2,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
 
-console.log('🚀 Edge Function initialized - make-outbound-call v19.0 (Fixed E.164 formatting)');
+console.log('🚀 Edge Function initialized - make-outbound-call v20.0 (Fixed LaML validation)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -253,16 +253,16 @@ serve(async (req) => {
     const callId = crypto.randomUUID();
     console.log(`🆔 Generated call ID: ${callId}`);
 
-    // Construct URLs
+    // Construct URLs - using voice-websocket instead of deepgram-voice-websocket
     const statusCallback = `${supabaseUrl}/functions/v1/call-webhook`;
-    const websocketUrl = `wss://${supabaseUrl.replace('https://', '')}/functions/v1/deepgram-voice-websocket?callId=${encodeURIComponent(callId)}&assistantId=${encodeURIComponent(assistantId)}&userId=${encodeURIComponent(user.id)}`;
+    const websocketUrl = `wss://${supabaseUrl.replace('https://', '')}/functions/v1/voice-websocket?callId=${encodeURIComponent(callId)}&assistantId=${encodeURIComponent(assistantId)}&userId=${encodeURIComponent(user.id)}`;
 
     console.log(`🌐 URLs configured: {
   statusCallback: "${statusCallback}",
   websocketUrl: "${websocketUrl.substring(0, 80)}..."
 }`);
 
-    // Generate LaML with proper XML escaping
+    // Generate LaML with proper XML escaping and simpler structure
     const firstMessage = assistant.first_message || 'Hello! How can I help you today?';
     
     const escapeXml = (text: string): string => {
@@ -276,6 +276,7 @@ serve(async (req) => {
 
     const escapedGreeting = escapeXml(firstMessage);
 
+    // Simplified LaML structure
     const laml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="alice">${escapedGreeting}</Say>
@@ -285,13 +286,14 @@ serve(async (req) => {
 </Response>`;
 
     console.log('📄 LaML generated successfully');
+    console.log(`📄 LaML content: ${laml}`);
 
     // Make API call to SignalWire
     const signalwireUrl = `https://${signalwireSpace}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
     
     const formData = new URLSearchParams({
       To: formattedToNumber,
-      From: formattedFromNumber, // Use the properly formatted E.164 number
+      From: formattedFromNumber,
       Twiml: laml,
       StatusCallback: statusCallback,
       StatusCallbackMethod: 'POST'
