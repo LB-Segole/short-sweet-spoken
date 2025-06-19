@@ -1,7 +1,8 @@
+
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v14.0 (Fixed LaML Start/Stream Structure)');
+console.log('🚀 Edge Function initialized - make-outbound-call v15.0 (Enhanced Debugging)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -42,9 +43,14 @@ const escapeXmlContent = (text: string): string => {
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
 };
 
-// Generate proper SignalWire LaML with correct Start/Stream structure
+// Generate proper SignalWire LaML with extensive debugging
 const generateSignalWireLaML = (greeting: string, websocketUrl: string): string => {
+  console.log('🔧 LaML Generation Debug:');
+  console.log('- Input greeting:', greeting);
+  console.log('- Input websocketUrl:', websocketUrl);
+  
   const safeGreeting = escapeXmlContent(greeting || 'Hello! You are now connected to your AI assistant.');
+  console.log('- Escaped greeting:', safeGreeting);
   
   // Validate WebSocket URL format
   if (!websocketUrl.startsWith('wss://') && !websocketUrl.startsWith('ws://')) {
@@ -61,21 +67,35 @@ const generateSignalWireLaML = (greeting: string, websocketUrl: string): string 
   <Say voice="alice">${safeGreeting}</Say>
 </Response>`;
 
-  console.log('📄 Generated SignalWire LaML with Start/Stream:', laml);
+  console.log('📄 EXACT LaML being generated:');
+  console.log('=====================================');
+  console.log(laml);
+  console.log('=====================================');
+  console.log('📊 LaML Stats:');
+  console.log('- Length:', laml.length);
+  console.log('- Contains XML declaration:', laml.includes('<?xml'));
+  console.log('- Contains Response tags:', laml.includes('<Response>') && laml.includes('</Response>'));
+  console.log('- Contains Start tags:', laml.includes('<Start>') && laml.includes('</Start>'));
+  console.log('- Contains Stream tag:', laml.includes('<Stream'));
+  console.log('- Contains Say tags:', laml.includes('<Say>') && laml.includes('</Say>'));
   
-  // Validate LaML structure
+  // Enhanced validation
   if (!laml.includes('<Response>') || !laml.includes('</Response>')) {
+    console.error('❌ LaML validation failed: missing Response tags');
     throw new Error('Invalid LaML structure - missing Response tags');
   }
   
   if (!laml.includes('<Start>') || !laml.includes('</Start>')) {
+    console.error('❌ LaML validation failed: missing Start tags');
     throw new Error('Invalid LaML structure - missing Start tags');
   }
   
   if (!laml.includes('<Stream url=')) {
+    console.error('❌ LaML validation failed: missing Stream element');
     throw new Error('Invalid LaML structure - missing Stream element');
   }
 
+  console.log('✅ LaML validation passed');
   return laml;
 };
 
@@ -202,23 +222,29 @@ serve(async (req) => {
     
     const signalwirePhoneNumber = formatToE164(rawSignalwirePhoneNumber);
 
-    // Construct URLs with correct WebSocket format
+    // Construct URLs with correct WebSocket format - FIXED to point to deepgram-voice-websocket
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const statusCallbackUrl = `${supabaseUrl}/functions/v1/call-webhook`;
     
-    // Use proper WebSocket URL format for SignalWire
-    const wsUrl = `${supabaseUrl.replace('https://', 'wss://').replace('http://', 'ws://')}/functions/v1/voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`;
+    // Use the correct WebSocket function name
+    const wsUrl = `${supabaseUrl.replace('https://', 'wss://').replace('http://', 'ws://')}/functions/v1/deepgram-voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`;
 
     console.log('🔗 URLs constructed:', {
       statusCallback: statusCallbackUrl,
       websocket: wsUrl
     });
 
-    // Generate SignalWire LaML with proper Start/Stream structure
+    // Generate SignalWire LaML with extensive debugging
     const firstMessage = assistant?.first_message || 'Hello! You are now connected to your AI assistant.';
+    console.log('🎯 Generating LaML with:', {
+      firstMessage,
+      wsUrl,
+      assistantName: assistant?.name || 'Default'
+    });
+    
     const laml = generateSignalWireLaML(firstMessage, wsUrl);
 
-    // Make SignalWire API call with corrected LaML structure
+    // Make SignalWire API call with enhanced debugging
     const callParams = new URLSearchParams({
       To: formattedNumber,
       From: signalwirePhoneNumber,
@@ -229,12 +255,12 @@ serve(async (req) => {
 
     const signalwireUrl = `https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
 
-    console.log('📡 Calling SignalWire API with Start/Stream LaML structure:', {
-      url: signalwireUrl,
-      to: formattedNumber,
-      from: signalwirePhoneNumber,
-      lamlLength: laml.length
-    });
+    console.log('📡 SignalWire API Call Debug:');
+    console.log('- URL:', signalwireUrl);
+    console.log('- To:', formattedNumber);
+    console.log('- From:', signalwirePhoneNumber);
+    console.log('- LaML length:', laml.length);
+    console.log('- StatusCallback:', statusCallbackUrl);
 
     const signalwireResponse = await fetch(signalwireUrl, {
       method: 'POST',
@@ -245,13 +271,18 @@ serve(async (req) => {
       body: callParams
     });
 
+    console.log('📊 SignalWire Response Debug:');
+    console.log('- Status:', signalwireResponse.status);
+    console.log('- Status Text:', signalwireResponse.statusText);
+    console.log('- Headers:', Object.fromEntries(signalwireResponse.headers.entries()));
+
     if (!signalwireResponse.ok) {
       const errorText = await signalwireResponse.text();
-      console.error('❌ SignalWire API error:', {
-        status: signalwireResponse.status,
-        statusText: signalwireResponse.statusText,
-        error: errorText
-      });
+      console.error('❌ SignalWire API error details:');
+      console.error('- Status:', signalwireResponse.status);
+      console.error('- Status Text:', signalwireResponse.statusText);
+      console.error('- Error Body:', errorText);
+      console.error('- LaML that was sent:', laml);
       
       await supabaseClient
         .from('calls')
@@ -262,14 +293,18 @@ serve(async (req) => {
         JSON.stringify({
           success: false,
           error: `SignalWire API error: ${signalwireResponse.status} - ${errorText}`,
-          details: { status: signalwireResponse.status, body: errorText }
+          details: { 
+            status: signalwireResponse.status, 
+            body: errorText,
+            sentLaml: laml 
+          }
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
       );
     }
 
     const signalwireData = await signalwireResponse.json();
-    console.log('✅ SignalWire call created with Start/Stream LaML:', signalwireData.sid);
+    console.log('✅ SignalWire call created successfully:', signalwireData.sid);
 
     // Update call record
     await supabaseClient
@@ -287,14 +322,18 @@ serve(async (req) => {
         callId: signalwireData.sid,
         dbCallId: callData.id,
         status: 'calling',
-        message: 'Call initiated successfully with Start/Stream LaML structure',
+        message: 'Call initiated successfully with enhanced debugging',
         websocketUrl: wsUrl,
         provider: 'deepgram',
         assistant: assistant ? {
           name: assistant.name,
           prompt: assistant.system_prompt,
           voice_provider: 'deepgram'
-        } : null
+        } : null,
+        debug: {
+          lamlGenerated: laml,
+          lamlLength: laml.length
+        }
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     );
