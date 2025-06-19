@@ -2,7 +2,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
 
-console.log('🚀 Edge Function initialized - make-outbound-call v16.0 (Fixed LaML Structure)');
+console.log('🚀 Edge Function initialized - make-outbound-call v17.0 (CORS Fixed)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -17,14 +17,31 @@ serve(async (req) => {
   timestamp: "${new Date().toISOString()}"
 }`);
 
+  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+    console.log('🔄 Handling CORS preflight request');
+    return new Response(null, { 
+      status: 200,
+      headers: corsHeaders 
+    });
+  }
+
+  // Only allow POST requests
+  if (req.method !== 'POST') {
+    console.log(`❌ Method not allowed: ${req.method}`);
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
   }
 
   try {
     // Get auth token from request
     const authHeader = req.headers.get('Authorization');
+    console.log(`🔐 Auth header present: ${!!authHeader}`);
+    
     if (!authHeader?.startsWith('Bearer ')) {
+      console.log('❌ Missing or invalid authorization header');
       return new Response(JSON.stringify({ error: 'Missing or invalid authorization header' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -34,6 +51,18 @@ serve(async (req) => {
     // Initialize Supabase client
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    
+    console.log(`🔧 Supabase URL: ${supabaseUrl ? 'Present' : 'Missing'}`);
+    console.log(`🔧 Service Key: ${supabaseServiceKey ? 'Present' : 'Missing'}`);
+    
+    if (!supabaseUrl || !supabaseServiceKey) {
+      console.log('❌ Missing Supabase configuration');
+      return new Response(JSON.stringify({ error: 'Server configuration error' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // Verify user authentication
@@ -41,6 +70,7 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     
     if (authError || !user) {
+      console.log(`❌ Authentication failed: ${authError?.message || 'No user'}`);
       return new Response(JSON.stringify({ error: 'Invalid authentication token' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -50,24 +80,31 @@ serve(async (req) => {
     console.log(`✅ User authenticated: ${user.id}`);
 
     // Parse request body
-    const { phoneNumber, assistantId, campaignId, contactId } = await req.json();
-    
-    if (!phoneNumber || !assistantId) {
-      return new Response(JSON.stringify({ error: 'Missing required fields: phoneNumber, assistantId' }), {
+    let requestBody;
+    try {
+      requestBody = await req.json();
+    } catch (parseError) {
+      console.log(`❌ Failed to parse request body: ${parseError}`);
+      return new Response(JSON.stringify({ error: 'Invalid JSON in request body' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
 
-    // Mask phone number for logging (show first 6 digits + ***)
-    const maskedPhone = phoneNumber.length > 6 ? 
-      phoneNumber.substring(0, 6) + '***' : 
-      phoneNumber;
-
+    const { phoneNumber, assistantId, campaignId, contactId } = requestBody;
+    
     console.log(`📋 Request parsed: {
-  phoneNumber: "${maskedPhone}",
-  assistantId: "${assistantId}"
+  phoneNumber: "${phoneNumber ? phoneNumber.substring(0, 6) + '***' : 'Missing'}",
+  assistantId: "${assistantId || 'Missing'}"
 }`);
+    
+    if (!phoneNumber || !assistantId) {
+      console.log('❌ Missing required fields');
+      return new Response(JSON.stringify({ error: 'Missing required fields: phoneNumber, assistantId' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
 
     // Get assistant details
     const { data: assistant, error: assistantError } = await supabase
@@ -78,6 +115,7 @@ serve(async (req) => {
       .single();
 
     if (assistantError || !assistant) {
+      console.log(`❌ Assistant not found: ${assistantError?.message || 'Not found'}`);
       return new Response(JSON.stringify({ error: 'Assistant not found or access denied' }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -89,27 +127,33 @@ serve(async (req) => {
     // Generate unique call ID
     const callId = crypto.randomUUID();
 
+    // SignalWire API credentials check
+    const signalwireProjectId = Deno.env.get('SIGNALWIRE_PROJECT_ID');
+    const signalwireToken = Deno.env.get('SIGNALWIRE_TOKEN');
+    const signalwireSpace = Deno.env.get('SIGNALWIRE_SPACE');
+    const signalwirePhoneNumber = Deno.env.get('SIGNALWIRE_PHONE_NUMBER');
+
+    console.log(`🔧 SignalWire Config: {
+  projectId: "${signalwireProjectId ? 'Present' : 'Missing'}",
+  token: "${signalwireToken ? 'Present' : 'Missing'}",
+  space: "${signalwireSpace ? 'Present' : 'Missing'}",
+  phoneNumber: "${signalwirePhoneNumber ? 'Present' : 'Missing'}"
+}`);
+
+    if (!signalwireProjectId || !signalwireToken || !signalwireSpace || !signalwirePhoneNumber) {
+      console.log('❌ SignalWire configuration incomplete');
+      return new Response(JSON.stringify({ error: 'SignalWire configuration incomplete' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
     // Construct URLs
     const statusCallback = `${supabaseUrl}/functions/v1/call-webhook`;
     const websocketUrl = `wss://${supabaseUrl.replace('https://', '')}/functions/v1/deepgram-voice-websocket?callId=${encodeURIComponent(callId)}&assistantId=${encodeURIComponent(assistantId)}&userId=${encodeURIComponent(user.id)}`;
 
-    console.log(`🔗 URLs constructed: {
-  statusCallback: "${statusCallback}",
-  websocket: "${websocketUrl}"
-}`);
-
-    // Generate LaML with CORRECT structure for SignalWire
+    // Generate LaML
     const firstMessage = assistant.first_message || 'Hello! How can I help you today?';
-    
-    console.log(`🎯 Generating LaML with: {
-  firstMessage: "${firstMessage}",
-  wsUrl: "${websocketUrl}",
-  assistantName: "${assistant.name}"
-}`);
-
-    console.log('🔧 LaML Generation Debug:');
-    console.log(`- Input greeting: ${firstMessage}`);
-    console.log(`- Input websocketUrl: ${websocketUrl}`);
     
     const escapeXml = (text: string): string => {
       return text
@@ -121,9 +165,7 @@ serve(async (req) => {
     };
 
     const escapedGreeting = escapeXml(firstMessage);
-    console.log(`- Escaped greeting: ${escapedGreeting}`);
 
-    // FIXED: Use Connect/Stream instead of Start/Stream for SignalWire compatibility
     const laml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="alice">${escapedGreeting}</Say>
@@ -132,55 +174,11 @@ serve(async (req) => {
   </Connect>
 </Response>`;
 
-    console.log('=====================================');
-    console.log('📄 FIXED LaML being generated:');
-    console.log('=====================================');
-    console.log(laml);
-    console.log('=====================================');
-
-    // Validate LaML structure
-    console.log('📊 LaML Stats:');
-    console.log(`- Length: ${laml.length}`);
-    console.log(`- Contains XML declaration: ${laml.includes('<?xml')}`);
-    console.log(`- Contains Response tags: ${laml.includes('<Response>') && laml.includes('</Response>')}`);
-    console.log(`- Contains Connect tags: ${laml.includes('<Connect>') && laml.includes('</Connect>')}`);
-    console.log(`- Contains Stream tag: ${laml.includes('<Stream')}`);
-    console.log(`- Contains Say tags: ${laml.includes('<Say')}`);
-
-    if (laml.includes('<Response>') && laml.includes('</Response>') && 
-        laml.includes('<Connect>') && laml.includes('<Stream')) {
-      console.log('✅ LaML validation passed');
-    } else {
-      console.error('❌ LaML validation failed');
-      return new Response(JSON.stringify({ error: 'Invalid LaML structure generated' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
-
-    // SignalWire API credentials
-    const signalwireProjectId = Deno.env.get('SIGNALWIRE_PROJECT_ID');
-    const signalwireToken = Deno.env.get('SIGNALWIRE_TOKEN');
-    const signalwireSpace = Deno.env.get('SIGNALWIRE_SPACE');
-    const signalwirePhoneNumber = Deno.env.get('SIGNALWIRE_PHONE_NUMBER');
-
-    if (!signalwireProjectId || !signalwireToken || !signalwireSpace || !signalwirePhoneNumber) {
-      return new Response(JSON.stringify({ error: 'SignalWire configuration incomplete' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
+    console.log('📄 LaML generated successfully');
 
     // Make API call to SignalWire
     const signalwireUrl = `https://${signalwireSpace}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
     
-    console.log('📡 SignalWire API Call Debug:');
-    console.log(`- URL: ${signalwireUrl}`);
-    console.log(`- To: ${phoneNumber}`);
-    console.log(`- From: ${signalwirePhoneNumber}`);
-    console.log(`- LaML length: ${laml.length}`);
-    console.log(`- StatusCallback: ${statusCallback}`);
-
     const formData = new URLSearchParams({
       To: phoneNumber,
       From: signalwirePhoneNumber,
@@ -188,6 +186,8 @@ serve(async (req) => {
       StatusCallback: statusCallback,
       StatusCallbackMethod: 'POST'
     });
+
+    console.log(`📡 Making SignalWire API call to: ${signalwireUrl}`);
 
     const response = await fetch(signalwireUrl, {
       method: 'POST',
@@ -198,18 +198,11 @@ serve(async (req) => {
       body: formData
     });
 
-    console.log('📊 SignalWire Response Debug:');
-    console.log(`- Status: ${response.status}`);
-    console.log(`- Status Text: ${response.statusText}`);
-    console.log(`- Headers: ${JSON.stringify(Object.fromEntries(response.headers.entries()), null, 2)}`);
+    console.log(`📊 SignalWire Response: ${response.status} ${response.statusText}`);
 
     if (!response.ok) {
       const errorBody = await response.text();
-      console.log('❌ SignalWire API error details:');
-      console.error(`- Status: ${response.status}`);
-      console.error(`- Status Text: ${response.statusText}`);
-      console.error(`- Error Body: ${errorBody}`);
-      console.error(`- LaML that was sent: ${laml}`);
+      console.log(`❌ SignalWire API error: ${response.status} - ${errorBody}`);
       
       return new Response(JSON.stringify({ 
         error: 'SignalWire API error', 
@@ -234,8 +227,7 @@ serve(async (req) => {
         assistant_id: assistantId,
         campaign_id: campaignId || null,
         contact_id: contactId || null,
-        to_number: phoneNumber,
-        from_number: signalwirePhoneNumber,
+        phone_number: phoneNumber,
         status: 'initiated',
         created_at: new Date().toISOString()
       });
@@ -251,6 +243,7 @@ serve(async (req) => {
       callSid: callData.sid,
       callId: callId 
     }), {
+      status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
 
