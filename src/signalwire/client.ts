@@ -74,5 +74,5 @@ export class SignalWireClient {
   }
 }
 
-// Export the types and client
-export { SignalWireConfig, CallRequest, CallResponse } from './types';
+// Export the types using 'export type' for isolated modules compatibility
+export type { SignalWireConfig, CallRequest, CallResponse } from './types';

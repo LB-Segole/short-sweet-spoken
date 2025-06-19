@@ -27,13 +27,17 @@ export const generateConversationResponse = async (
     };
   }
   
-  // Generate response based on input
+  // Generate response based on input and agent personality
   let responseText = "I understand you said: " + userInput + ". How can I assist you further?";
   
   if (lowerInput.includes('help')) {
-    responseText = "I'm here to help! What specific assistance do you need today?";
+    responseText = agentPersonality === 'friendly' 
+      ? "I'm here to help! What specific assistance do you need today?" 
+      : "I can assist you. What do you need help with?";
   } else if (lowerInput.includes('problem') || lowerInput.includes('issue')) {
-    responseText = "I'm sorry to hear you're experiencing an issue. Can you tell me more about the problem?";
+    responseText = agentPersonality === 'professional'
+      ? "I apologize for the inconvenience. Can you tell me more about the issue?"
+      : "I'm sorry to hear you're experiencing an issue. Can you tell me more about the problem?";
   } else if (lowerInput.includes('thank')) {
     responseText = "You're very welcome! Is there anything else I can help you with?";
   }
