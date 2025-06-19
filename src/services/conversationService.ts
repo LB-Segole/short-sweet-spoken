@@ -1,5 +1,3 @@
-
-
 import { ConversationResponse, ConversationContext } from './types';
 
 export interface ConversationResponse {
@@ -138,4 +136,3 @@ export const analyzeCustomerSentiment = (text: string): {
 export const generateFollowUp = (callSummary: string): string => {
   return `Thank you for speaking with us today about ${callSummary}. We appreciate your interest in First Choice Solutions and look forward to helping your business succeed. Our team will follow up with you soon with more information tailored to your needs.`;
 };
-
