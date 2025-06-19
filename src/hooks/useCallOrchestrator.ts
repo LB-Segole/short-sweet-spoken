@@ -1,4 +1,3 @@
-
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Agent } from '../types/agent';
 import { DeepgramSTTClient, STTConfig, TranscriptEvent } from '../deepgram/stt';
@@ -81,7 +80,7 @@ export const useCallOrchestrator = (config: CallOrchestratorConfig) => {
 
     if (event.isFinal && event.transcript.trim() && state.currentAgent) {
       addLog(`👤 User: ${event.transcript}`);
-      processConversation(event.transcript, state.currentAgent);
+      processConversation(event.transcript);
     }
   }, [state.currentAgent]);
 
@@ -109,7 +108,7 @@ export const useCallOrchestrator = (config: CallOrchestratorConfig) => {
     }, 1000);
   }, []);
 
-  const processConversation = useCallback(async (transcript: string, currentAgent: Agent) => {
+  const processConversation = useCallback(async (transcript: string) => {
     try {
       addLog('🧠 Processing conversation...');
       
