@@ -1,8 +1,9 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { generateConversationResponse } from '../../../src/services/conversationService.ts'
 
-console.log('🚀 DeepGram Voice WebSocket initialized');
+console.log('🚀 DeepGram Voice WebSocket initialized v2.0');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -28,7 +29,7 @@ serve(async (req) => {
     })
   }
 
-  const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')
+  const deepgramApiKey = Deno.env.get('Deepgram_API')
   if (!deepgramApiKey) {
     return new Response('DeepGram API key not configured', { status: 500, headers: corsHeaders })
   }
@@ -46,6 +47,7 @@ serve(async (req) => {
     let deepgramSTT: WebSocket | null = null
     let deepgramTTS: WebSocket | null = null
     let signalWireStreamSid: string | null = null
+    let conversationBuffer: Array<{ role: string; content: string }> = []
 
     const log = (msg: string, data?: any) => 
       console.log(`[${new Date().toISOString()}] [Call: ${callId}] ${msg}`, data || '')
@@ -61,7 +63,7 @@ serve(async (req) => {
           .single()
         if (assistantData) {
           assistant = assistantData
-          log('✅ Assistant loaded', { name: assistant.name })
+          log('✅ Assistant loaded', { name: assistant.name, personality: assistant.system_prompt })
         }
       } catch (err) {
         log('⚠️ Error fetching assistant, using default', err)
@@ -76,118 +78,185 @@ serve(async (req) => {
       }
     }
 
-    // Initialize DeepGram STT
+    // Initialize DeepGram STT with proper error handling
     const initializeSTT = () => {
-      const sttUrl = 'wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&endpointing=300'
-      deepgramSTT = new WebSocket(sttUrl, ['token', deepgramApiKey])
+      try {
+        const sttUrl = 'wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&endpointing=300'
+        deepgramSTT = new WebSocket(sttUrl, ['token', deepgramApiKey])
 
-      deepgramSTT.onopen = () => {
-        log('✅ DeepGram STT connected')
-      }
+        deepgramSTT.onopen = () => {
+          log('✅ DeepGram STT connected successfully')
+        }
 
-      deepgramSTT.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          if (data.type === 'Results' && data.channel?.alternatives?.[0]?.transcript) {
-            const transcript = data.channel.alternatives[0].transcript
-            const isFinal = data.is_final || false
-            
-            if (transcript.trim()) {
-              log('📝 STT transcript:', { transcript, isFinal })
+        deepgramSTT.onmessage = async (event) => {
+          try {
+            const data = JSON.parse(event.data)
+            if (data.type === 'Results' && data.channel?.alternatives?.[0]?.transcript) {
+              const transcript = data.channel.alternatives[0].transcript
+              const isFinal = data.is_final || false
               
-              socket.send(JSON.stringify({
-                type: 'transcript',
-                text: transcript,
-                confidence: data.channel.alternatives[0].confidence || 1.0,
-                isFinal,
-                timestamp: Date.now()
-              }))
+              if (transcript.trim()) {
+                log('📝 STT transcript:', { transcript, isFinal })
+                
+                socket.send(JSON.stringify({
+                  type: 'transcript',
+                  text: transcript,
+                  confidence: data.channel.alternatives[0].confidence || 1.0,
+                  isFinal,
+                  timestamp: Date.now()
+                }))
 
-              if (isFinal) {
-                processConversation(transcript)
+                if (isFinal) {
+                  await processConversation(transcript)
+                }
               }
             }
+          } catch (error) {
+            log('❌ Error processing STT message:', error)
           }
-        } catch (error) {
-          log('❌ Error processing STT message:', error)
         }
-      }
 
-      deepgramSTT.onerror = (error) => {
-        log('❌ DeepGram STT error:', error)
-      }
+        deepgramSTT.onerror = (error) => {
+          log('❌ DeepGram STT error:', error)
+          setTimeout(initializeSTT, 2000) // Reconnect after 2 seconds
+        }
 
-      deepgramSTT.onclose = () => {
-        log('🔌 DeepGram STT closed')
+        deepgramSTT.onclose = (event) => {
+          log('🔌 DeepGram STT closed:', event.code)
+          if (isCallActive && event.code !== 1000) {
+            setTimeout(initializeSTT, 2000) // Reconnect if not normal closure
+          }
+        }
+      } catch (error) {
+        log('❌ Error initializing STT:', error)
+        setTimeout(initializeSTT, 2000)
       }
     }
 
-    // Initialize DeepGram TTS
+    // Initialize DeepGram TTS with proper error handling
     const initializeTTS = () => {
-      const ttsUrl = 'wss://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=linear16&sample_rate=8000'
-      deepgramTTS = new WebSocket(ttsUrl, ['token', deepgramApiKey])
+      try {
+        const ttsUrl = 'wss://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=linear16&sample_rate=8000'
+        deepgramTTS = new WebSocket(ttsUrl, ['token', deepgramApiKey])
 
-      deepgramTTS.onopen = () => {
-        log('✅ DeepGram TTS connected')
-        // Send initial greeting
-        if (assistant.first_message) {
-          sendTTSMessage(assistant.first_message)
-        }
-      }
-
-      deepgramTTS.onmessage = (event) => {
-        if (event.data instanceof ArrayBuffer) {
-          // Convert audio to base64 and send to SignalWire
-          const audioArray = new Uint8Array(event.data)
-          const base64Audio = btoa(String.fromCharCode(...audioArray))
-          
-          if (signalWireStreamSid && socket.readyState === WebSocket.OPEN) {
-            const mediaMessage = {
-              event: 'media',
-              streamSid: signalWireStreamSid,
-              media: {
-                payload: base64Audio
-              }
-            }
-            socket.send(JSON.stringify(mediaMessage))
-            log('🔊 Audio sent to SignalWire')
+        deepgramTTS.onopen = () => {
+          log('✅ DeepGram TTS connected successfully')
+          // Send initial greeting
+          if (assistant.first_message) {
+            sendTTSMessage(assistant.first_message)
           }
         }
-      }
 
-      deepgramTTS.onerror = (error) => {
-        log('❌ DeepGram TTS error:', error)
-      }
+        deepgramTTS.onmessage = (event) => {
+          if (event.data instanceof ArrayBuffer) {
+            try {
+              // Convert audio to base64 and send to SignalWire
+              const audioArray = new Uint8Array(event.data)
+              const base64Audio = btoa(String.fromCharCode(...audioArray))
+              
+              if (signalWireStreamSid && socket.readyState === WebSocket.OPEN) {
+                const mediaMessage = {
+                  event: 'media',
+                  streamSid: signalWireStreamSid,
+                  media: {
+                    payload: base64Audio
+                  }
+                }
+                socket.send(JSON.stringify(mediaMessage))
+                log('🔊 Audio sent to SignalWire')
+              }
+            } catch (error) {
+              log('❌ Error processing TTS audio:', error)
+            }
+          }
+        }
 
-      deepgramTTS.onclose = () => {
-        log('🔌 DeepGram TTS closed')
+        deepgramTTS.onerror = (error) => {
+          log('❌ DeepGram TTS error:', error)
+          setTimeout(initializeTTS, 2000)
+        }
+
+        deepgramTTS.onclose = (event) => {
+          log('🔌 DeepGram TTS closed:', event.code)
+          if (isCallActive && event.code !== 1000) {
+            setTimeout(initializeTTS, 2000)
+          }
+        }
+      } catch (error) {
+        log('❌ Error initializing TTS:', error)
+        setTimeout(initializeTTS, 2000)
       }
     }
 
     const sendTTSMessage = (text: string) => {
       if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN && text.trim()) {
-        const message = {
-          type: 'Speak',
-          text: text.trim()
+        try {
+          const message = {
+            type: 'Speak',
+            text: text.trim()
+          }
+          deepgramTTS.send(JSON.stringify(message))
+          log('📤 TTS message sent:', text)
+        } catch (error) {
+          log('❌ Error sending TTS message:', error)
         }
-        deepgramTTS.send(JSON.stringify(message))
-        log('📤 TTS message sent:', text)
+      } else {
+        log('⚠️ TTS not ready, queuing message:', text)
+        // Queue message for when TTS reconnects
+        setTimeout(() => sendTTSMessage(text), 1000)
       }
     }
 
-    const processConversation = (transcript: string) => {
-      // Simple echo response - replace with your conversation logic
-      const response = `I heard you say: "${transcript}". That's interesting! What else would you like to discuss?`
-      
-      log('🧠 Processing conversation:', { input: transcript, response })
-      
-      socket.send(JSON.stringify({
-        type: 'ai_response',
-        text: response,
-        timestamp: Date.now()
-      }))
+    const processConversation = async (transcript: string) => {
+      try {
+        log('🧠 Processing conversation:', { input: transcript })
+        
+        // Add user message to conversation buffer
+        conversationBuffer.push({ role: 'user', content: transcript })
+        
+        // Generate AI response using the conversation service
+        const response = await generateConversationResponse(transcript, {
+          callId,
+          agentPrompt: assistant.system_prompt,
+          agentPersonality: assistant.voice_provider === 'friendly' ? 'friendly' : 'professional',
+          previousMessages: conversationBuffer
+        })
+        
+        log('🤖 AI Response generated:', response)
+        
+        // Add AI response to conversation buffer
+        conversationBuffer.push({ role: 'assistant', content: response.text })
+        
+        // Send response back to client
+        socket.send(JSON.stringify({
+          type: 'ai_response',
+          text: response.text,
+          intent: response.intent,
+          confidence: response.confidence,
+          shouldTransfer: response.shouldTransfer,
+          shouldEndCall: response.shouldEndCall,
+          timestamp: Date.now()
+        }))
 
-      sendTTSMessage(response)
+        // Convert response to speech
+        sendTTSMessage(response.text)
+        
+        // Handle call actions
+        if (response.shouldEndCall) {
+          log('📴 Call should end')
+          setTimeout(() => {
+            socket.send(JSON.stringify({ type: 'end_call', reason: 'ai_decision' }))
+          }, 3000) // Give time for TTS to finish
+        } else if (response.shouldTransfer) {
+          log('📞 Call should transfer')
+          socket.send(JSON.stringify({ type: 'transfer_call', reason: 'ai_decision' }))
+        }
+        
+      } catch (error) {
+        log('❌ Error processing conversation:', error)
+        const fallbackResponse = "I'm having trouble processing that. Let me connect you with someone who can help."
+        sendTTSMessage(fallbackResponse)
+      }
     }
 
     const cleanup = () => {
@@ -200,6 +269,7 @@ serve(async (req) => {
         deepgramTTS.close()
         deepgramTTS = null
       }
+      log('🧹 Cleanup completed')
     }
 
     // WebSocket event handlers
@@ -215,7 +285,11 @@ serve(async (req) => {
         type: 'connection_established',
         callId,
         assistantId,
-        assistant: { name: assistant.name },
+        assistant: { 
+          name: assistant.name,
+          personality: assistant.system_prompt,
+          first_message: assistant.first_message
+        },
         timestamp: Date.now(),
       }))
     }
@@ -223,6 +297,7 @@ serve(async (req) => {
     socket.onmessage = async (event) => {
       try {
         const msg = JSON.parse(event.data)
+        log('📨 Received message:', { event: msg.event || msg.type })
         
         switch (msg.event || msg.type) {
           case 'connected':
@@ -236,9 +311,13 @@ serve(async (req) => {
             
           case 'media':
             if (isCallActive && msg.media?.payload && deepgramSTT?.readyState === WebSocket.OPEN) {
-              // Convert base64 audio to binary and send to DeepGram STT
-              const binaryAudio = Uint8Array.from(atob(msg.media.payload), c => c.charCodeAt(0))
-              deepgramSTT.send(binaryAudio)
+              try {
+                // Convert base64 audio to binary and send to DeepGram STT
+                const binaryAudio = Uint8Array.from(atob(msg.media.payload), c => c.charCodeAt(0))
+                deepgramSTT.send(binaryAudio)
+              } catch (error) {
+                log('❌ Error processing media:', error)
+              }
             }
             break
             
@@ -246,11 +325,12 @@ serve(async (req) => {
             log('🛑 SignalWire stream stopped')
             isCallActive = false
             signalWireStreamSid = null
+            cleanup()
             break
             
           case 'text_input':
             if (msg.text?.trim()) {
-              processConversation(msg.text)
+              await processConversation(msg.text)
             }
             break
             
@@ -263,7 +343,7 @@ serve(async (req) => {
     }
 
     socket.onclose = (ev) => {
-      log('🔌 SignalWire WebSocket closed:', ev)
+      log('🔌 SignalWire WebSocket closed:', ev.code)
       cleanup()
     }
 

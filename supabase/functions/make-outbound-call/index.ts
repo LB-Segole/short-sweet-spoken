@@ -2,7 +2,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v4.0 (DeepGram Only)');
+console.log('🚀 Edge Function initialized - make-outbound-call v5.0 (DeepGram Only)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -44,7 +44,7 @@ const escapeXmlContent = (text: string): string => {
 };
 
 const generateValidTwiML = (greeting: string, websocketUrl: string): string => {
-  const safeGreeting = escapeXmlContent(greeting || 'Hello! You are now connected to your AI assistant.');
+  const safeGreeting = escapeXmlContent(greeting || 'Hello! You are now connected to your AI assistant powered by DeepGram.');
   
   if (!websocketUrl.startsWith('wss://') && !websocketUrl.startsWith('ws://')) {
     throw new Error('Invalid WebSocket URL format');
@@ -79,11 +79,11 @@ serve(async (req) => {
       assistantId: requestBody.assistantId 
     });
 
-    // Validate required environment variables (removed OpenAI check)
+    // Validate required environment variables (DeepGram only)
     const requiredEnvVars = [
       'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 
       'SIGNALWIRE_PROJECT_ID', 'SIGNALWIRE_TOKEN', 'SIGNALWIRE_SPACE_URL', 'SIGNALWIRE_PHONE_NUMBER',
-      'DEEPGRAM_API_KEY'
+      'Deepgram_API'
     ];
     
     for (const envVar of requiredEnvVars) {
@@ -104,12 +104,13 @@ serve(async (req) => {
     const { phoneNumber, assistantId, campaignId, contactId, squadId } = requestBody;
 
     // Validate phone number format
+    const formattedNumber = formatToE164(phoneNumber);
     const phoneRegex = /^\+[1-9]\d{10,14}$/;
-    if (!phoneRegex.test(phoneNumber)) {
+    if (!phoneRegex.test(formattedNumber)) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: `Invalid phone number format: ${phoneNumber}. Must be E.164 format`
+          error: `Invalid phone number format: ${formattedNumber}. Must be E.164 format`
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       );
@@ -156,7 +157,7 @@ serve(async (req) => {
     const { data: callData, error: callError } = await supabaseClient
       .from('calls')
       .insert({
-        phone_number: phoneNumber,
+        phone_number: formattedNumber,
         status: 'pending',
         user_id: user.id,
         assistant_id: assistantId,
@@ -188,13 +189,15 @@ serve(async (req) => {
     const statusCallbackUrl = `${supabaseUrl}/functions/v1/call-webhook`;
     const wsUrl = `wss://${supabaseUrl.replace('https://', '').replace('http://', '')}/functions/v1/deepgram-voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`;
 
-    // Generate TwiML
-    const firstMessage = assistant?.first_message || 'Hello! You are now connected to your AI assistant powered by DeepGram.';
+    // Generate TwiML with DeepGram integration
+    const firstMessage = assistant?.first_message || 'Hello! You are now connected to your AI assistant powered by DeepGram for real-time conversation.';
     const twiml = generateValidTwiML(firstMessage, wsUrl);
+
+    console.log('📄 Generated TwiML:', twiml);
 
     // Make SignalWire API call
     const callParams = new URLSearchParams({
-      To: phoneNumber,
+      To: formattedNumber,
       From: signalwirePhoneNumber,
       Twiml: twiml,
       StatusCallback: statusCallbackUrl,
@@ -202,6 +205,12 @@ serve(async (req) => {
     });
 
     const signalwireUrl = `https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
+
+    console.log('📡 Calling SignalWire API:', {
+      url: signalwireUrl,
+      to: formattedNumber,
+      from: signalwirePhoneNumber
+    });
 
     const signalwireResponse = await fetch(signalwireUrl, {
       method: 'POST',
@@ -249,8 +258,13 @@ serve(async (req) => {
         callId: signalwireData.sid,
         dbCallId: callData.id,
         status: 'calling',
-        message: 'Call initiated successfully with DeepGram integration',
-        websocketUrl: wsUrl
+        message: 'Call initiated successfully with DeepGram real-time conversation',
+        websocketUrl: wsUrl,
+        assistant: assistant ? {
+          name: assistant.name,
+          prompt: assistant.system_prompt,
+          personality: assistant.voice_provider
+        } : null
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     );

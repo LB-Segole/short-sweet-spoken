@@ -4,6 +4,7 @@ import { DeepgramSTTClient } from '../services/deepgram/sttClient';
 import { DeepgramTTSClient } from '../services/deepgram/ttsClient';
 import { SignalWireCallHandler } from '../services/signalwire/callHandler';
 import { TranscriptResult, AudioChunk } from '../services/deepgram/types';
+import { generateConversationResponse } from '../services/conversationService';
 
 interface VoiceOrchestratorConfig {
   deepgramApiKey: string;
@@ -13,6 +14,9 @@ interface VoiceOrchestratorConfig {
     spaceUrl: string;
     phoneNumber: string;
   };
+  assistantId?: string;
+  agentPrompt?: string;
+  agentPersonality?: string;
 }
 
 interface VoiceState {
@@ -20,7 +24,9 @@ interface VoiceState {
   isListening: boolean;
   isSpeaking: boolean;
   currentTranscript: string;
+  lastResponse: string;
   error: string | null;
+  callStatus: 'idle' | 'connecting' | 'connected' | 'ended';
 }
 
 export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
@@ -29,13 +35,16 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
     isListening: false,
     isSpeaking: false,
     currentTranscript: '',
-    error: null
+    lastResponse: '',
+    error: null,
+    callStatus: 'idle'
   });
 
   const sttClient = useRef<DeepgramSTTClient | null>(null);
   const ttsClient = useRef<DeepgramTTSClient | null>(null);
   const callHandler = useRef<SignalWireCallHandler | null>(null);
   const streamSid = useRef<string | null>(null);
+  const conversationHistory = useRef<Array<{ role: string; content: string }>>([]);
 
   useEffect(() => {
     // Initialize clients
@@ -66,7 +75,7 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
     };
   }, [config]);
 
-  const handleTranscript = useCallback((result: TranscriptResult) => {
+  const handleTranscript = useCallback(async (result: TranscriptResult) => {
     setState(prev => ({
       ...prev,
       currentTranscript: result.transcript,
@@ -74,8 +83,16 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
     }));
 
     if (result.isFinal && result.transcript.trim()) {
-      // Process the final transcript - here you would integrate with your conversation logic
-      processConversation(result.transcript);
+      console.log('Final transcript received:', result.transcript);
+      
+      // Add to conversation history
+      conversationHistory.current.push({
+        role: 'user',
+        content: result.transcript
+      });
+
+      // Process the conversation
+      await processConversation(result.transcript);
     }
   }, []);
 
@@ -96,17 +113,60 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
   }, []);
 
   const processConversation = useCallback(async (transcript: string) => {
-    // Simple echo response for now - replace with your conversation logic
-    const response = `I heard you say: ${transcript}. How can I help you further?`;
-    
-    if (ttsClient.current) {
-      ttsClient.current.sendText(response);
+    try {
+      console.log('Processing conversation with transcript:', transcript);
+      
+      // Generate AI response using conversation service
+      const response = await generateConversationResponse(transcript, {
+        callId: streamSid.current || 'direct-call',
+        agentPrompt: config.agentPrompt,
+        agentPersonality: config.agentPersonality,
+        previousMessages: conversationHistory.current
+      });
+
+      console.log('Generated response:', response);
+      
+      // Add AI response to conversation history
+      conversationHistory.current.push({
+        role: 'assistant',
+        content: response.text
+      });
+
+      // Update state with response
+      setState(prev => ({
+        ...prev,
+        lastResponse: response.text
+      }));
+
+      // Send to TTS for speech synthesis
+      if (ttsClient.current) {
+        ttsClient.current.sendText(response.text);
+      }
+
+      // Handle special actions
+      if (response.shouldEndCall) {
+        console.log('AI decided to end call');
+        setTimeout(() => {
+          disconnect();
+          setState(prev => ({ ...prev, callStatus: 'ended' }));
+        }, 3000); // Give time for TTS to finish
+      } else if (response.shouldTransfer) {
+        console.log('AI decided to transfer call');
+        // Handle transfer logic here
+      }
+
+    } catch (error) {
+      console.error('Error processing conversation:', error);
+      setState(prev => ({
+        ...prev,
+        error: 'Failed to process conversation'
+      }));
     }
-  }, []);
+  }, [config.agentPrompt, config.agentPersonality]);
 
   const connect = useCallback(async () => {
     try {
-      setState(prev => ({ ...prev, error: null }));
+      setState(prev => ({ ...prev, error: null, callStatus: 'connecting' }));
 
       // Connect to DeepGram services
       if (sttClient.current && ttsClient.current) {
@@ -116,15 +176,27 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
         ]);
       }
 
-      setState(prev => ({ ...prev, isConnected: true }));
+      setState(prev => ({ 
+        ...prev, 
+        isConnected: true,
+        callStatus: 'connected'
+      }));
+
+      console.log('Voice orchestrator connected successfully');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Connection failed';
-      setState(prev => ({ ...prev, error: errorMessage }));
+      setState(prev => ({ 
+        ...prev, 
+        error: errorMessage,
+        callStatus: 'idle'
+      }));
       throw error;
     }
   }, [handleTranscript, handleAudioResponse]);
 
   const disconnect = useCallback(() => {
+    console.log('Disconnecting voice orchestrator');
+    
     sttClient.current?.disconnect();
     ttsClient.current?.disconnect();
     
@@ -133,8 +205,14 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
       isListening: false,
       isSpeaking: false,
       currentTranscript: '',
-      error: null
+      lastResponse: '',
+      error: null,
+      callStatus: 'ended'
     });
+
+    // Clear conversation history
+    conversationHistory.current = [];
+    streamSid.current = null;
   }, []);
 
   const sendAudioChunk = useCallback((audioData: Uint8Array) => {
@@ -155,6 +233,7 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
         case 'start':
           streamSid.current = data.streamSid;
           console.log('SignalWire stream started:', data.streamSid);
+          setState(prev => ({ ...prev, callStatus: 'connected' }));
           break;
           
         case 'media':
@@ -168,6 +247,7 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
         case 'stop':
           console.log('SignalWire stream stopped');
           streamSid.current = null;
+          setState(prev => ({ ...prev, callStatus: 'ended' }));
           break;
       }
     } catch (error) {
@@ -181,14 +261,28 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
     }
 
     try {
+      setState(prev => ({ ...prev, callStatus: 'connecting' }));
+      
       const callSid = await callHandler.current.initiateCall(phoneNumber, webhookUrl, streamUrl);
+      console.log('Call initiated successfully:', callSid);
+      
       return callSid;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Call initiation failed';
-      setState(prev => ({ ...prev, error: errorMessage }));
+      setState(prev => ({ 
+        ...prev, 
+        error: errorMessage,
+        callStatus: 'idle'
+      }));
       throw error;
     }
   }, []);
+
+  const sendTextMessage = useCallback(async (text: string) => {
+    if (text.trim()) {
+      await processConversation(text);
+    }
+  }, [processConversation]);
 
   return {
     state,
@@ -197,6 +291,7 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
     sendAudioChunk,
     handleSignalWireStream,
     initiateCall,
-    processConversation
+    sendTextMessage,
+    conversationHistory: conversationHistory.current
   };
 };

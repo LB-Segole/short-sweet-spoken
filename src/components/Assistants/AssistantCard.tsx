@@ -36,7 +36,7 @@ const AssistantCard: React.FC<AssistantCardProps> = ({
       const requestBody = {
         text: textToSpeak,
         voice: assistant.voice_id,
-        voice_provider: assistant.voice_provider
+        voice_provider: assistant.voice_provider || 'openai'
       };
 
       console.log('Sending request body to text-to-speech:', requestBody);
@@ -91,7 +91,7 @@ const AssistantCard: React.FC<AssistantCardProps> = ({
     try {
       setMakingCall(true);
       
-      // Get user's phone number - you might want to add this to user profile
+      // Get user's phone number
       const phoneNumber = prompt('Enter your phone number for the test call (e.g., +1234567890):');
       
       if (!phoneNumber) {
@@ -112,8 +112,8 @@ const AssistantCard: React.FC<AssistantCardProps> = ({
       const callParams = {
         phoneNumber: phoneNumber,
         assistantId: assistant.id,
-        campaignId: null, // Test call, no campaign
-        contactId: null   // Test call, no contact
+        campaignId: null,
+        contactId: null
       };
 
       console.log('Call parameters:', callParams);
@@ -131,7 +131,7 @@ const AssistantCard: React.FC<AssistantCardProps> = ({
 
       if (data?.success) {
         showSuccessToast(
-          `Test call initiated successfully! You should receive a call shortly from ${assistant.name}. This is a test call limited to 2 minutes.`
+          `Test call initiated successfully! You should receive a call shortly from ${assistant.name}. The AI will use DeepGram for real-time conversation.`
         );
       } else {
         throw new Error(data?.error || 'Failed to initiate call');
@@ -184,7 +184,7 @@ const AssistantCard: React.FC<AssistantCardProps> = ({
           </div>
         </div>
         <p className="text-sm text-gray-600">
-          {assistant.model || 'gpt-4o'} • {assistant.voice_provider || 'openai'}
+          DeepGram STT/TTS • {assistant.voice_provider || 'openai'} voice
         </p>
       </CardHeader>
       
@@ -211,7 +211,7 @@ const AssistantCard: React.FC<AssistantCardProps> = ({
 
         <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
           <div>Voice: {getVoiceDisplayName()}</div>
-          <div>Temp: {assistant.temperature ?? 0.8}</div>
+          <div>Temperature: {assistant.temperature ?? 0.8}</div>
           <div>Max Tokens: {assistant.max_tokens ?? 500}</div>
           <div>Created: {assistant.created_at ? new Date(assistant.created_at).toLocaleDateString() : 'Unknown'}</div>
         </div>
@@ -250,10 +250,14 @@ const AssistantCard: React.FC<AssistantCardProps> = ({
             ) : (
               <>
                 <Phone className="w-4 h-4 mr-2" />
-                Test Call (2min)
+                Real Call Test
               </>
             )}
           </Button>
+        </div>
+
+        <div className="text-xs text-blue-600 bg-blue-50 p-2 rounded">
+          💡 This assistant uses DeepGram for real-time speech recognition and synthesis, providing natural conversation without OpenAI dependency.
         </div>
       </CardContent>
     </Card>
