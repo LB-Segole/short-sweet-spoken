@@ -1,7 +1,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v13.0 (Fixed LaML Stream Structure)');
+console.log('🚀 Edge Function initialized - make-outbound-call v14.0 (Fixed LaML Start/Stream Structure)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -42,7 +42,7 @@ const escapeXmlContent = (text: string): string => {
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
 };
 
-// Generate proper SignalWire LaML with correct Stream structure
+// Generate proper SignalWire LaML with correct Start/Stream structure
 const generateSignalWireLaML = (greeting: string, websocketUrl: string): string => {
   const safeGreeting = escapeXmlContent(greeting || 'Hello! You are now connected to your AI assistant.');
   
@@ -52,24 +52,24 @@ const generateSignalWireLaML = (greeting: string, websocketUrl: string): string 
     throw new Error('Invalid WebSocket URL format - must start with wss:// or ws://');
   }
 
-  // Generate SignalWire-compatible LaML with proper Stream structure
+  // Generate SignalWire-compatible LaML with proper Start/Stream structure
   const laml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+  <Start>
+    <Stream url="${websocketUrl}" />
+  </Start>
   <Say voice="alice">${safeGreeting}</Say>
-  <Connect>
-    <Stream url="${websocketUrl}" track="both_tracks" />
-  </Connect>
 </Response>`;
 
-  console.log('📄 Generated SignalWire LaML:', laml);
+  console.log('📄 Generated SignalWire LaML with Start/Stream:', laml);
   
   // Validate LaML structure
   if (!laml.includes('<Response>') || !laml.includes('</Response>')) {
     throw new Error('Invalid LaML structure - missing Response tags');
   }
   
-  if (!laml.includes('<Connect>') || !laml.includes('</Connect>')) {
-    throw new Error('Invalid LaML structure - missing Connect tags');
+  if (!laml.includes('<Start>') || !laml.includes('</Start>')) {
+    throw new Error('Invalid LaML structure - missing Start tags');
   }
   
   if (!laml.includes('<Stream url=')) {
@@ -202,7 +202,7 @@ serve(async (req) => {
     
     const signalwirePhoneNumber = formatToE164(rawSignalwirePhoneNumber);
 
-    // Construct URLs - Fix WebSocket URL format
+    // Construct URLs with correct WebSocket format
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const statusCallbackUrl = `${supabaseUrl}/functions/v1/call-webhook`;
     
@@ -214,11 +214,11 @@ serve(async (req) => {
       websocket: wsUrl
     });
 
-    // Generate SignalWire LaML with proper Stream structure
+    // Generate SignalWire LaML with proper Start/Stream structure
     const firstMessage = assistant?.first_message || 'Hello! You are now connected to your AI assistant.';
     const laml = generateSignalWireLaML(firstMessage, wsUrl);
 
-    // Make SignalWire API call - Removed StatusCallbackEvent
+    // Make SignalWire API call with corrected LaML structure
     const callParams = new URLSearchParams({
       To: formattedNumber,
       From: signalwirePhoneNumber,
@@ -229,7 +229,7 @@ serve(async (req) => {
 
     const signalwireUrl = `https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
 
-    console.log('📡 Calling SignalWire API with corrected LaML structure:', {
+    console.log('📡 Calling SignalWire API with Start/Stream LaML structure:', {
       url: signalwireUrl,
       to: formattedNumber,
       from: signalwirePhoneNumber,
@@ -269,7 +269,7 @@ serve(async (req) => {
     }
 
     const signalwireData = await signalwireResponse.json();
-    console.log('✅ SignalWire call created with corrected LaML:', signalwireData.sid);
+    console.log('✅ SignalWire call created with Start/Stream LaML:', signalwireData.sid);
 
     // Update call record
     await supabaseClient
@@ -287,7 +287,7 @@ serve(async (req) => {
         callId: signalwireData.sid,
         dbCallId: callData.id,
         status: 'calling',
-        message: 'Call initiated successfully with corrected LaML structure',
+        message: 'Call initiated successfully with Start/Stream LaML structure',
         websocketUrl: wsUrl,
         provider: 'deepgram',
         assistant: assistant ? {
