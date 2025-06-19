@@ -2,7 +2,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 Edge Function initialized - make-outbound-call v9.0 (Pure DeepGram + SignalWire SWML)');
+console.log('🚀 Edge Function initialized - make-outbound-call v10.0 (Fixed SWML + DeepGram)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -43,8 +43,28 @@ const escapeXmlContent = (text: string): string => {
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
 };
 
+// Map OpenAI voice models to DeepGram equivalents
+const mapVoiceToDeepgram = (voiceId: string): string => {
+  const voiceMap: Record<string, string> = {
+    'alloy': 'aura-asteria-en',
+    'echo': 'aura-luna-en', 
+    'fable': 'aura-stella-en',
+    'onyx': 'aura-zeus-en',
+    'nova': 'aura-hera-en',
+    'shimmer': 'aura-orion-en'
+  };
+  
+  // If it's already a DeepGram voice, return as-is
+  if (voiceId.startsWith('aura-')) {
+    return voiceId;
+  }
+  
+  // Map OpenAI voices to DeepGram equivalents
+  return voiceMap[voiceId] || 'aura-asteria-en';
+};
+
 const generateSignalWireSWML = (greeting: string, websocketUrl: string): string => {
-  const safeGreeting = escapeXmlContent(greeting || 'Hello! You are now connected to your AI assistant powered by DeepGram.');
+  const safeGreeting = escapeXmlContent(greeting || 'Hello! You are now connected to your AI assistant.');
   
   // Validate WebSocket URL format
   if (!websocketUrl.startsWith('wss://') && !websocketUrl.startsWith('ws://')) {
@@ -52,31 +72,27 @@ const generateSignalWireSWML = (greeting: string, websocketUrl: string): string 
     throw new Error('Invalid WebSocket URL format - must start with wss:// or ws://');
   }
 
-  // Generate pure SignalWire SWML
-  const swml = `<?xml version="1.0" encoding="UTF-8"?>
+  // Generate proper LaML-compatible XML (not SWML)
+  const laml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice">${safeGreeting}</Say>
+  <Say>${safeGreeting}</Say>
   <Start>
-    <Stream url="${websocketUrl}">
-      <Parameter name="provider" value="deepgram" />
-      <Parameter name="stt_model" value="nova-2" />
-      <Parameter name="language" value="en-US" />
-    </Stream>
+    <Stream url="${websocketUrl}" />
   </Start>
 </Response>`;
 
-  console.log('📄 Generated SignalWire SWML:', swml);
+  console.log('📄 Generated SignalWire LaML:', laml);
   
-  // Validate SWML structure
-  if (!swml.includes('<Response>') || !swml.includes('</Response>')) {
-    throw new Error('Invalid SWML structure - missing Response tags');
+  // Validate LaML structure
+  if (!laml.includes('<Response>') || !laml.includes('</Response>')) {
+    throw new Error('Invalid LaML structure - missing Response tags');
   }
   
-  if (!swml.includes('<Stream url=')) {
-    throw new Error('Invalid SWML structure - missing Stream element');
+  if (!laml.includes('<Stream url=')) {
+    throw new Error('Invalid LaML structure - missing Stream element');
   }
 
-  return swml;
+  return laml;
 };
 
 serve(async (req) => {
@@ -202,38 +218,38 @@ serve(async (req) => {
     
     const signalwirePhoneNumber = formatToE164(rawSignalwirePhoneNumber);
 
-    // Construct URLs - Using deepgram-voice-websocket endpoint
+    // Construct URLs
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const statusCallbackUrl = `${supabaseUrl}/functions/v1/call-webhook`;
     
-    // Use the deepgram-voice-websocket endpoint for proper SWML handling
-    const wsUrl = `${supabaseUrl.replace('https://', 'wss://').replace('http://', 'ws://')}/functions/v1/deepgram-voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`;
+    // Use the voice-websocket endpoint for proper handling
+    const wsUrl = `${supabaseUrl.replace('https://', 'wss://').replace('http://', 'ws://')}/functions/v1/voice-websocket?callId=${callData.id}&assistantId=${assistantId || 'demo'}&userId=${user.id}`;
 
     console.log('🔗 URLs constructed:', {
       statusCallback: statusCallbackUrl,
       websocket: wsUrl
     });
 
-    // Generate SWML with DeepGram integration
-    const firstMessage = assistant?.first_message || 'Hello! You are now connected to your AI assistant powered by DeepGram.';
-    const swml = generateSignalWireSWML(firstMessage, wsUrl);
+    // Generate LaML with proper structure
+    const firstMessage = assistant?.first_message || 'Hello! You are now connected to your AI assistant.';
+    const laml = generateSignalWireSWML(firstMessage, wsUrl);
 
-    // Make SignalWire API call with SWML
+    // Make SignalWire API call with LaML
     const callParams = new URLSearchParams({
       To: formattedNumber,
       From: signalwirePhoneNumber,
-      Twiml: swml, // SignalWire accepts SWML via the Twiml parameter for compatibility
+      Twiml: laml, // SignalWire accepts LaML via the Twiml parameter
       StatusCallback: statusCallbackUrl,
       StatusCallbackMethod: 'POST'
     });
 
     const signalwireUrl = `https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
 
-    console.log('📡 Calling SignalWire API with SWML:', {
+    console.log('📡 Calling SignalWire API with LaML:', {
       url: signalwireUrl,
       to: formattedNumber,
       from: signalwirePhoneNumber,
-      swmlLength: swml.length
+      lamlLength: laml.length
     });
 
     const signalwireResponse = await fetch(signalwireUrl, {
@@ -269,7 +285,7 @@ serve(async (req) => {
     }
 
     const signalwireData = await signalwireResponse.json();
-    console.log('✅ SignalWire call created with DeepGram SWML:', signalwireData.sid);
+    console.log('✅ SignalWire call created with LaML:', signalwireData.sid);
 
     // Update call record
     await supabaseClient
@@ -287,7 +303,7 @@ serve(async (req) => {
         callId: signalwireData.sid,
         dbCallId: callData.id,
         status: 'calling',
-        message: 'Call initiated successfully with DeepGram SWML',
+        message: 'Call initiated successfully with DeepGram + SignalWire',
         websocketUrl: wsUrl,
         provider: 'deepgram',
         assistant: assistant ? {
