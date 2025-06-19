@@ -248,7 +248,7 @@ serve(async (req) => {
     const callParams = new URLSearchParams({
       To: formattedNumber,
       From: signalwirePhoneNumber,
-      Twiml: laml,
+      Url: callHandlerUrl,
       StatusCallback: statusCallbackUrl,
       StatusCallbackMethod: 'POST'
     });
