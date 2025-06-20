@@ -12,6 +12,13 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders })
   }
 
+  // --- SignalWire callback endpoints must NOT require authentication ---
+  // Log User-Agent for traceability
+  const userAgent = req.headers.get('user-agent') || '';
+  console.log('SignalWire webhook User-Agent:', userAgent);
+  // Optionally, you could restrict to only allow requests from SignalWire's user agent
+  // if (!userAgent.startsWith('SignalwireCallback')) { ... }
+
   try {
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
