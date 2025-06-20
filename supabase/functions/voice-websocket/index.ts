@@ -3,6 +3,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { OpenAI } from "https://deno.land/x/openai/mod.ts";
 
 console.log('🎤 Voice WebSocket Function initialized v2.1 - Full Real-time Pipeline with Dynamic Assistant');
+console.log('SIGNALWIRE_PROJECT_ID:', Deno.env.get('SIGNALWIRE_PROJECT_ID'));
+console.log('SIGNALWIRE_TOKEN:', Deno.env.get('SIGNALWIRE_TOKEN'));
+console.log('SIGNALWIRE_SPACE_URL:', Deno.env.get('SIGNALWIRE_SPACE_URL'));
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
