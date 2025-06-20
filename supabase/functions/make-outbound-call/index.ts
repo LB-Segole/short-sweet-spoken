@@ -1,8 +1,7 @@
-
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
 
-console.log('🚀 Edge Function initialized - make-outbound-call v28.0 (Fixed Call Connection)');
+console.log('🚀 Edge Function initialized - make-outbound-call v29.0 (Real-time Audio Streaming)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -255,12 +254,14 @@ serve(async (req) => {
 
     // Construct URLs with proper domain
     const statusCallback = `${supabaseUrl}/functions/v1/call-webhook`;
+    const voiceWebSocketUrl = `${supabaseUrl}/functions/v1/voice-websocket`;
 
     console.log(`🌐 URLs configured: {
-  statusCallback: "${statusCallback}"
+  statusCallback: "${statusCallback}",
+  voiceWebSocketUrl: "${voiceWebSocketUrl}"
 }`);
 
-    // Generate improved LaML with more reliable call flow
+    // Generate improved LaML with real-time audio streaming
     const firstMessage = assistant.first_message || 'Hello! How can I help you today?';
     
     const escapeXml = (text: string): string => {
@@ -274,21 +275,28 @@ serve(async (req) => {
 
     const escapedGreeting = escapeXml(firstMessage);
 
-    // Improved LaML with better call handling and longer timeouts
+    // Enhanced LaML with real-time audio streaming and better call flow
     const laml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+  <!-- Initial greeting -->
   <Say voice="alice">${escapedGreeting}</Say>
-  <Pause length="2"/>
-  <Gather input="speech" timeout="15" speechTimeout="auto" action="${escapeXml(statusCallback)}" method="POST" language="en-US" enhanced="true">
-    <Say voice="alice">I'm listening. Please go ahead and speak.</Say>
-    <Pause length="5"/>
-    <Say voice="alice">Are you there? Please say something so I can assist you.</Say>
-  </Gather>
-  <Say voice="alice">I didn't hear a response. Let me try to connect you with someone who can help. Thank you for calling!</Say>
+  <Pause length="1"/>
+  
+  <!-- Connect to real-time voice websocket for conversation -->
+  <Connect>
+    <Stream url="${escapeXml(voiceWebSocketUrl)}" name="voice_stream">
+      <Parameter name="callId" value="${callId}"/>
+      <Parameter name="assistantId" value="${assistantId}"/>
+      <Parameter name="userId" value="${user.id}"/>
+    </Stream>
+  </Connect>
+  
+  <!-- Fallback if connection fails -->
+  <Say voice="alice">I'm having trouble connecting to my conversation system. Please try calling back in a moment.</Say>
   <Hangup/>
 </Response>`;
 
-    console.log('📄 LaML generated successfully');
+    console.log('📄 Enhanced LaML generated successfully');
     console.log(`📄 LaML content: ${laml}`);
 
     // Make API call to SignalWire with improved parameters
@@ -300,15 +308,20 @@ serve(async (req) => {
       Twiml: laml,
       StatusCallback: statusCallback,
       StatusCallbackMethod: 'POST',
-      Timeout: '60', // Wait longer for answer
-      Record: 'false' // Disable recording for now
+      Timeout: '30', // Wait 30 seconds for answer
+      Record: 'false', // Disable recording for now
+      MachineDetection: 'Enable', // Detect answering machines
+      MachineDetectionTimeout: '15', // Wait 15 seconds for machine detection
+      MachineDetectionSpeechThreshold: '3000', // 3 seconds of speech to detect human
+      MachineDetectionSpeechEndThreshold: '1000', // 1 second of silence to end speech
+      MachineDetectionSilenceTimeout: '10000' // 10 seconds of silence to hang up
     });
 
     console.log(`📡 Making SignalWire API call: {
   url: "${signalwireUrl}",
   to: "${formattedToNumber}",
   from: "${formattedFromNumber}",
-  timeout: "60"
+  timeout: "30"
 }`);
 
     const response = await fetch(signalwireUrl, {
@@ -373,7 +386,9 @@ serve(async (req) => {
       callDetails: {
         to: formattedToNumber,
         from: formattedFromNumber,
-        status: callData.status || 'queued'
+        status: callData.status || 'queued',
+        realtimeAudio: true,
+        websocketUrl: voiceWebSocketUrl
       }
     };
 

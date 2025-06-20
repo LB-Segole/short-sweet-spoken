@@ -1,8 +1,7 @@
-
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🤖 Agent Management Function initialized v2.0 - Fixed DELETE and improved call handling');
+console.log('🤖 Agent Management Function initialized v3.0 - Fixed DELETE with proper foreign key handling');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -199,6 +198,68 @@ serve(async (req) => {
 
         console.log('🗑️ Attempting to delete agent:', deleteData.id, 'for user:', user.id)
 
+        // First, check if the agent has any associated calls
+        const { data: associatedCalls, error: callsCheckError } = await supabaseClient
+          .from('calls')
+          .select('id, status, created_at')
+          .eq('assistant_id', deleteData.id)
+          .eq('user_id', user.id)
+
+        if (callsCheckError) {
+          console.error('❌ Error checking associated calls:', callsCheckError)
+          return new Response(
+            JSON.stringify({ success: false, error: 'Failed to check associated calls' }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+          )
+        }
+
+        // Check for active calls (calls that are not completed or failed)
+        const activeCalls = associatedCalls?.filter(call => 
+          !['completed', 'failed', 'busy', 'no-answer'].includes(call.status || '')
+        ) || []
+
+        if (activeCalls.length > 0) {
+          console.log(`❌ Cannot delete agent with ${activeCalls.length} active calls`)
+          return new Response(
+            JSON.stringify({ 
+              success: false, 
+              error: 'Cannot delete agent with active calls',
+              details: {
+                activeCallsCount: activeCalls.length,
+                activeCallIds: activeCalls.map(call => call.id),
+                message: 'Please wait for all calls to complete before deleting this agent'
+              }
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 409 }
+          )
+        }
+
+        // If there are completed calls, we can either:
+        // Option 1: Delete associated calls first (cascade delete)
+        // Option 2: Set assistant_id to null for existing calls
+        // We'll go with Option 2 to preserve call history
+
+        if (associatedCalls && associatedCalls.length > 0) {
+          console.log(`📝 Found ${associatedCalls.length} completed calls, updating assistant_id to null`)
+          
+          const { error: updateCallsError } = await supabaseClient
+            .from('calls')
+            .update({ assistant_id: null })
+            .eq('assistant_id', deleteData.id)
+            .eq('user_id', user.id)
+
+          if (updateCallsError) {
+            console.error('❌ Error updating associated calls:', updateCallsError)
+            return new Response(
+              JSON.stringify({ success: false, error: 'Failed to update associated calls' }),
+              { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+            )
+          }
+
+          console.log('✅ Updated associated calls to remove assistant reference')
+        }
+
+        // Now delete the agent
         const { error: deleteError } = await supabaseClient
           .from('assistants')
           .delete()
@@ -213,10 +274,17 @@ serve(async (req) => {
           )
         }
 
-        console.log('✅ Agent deleted:', deleteData.id)
+        console.log('✅ Agent deleted successfully:', deleteData.id)
 
         return new Response(
-          JSON.stringify({ success: true, message: 'Agent deleted successfully' }),
+          JSON.stringify({ 
+            success: true, 
+            message: 'Agent deleted successfully',
+            details: {
+              agentId: deleteData.id,
+              associatedCallsUpdated: associatedCalls?.length || 0
+            }
+          }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
 
