@@ -254,7 +254,7 @@ serve(async (req) => {
 
     // Construct URLs with proper domain
     const statusCallback = `${supabaseUrl}/functions/v1/call-webhook`;
-    const voiceWebSocketUrl = `${supabaseUrl}/functions/v1/voice-websocket`;
+    const voiceWebSocketUrl = `${supabaseUrl}/functions/voice-websocket`;
 
     console.log(`🌐 URLs configured: {
   statusCallback: "${statusCallback}",
@@ -336,14 +336,46 @@ serve(async (req) => {
     console.log(`📊 SignalWire Response: ${response.status} ${response.statusText}`);
 
     if (!response.ok) {
-      const errorBody = await response.text();
+      let errorBody = await response.text();
+      let errorCode = null;
+      let errorMessage = 'Failed to initiate call via SignalWire';
+      try {
+        const errorJson = JSON.parse(errorBody);
+        errorCode = errorJson.code || errorJson.error_code || null;
+        errorMessage = errorJson.message || errorMessage;
+      } catch (e) {
+        // Not JSON, keep as text
+      }
+      // Map common SignalWire error codes to user-friendly messages
+      let userMessage = errorMessage;
+      if (errorCode) {
+        switch (errorCode) {
+          case 'invalid_number_format':
+            userMessage = 'The phone number is not in the correct format. Please use E.164 format, e.g., +15558675309.';
+            break;
+          case 'insufficient_balance':
+            userMessage = 'Your account has insufficient balance to make this call.';
+            break;
+          case 'rate_limit_exceeded':
+            userMessage = 'You have exceeded the rate limit for outbound calls. Please try again later.';
+            break;
+          case 'number_not_supported':
+            userMessage = 'The destination phone number is not supported.';
+            break;
+          case 'not_purchased_or_verified':
+            userMessage = 'The from number must be purchased or verified in your SignalWire project.';
+            break;
+          default:
+            userMessage = errorMessage;
+        }
+      }
       console.log(`❌ SignalWire API error: ${response.status} - ${errorBody}`);
-      
       return new Response(JSON.stringify({ 
         error: 'SignalWire API error', 
         details: errorBody,
         status: response.status,
-        message: 'Failed to initiate call via SignalWire',
+        code: errorCode,
+        message: userMessage,
         timestamp
       }), {
         status: 500,
@@ -355,7 +387,7 @@ serve(async (req) => {
     console.log(`✅ Call initiated successfully: ${callData.sid}`);
     console.log(`📞 Call details:`, callData);
 
-    // Store call record in database
+    // Store call record in database ONLY if SignalWire call succeeded
     const { error: dbError } = await supabase
       .from('calls')
       .insert({

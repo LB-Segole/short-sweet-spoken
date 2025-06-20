@@ -19,7 +19,7 @@ serve(async (req) => {
   const assistantId = searchParams.get('assistantId') || 'demo';
 
   const safeGreeting = 'Hello! You are now connected to your AI assistant.';
-  const websocketUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-websocket?callId=${callId}&userId=${userId}&assistantId=${assistantId}`;
+  const websocketUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/deepgram-voice-websocket?callId=${callId}&userId=${userId}&assistantId=${assistantId}`;
 
   const laml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>

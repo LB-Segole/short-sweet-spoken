@@ -1,4 +1,3 @@
-
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.0";
 import { corsHeaders } from "./cors-utils.ts";
 
@@ -20,7 +19,7 @@ export const generateTwiMLResponse = async (callId: string, assistantId: string)
     return createErrorTwiML("Configuration error occurred.");
   }
 
-  const wsUrl = `wss://${supabaseUrl.replace('https://', '')}/functions/v1/voice-websocket?callId=${encodeURIComponent(callId)}&assistantId=${encodeURIComponent(assistantId)}`;
+  const wsUrl = `wss://${supabaseUrl.replace('https://', '')}/functions/voice-websocket?callId=${encodeURIComponent(callId)}&assistantId=${encodeURIComponent(assistantId)}`;
   
   console.log('🌐 WebSocket URL for greeting + conversation:', wsUrl);
 

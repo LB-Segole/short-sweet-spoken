@@ -1,8 +1,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { OpenAI } from "https://deno.land/x/openai/mod.ts";
 
-console.log('🎤 Voice WebSocket Function initialized v2.1 - Full Real-time Pipeline with Dynamic Assistant');
+console.log('🎤 Voice WebSocket Function initialized v2.2 - Deepgram Only, Rate Limited');
 console.log('SIGNALWIRE_PROJECT_ID:', Deno.env.get('SIGNALWIRE_PROJECT_ID'));
 console.log('SIGNALWIRE_TOKEN:', Deno.env.get('SIGNALWIRE_TOKEN'));
 console.log('SIGNALWIRE_SPACE_URL:', Deno.env.get('SIGNALWIRE_SPACE_URL'));
@@ -26,8 +25,6 @@ serve(async (req) => {
   // Environment variables & Clients
   const supabaseClient = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')!;
-  const openaiApiKey = Deno.env.get('OPENAI_API_KEY')!;
-  const openai = new OpenAI({ apiKey: openaiApiKey });
 
   // Get parameters from the request URL
   const url = new URL(req.url);
@@ -42,9 +39,12 @@ serve(async (req) => {
   const { socket: signalwireSocket, response } = Deno.upgradeWebSocket(req)
   
   let deepgramSocket: WebSocket | null = null
-  let conversationHistory: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = []
   let streamSid: string | null = null;
-  
+  let lastTTSCall = 0;
+  let lastSTTCall = 0;
+  const TTS_RATE_LIMIT_MS = 1000; // 1 second between TTS calls
+  const STT_RATE_LIMIT_MS = 500;  // 0.5 second between STT calls
+
   const log = (message: string, data?: any) => {
     console.log(`[Call: ${callId}] ${message}`, data || '')
   }
@@ -65,40 +65,29 @@ serve(async (req) => {
     deepgramSocket.onmessage = (event) => {
       const data = JSON.parse(event.data)
       if (data.type === 'Results' && data.channel?.alternatives?.[0]?.transcript) {
+        const now = Date.now();
+        if (now - lastSTTCall < STT_RATE_LIMIT_MS) {
+          log('STT rate limit hit, skipping this transcript');
+          return;
+        }
+        lastSTTCall = now;
         const transcript = data.channel.alternatives[0].transcript
         if (transcript.trim().length > 0) {
           log('Received transcript:', transcript)
-          handleUserTranscript(transcript)
+          // Echo the transcript back as TTS (demo: repeat what user said)
+          generateAndStreamTTS(transcript)
         }
       }
     }
   }
-  
-  const handleUserTranscript = async (transcript: string) => {
-    conversationHistory.push({ role: 'user', content: transcript })
-    
-    // NOTE: Implement rate limiting for OpenAI here for production
-    
-    try {
-      const chatCompletion = await openai.chat.completions.create({
-        model: conversationHistory.find(m => m.role === 'system')?.content.includes('gpt-4') ? 'gpt-4o' : 'gpt-3.5-turbo', // Simplified model selection
-        messages: conversationHistory,
-      });
-
-      const aiResponse = chatCompletion.choices[0].message?.content
-      if (aiResponse) {
-        log('Generated AI Response:', aiResponse)
-        conversationHistory.push({ role: 'assistant', content: aiResponse })
-        generateAndStreamTTS(aiResponse)
-      }
-    } catch (error) {
-      log('Error getting AI response', error)
-    }
-  }
 
   const generateAndStreamTTS = async (text: string) => {
-    // NOTE: Implement rate limiting for Deepgram TTS here for production
-
+    const now = Date.now();
+    if (now - lastTTSCall < TTS_RATE_LIMIT_MS) {
+      log('TTS rate limit hit, skipping this TTS');
+      return;
+    }
+    lastTTSCall = now;
     try {
       const response = await fetch('https://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=mulaw&sample_rate=8000', {
         method: 'POST',
@@ -114,9 +103,7 @@ serve(async (req) => {
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
-          
           const base64Audio = btoa(String.fromCharCode(...value))
-          
           if (streamSid) {
             sendToSignalWire({
               event: "media",
@@ -142,12 +129,10 @@ serve(async (req) => {
 
   signalwireSocket.onmessage = async (event) => {
     const msg = JSON.parse(event.data)
-
     switch (msg.event) {
       case 'start':
         log('Received start event from SignalWire', msg)
         streamSid = msg.streamSid; // Capture the streamSid
-
         // Fetch assistant details to start the conversation
         const { data: assistant, error } = await supabaseClient
           .from('assistants')
@@ -155,24 +140,17 @@ serve(async (req) => {
           .eq('id', assistantId)
           .eq('user_id', userId) // Ensure user owns assistant
           .single();
-
         if (error || !assistant) {
           log('Error fetching assistant or access denied', error);
           generateAndStreamTTS("I'm sorry, I can't seem to access my configuration right now. Please try again later.");
           return;
         }
-
         initializeDeepgram();
-
-        conversationHistory.push({ role: 'system', content: assistant.system_prompt });
-        
         if(assistant.first_message) {
             log('Sending first message:', assistant.first_message);
-            conversationHistory.push({ role: 'assistant', content: assistant.first_message });
             generateAndStreamTTS(assistant.first_message);
         }
         break
-
       case 'media':
         if (deepgramSocket && deepgramSocket.readyState === WebSocket.OPEN) {
           // Decode the base64 payload from SignalWire and send it to Deepgram
@@ -184,7 +162,6 @@ serve(async (req) => {
           deepgramSocket.send(audioBuffer)
         }
         break
-
       case 'stop':
         log('Received stop event from SignalWire', msg)
         if (deepgramSocket) deepgramSocket.close()

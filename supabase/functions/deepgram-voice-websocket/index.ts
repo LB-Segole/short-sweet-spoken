@@ -1,4 +1,6 @@
-
+// deno-lint-ignore-file
+// This file is intended for Deno Deploy Edge Functions. Deno.env.get and remote imports are valid in this context.
+// If your editor or linter flags errors for Deno or remote imports, you can safely ignore them for Supabase Edge Functions.
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -26,102 +28,195 @@ interface ConversationContext {
   previousMessages?: Array<{ role: string; content: string }>;
 }
 
+// --- Advanced Features: Sentiment Analysis, Summaries, Analytics, Custom Prompts ---
+
+// Helper: Get sentiment for a message using OpenAI
+async function getSentiment(userInput: string, openaiApiKey: string): Promise<string> {
+  try {
+    const prompt = `Classify the sentiment of this message as Positive, Negative, or Neutral. Only return the word: \n"${userInput}"`;
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openaiApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: 'You are a sentiment analysis engine.' },
+          { role: 'user', content: prompt }
+        ],
+        max_tokens: 1,
+        temperature: 0.0,
+      })
+    });
+    if (!response.ok) return 'Unknown';
+    const data = await response.json();
+    const text = data.choices?.[0]?.message?.content?.trim().toLowerCase() || 'unknown';
+    if (text.includes('positive')) return 'positive';
+    if (text.includes('negative')) return 'negative';
+    if (text.includes('neutral')) return 'neutral';
+    return 'unknown';
+  } catch (e) {
+    console.error('Sentiment analysis error:', e);
+    return 'unknown';
+  }
+}
+
+// Helper: Get emotion for a message using OpenAI
+async function getEmotion(userInput: string, openaiApiKey: string): Promise<string> {
+  try {
+    const prompt = `Classify the emotion expressed in this message (e.g., joy, anger, sadness, fear, surprise, disgust, neutral). Only return the emotion word.\n"${userInput}"`;
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openaiApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: 'You are an emotion detection engine.' },
+          { role: 'user', content: prompt }
+        ],
+        max_tokens: 1,
+        temperature: 0.0,
+      })
+    });
+    if (!response.ok) return 'unknown';
+    const data = await response.json();
+    const text = data.choices?.[0]?.message?.content?.trim().toLowerCase() || 'unknown';
+    // Return only the first word (emotion)
+    return text.split(/\s|\.|,/)[0] || 'unknown';
+  } catch (e) {
+    console.error('Emotion detection error:', e);
+    return 'unknown';
+  }
+}
+
+// Helper: Summarize conversation using OpenAI
+async function getSummary(conversationBuffer: Array<{ role: string; content: string }>, openaiApiKey: string): Promise<string> {
+  try {
+    const prompt = `Summarize the following conversation between an AI agent and a user in 2-3 sentences.\n\n${conversationBuffer.map(m => `${m.role}: ${m.content}`).join('\n')}`;
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openaiApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: 'You are a conversation summarizer.' },
+          { role: 'user', content: prompt }
+        ],
+        max_tokens: 120,
+        temperature: 0.3,
+      })
+    });
+    if (!response.ok) return '';
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content?.trim() || '';
+  } catch (e) {
+    console.error('Summary generation error:', e);
+    return '';
+  }
+}
+
+// --- Modified generateConversationResponse ---
 const generateConversationResponse = async (
   userInput: string,
-  context: ConversationContext
-): Promise<ConversationResponse> => {
+  context: ConversationContext,
+  openaiApiKey: string,
+  assistantCustomPrompt?: string
+): Promise<ConversationResponse & { sentiment: string; emotion: string }> => {
   try {
-    const input = userInput.toLowerCase().trim();
-    const agentPersonality = context.agentPersonality || 'professional';
-    const agentPrompt = context.agentPrompt || 'You are a helpful AI assistant.';
-    
-    let responsePrefix = '';
-    if (agentPersonality === 'friendly') {
-      responsePrefix = 'That sounds wonderful! ';
-    } else if (agentPersonality === 'professional') {
-      responsePrefix = 'I understand. ';
-    } else if (agentPersonality === 'casual') {
-      responsePrefix = 'Got it! ';
+    // Use custom prompt if available
+    const systemPrompt = assistantCustomPrompt || context.agentPrompt || 'You are a helpful AI assistant.';
+    const messages: Array<{ role: string; content: string }> = [
+      { role: 'system', content: systemPrompt }
+    ];
+    if (context.previousMessages && Array.isArray(context.previousMessages)) {
+      messages.push(...context.previousMessages);
     }
-    
-    // Greeting responses
-    if (input.includes('hello') || input.includes('hi') || input.includes('hey')) {
-      return {
-        text: `Hello! Thank you for connecting. ${agentPrompt.includes('business') ? 'I\'m here to help with your business needs.' : 'How can I assist you today?'}`,
-        shouldTransfer: false,
-        shouldEndCall: false,
-        intent: 'greeting',
-        confidence: 0.9
-      };
-    }
-    
-    // Business inquiry responses
-    if (input.includes('business') || input.includes('service') || input.includes('help')) {
-      return {
-        text: `${responsePrefix}I'd be happy to help you with that. Can you tell me more about what specific assistance you're looking for?`,
-        shouldTransfer: false,
-        shouldEndCall: false,
-        intent: 'business_inquiry',
-        confidence: 0.8
-      };
-    }
-    
-    // Pricing inquiries
-    if (input.includes('price') || input.includes('cost') || input.includes('expensive')) {
-      return {
-        text: `${responsePrefix}I understand you're interested in pricing information. Let me connect you with someone who can provide detailed pricing based on your specific needs.`,
-        shouldTransfer: true,
-        shouldEndCall: false,
-        intent: 'pricing_inquiry',
-        confidence: 0.8
-      };
-    }
-    
-    // Transfer requests
-    if (input.includes('human') || input.includes('person') || input.includes('representative')) {
-      return {
-        text: `${responsePrefix}Of course! Let me connect you with one of our human representatives who can provide more detailed assistance.`,
-        shouldTransfer: true,
-        shouldEndCall: false,
-        intent: 'transfer_request',
-        confidence: 0.9
-      };
-    }
-    
-    // Negative responses
-    if (input.includes('not interested') || input.includes('no thank') || input.includes('busy')) {
-      return {
-        text: `${responsePrefix}I understand you're not interested right now. Thank you for your time, and please feel free to reach out if your needs change. Have a great day!`,
-        shouldTransfer: false,
-        shouldEndCall: true,
-        intent: 'not_interested',
-        confidence: 0.8
-      };
-    }
-    
-    // Generic response based on agent prompt
-    const contextualResponse = agentPrompt.includes('sales') 
-      ? `I'd love to learn more about how we can help your business grow. What challenges are you currently facing?`
-      : `That's interesting! Can you tell me more about that so I can better assist you?`;
-    
-    return {
-      text: `${responsePrefix}${contextualResponse}`,
-      shouldTransfer: false,
-      shouldEndCall: false,
-      intent: 'general_inquiry',
-      confidence: 0.6
-    };
+    messages.push({ role: 'user', content: userInput });
 
-  } catch (error) {
-    console.error('Conversation response generation failed:', error);
-    
+    // Call OpenAI for response
+    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openaiApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages,
+        max_tokens: 300,
+        temperature: 0.7,
+      })
+    });
+    if (!openaiResponse.ok) throw new Error(await openaiResponse.text());
+    const aiData = await openaiResponse.json();
+    const aiText = aiData.choices?.[0]?.message?.content?.trim() || '';
+
+    // Sentiment analysis
+    const sentiment = await getSentiment(userInput, openaiApiKey);
+    // Emotion detection
+    const emotion = await getEmotion(userInput, openaiApiKey);
+
+    // Intent detection
+    const input = userInput.toLowerCase().trim();
+    let shouldTransfer = false;
+    let shouldEndCall = false;
+    let intent = 'general_inquiry';
+    let confidence = 0.7;
+    if (input.includes('human') || input.includes('person') || input.includes('representative')) {
+      shouldTransfer = true; intent = 'transfer_request'; confidence = 0.95;
+    } else if (input.includes('not interested') || input.includes('no thank') || input.includes('busy')) {
+      shouldEndCall = true; intent = 'not_interested'; confidence = 0.85;
+    } else if (input.includes('price') || input.includes('cost') || input.includes('expensive')) {
+      shouldTransfer = true; intent = 'pricing_inquiry'; confidence = 0.8;
+    } else if (input.includes('hello') || input.includes('hi') || input.includes('hey')) {
+      intent = 'greeting'; confidence = 0.9;
+    } else if (input.includes('business') || input.includes('service') || input.includes('help')) {
+      intent = 'business_inquiry'; confidence = 0.8;
+    }
     return {
-      text: "I understand. Let me connect you with one of our human representatives who can better assist you.",
-      shouldTransfer: true,
-      shouldEndCall: false,
-      intent: 'fallback',
-      confidence: 0.5
+      text: aiText || 'I apologize, I didn\'t catch that. Could you repeat?',
+      shouldTransfer,
+      shouldEndCall,
+      intent,
+      confidence,
+      sentiment,
+      emotion
     };
+  } catch (error) {
+    console.error('Advanced conversation handling failed, falling back to rule-based:', error);
+    // Fallback: use previous rule-based logic
+    const input = userInput.toLowerCase().trim();
+    let responsePrefix = '';
+    const agentPersonality = context.agentPersonality || 'professional';
+    if (agentPersonality === 'friendly') responsePrefix = 'That sounds wonderful! ';
+    else if (agentPersonality === 'professional') responsePrefix = 'I understand. ';
+    else if (agentPersonality === 'casual') responsePrefix = 'Got it! ';
+    let sentiment = 'unknown';
+    if (input.includes('hello') || input.includes('hi') || input.includes('hey')) {
+      return { text: `Hello! Thank you for connecting. ${context.agentPrompt?.includes('business') ? 'I\'m here to help with your business needs.' : 'How can I assist you today?'}`, shouldTransfer: false, shouldEndCall: false, intent: 'greeting', confidence: 0.9, sentiment: 'unknown', emotion: 'unknown' };
+    }
+    if (input.includes('business') || input.includes('service') || input.includes('help')) {
+      return { text: `${responsePrefix}I'd be happy to help you with that. Can you tell me more about what specific assistance you're looking for?`, shouldTransfer: false, shouldEndCall: false, intent: 'business_inquiry', confidence: 0.8, sentiment: 'unknown', emotion: 'unknown' };
+    }
+    if (input.includes('price') || input.includes('cost') || input.includes('expensive')) {
+      return { text: `${responsePrefix}I understand you're interested in pricing information. Let me connect you with someone who can provide detailed pricing based on your specific needs.`, shouldTransfer: true, shouldEndCall: false, intent: 'pricing_inquiry', confidence: 0.8, sentiment: 'unknown', emotion: 'unknown' };
+    }
+    if (input.includes('human') || input.includes('person') || input.includes('representative')) {
+      return { text: `${responsePrefix}Of course! Let me connect you with one of our human representatives who can provide more detailed assistance.`, shouldTransfer: true, shouldEndCall: false, intent: 'transfer_request', confidence: 0.9, sentiment: 'unknown', emotion: 'unknown' };
+    }
+    if (input.includes('not interested') || input.includes('no thank') || input.includes('busy')) {
+      return { text: `${responsePrefix}I understand you're not interested right now. Thank you for your time, and please feel free to reach out if your needs change. Have a great day!`, shouldTransfer: false, shouldEndCall: true, intent: 'not_interested', confidence: 0.8, sentiment: 'unknown', emotion: 'unknown' };
+    }
+    const contextualResponse = context.agentPrompt?.includes('sales') ? `I'd love to learn more about how we can help your business grow. What challenges are you currently facing?` : `That's interesting! Can you tell me more about that so I can better assist you?`;
+    return { text: `${responsePrefix}${contextualResponse}`, shouldTransfer: false, shouldEndCall: false, intent: 'general_inquiry', confidence: 0.6, sentiment: 'unknown', emotion: 'unknown' };
   }
 };
 
@@ -250,7 +345,7 @@ serve(async (req) => {
     // Initialize DeepGram TTS with proper error handling
     const initializeTTS = () => {
       try {
-        const ttsUrl = 'wss://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=linear16&sample_rate=8000'
+        const ttsUrl = 'wss://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=mulaw&sample_rate=8000'
         deepgramTTS = new WebSocket(ttsUrl, ['token', deepgramApiKey])
 
         deepgramTTS.onopen = () => {
@@ -324,23 +419,85 @@ serve(async (req) => {
     const processConversation = async (transcript: string) => {
       try {
         log('🧠 Processing conversation:', { input: transcript })
-        
+        const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+        if (!openaiApiKey) throw new Error('OPENAI_API_KEY not configured');
+
         // Add user message to conversation buffer
         conversationBuffer.push({ role: 'user', content: transcript })
-        
-        // Generate AI response using the conversation service
+
+        // Generate AI response using the conversation service (with custom prompt)
         const response = await generateConversationResponse(transcript, {
           callId,
           agentPrompt: assistant.system_prompt,
           agentPersonality: assistant.voice_provider === 'friendly' ? 'friendly' : 'professional',
           previousMessages: conversationBuffer
-        })
-        
+        }, openaiApiKey, assistant.custom_prompt || assistant.instructions)
+
         log('🤖 AI Response generated:', response)
-        
+
         // Add AI response to conversation buffer
         conversationBuffer.push({ role: 'assistant', content: response.text })
-        
+
+        // --- Real-Time Analytics: Log to Supabase ---
+        try {
+          await supabaseClient.from('conversation_logs').insert({
+            call_id: callId,
+            speaker: 'user',
+            message: transcript,
+            sentiment: response.sentiment,
+            emotion: response.emotion,
+            intent: response.intent,
+            timestamp: new Date().toISOString(),
+            metadata: { confidence: response.confidence }
+          });
+          await supabaseClient.from('conversation_logs').insert({
+            call_id: callId,
+            speaker: 'assistant',
+            message: response.text,
+            sentiment: 'n/a',
+            emotion: 'n/a',
+            intent: response.intent,
+            timestamp: new Date().toISOString(),
+            metadata: { confidence: response.confidence }
+          });
+        } catch (e) {
+          log('⚠️ Analytics logging failed:', e)
+        }
+
+        // --- Real-Time Dashboard Broadcast ---
+        try {
+          // Broadcast to Supabase Realtime channel for live dashboard
+          const dashboardEvent = {
+            callId,
+            speaker: 'user',
+            message: transcript,
+            sentiment: response.sentiment,
+            emotion: response.emotion,
+            intent: response.intent,
+            timestamp: Date.now()
+          };
+          // Use Supabase Realtime REST API (broadcast event)
+          const supabaseRealtimeUrl = `${Deno.env.get('SUPABASE_URL')}/realtime/v1/broadcast`;
+          const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
+          if (supabaseRealtimeUrl && anonKey) {
+            await fetch(supabaseRealtimeUrl, {
+              method: 'POST',
+              headers: {
+                'apikey': anonKey,
+                'Authorization': `Bearer ${anonKey}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                event: 'call_update',
+                payload: dashboardEvent,
+                broadcast: { channel: `call_dashboard:${callId}` }
+              })
+            });
+          }
+        } catch (e) {
+          log('⚠️ Dashboard broadcast failed:', e)
+        }
+
         // Send response back to client
         socket.send(JSON.stringify({
           type: 'ai_response',
@@ -349,12 +506,27 @@ serve(async (req) => {
           confidence: response.confidence,
           shouldTransfer: response.shouldTransfer,
           shouldEndCall: response.shouldEndCall,
+          sentiment: response.sentiment,
+          emotion: response.emotion,
           timestamp: Date.now()
         }))
 
         // Convert response to speech
         sendTTSMessage(response.text)
-        
+
+        // --- Conversation Summaries: Every 10 turns or at call end ---
+        if (conversationBuffer.length % 10 === 0 || response.shouldEndCall) {
+          try {
+            const summary = await getSummary(conversationBuffer, openaiApiKey)
+            if (summary) {
+              await supabaseClient.from('calls').update({ call_summary: summary }).eq('id', callId)
+              log('📝 Conversation summary updated:', summary)
+            }
+          } catch (e) {
+            log('⚠️ Summary generation failed:', e)
+          }
+        }
+
         // Handle call actions
         if (response.shouldEndCall) {
           log('📴 Call should end')
@@ -365,7 +537,7 @@ serve(async (req) => {
           log('📞 Call should transfer')
           socket.send(JSON.stringify({ type: 'transfer_call', reason: 'ai_decision' }))
         }
-        
+
       } catch (error) {
         log('❌ Error processing conversation:', error)
         const fallbackResponse = "I'm having trouble processing that. Let me connect you with someone who can help."

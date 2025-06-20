@@ -1,4 +1,3 @@
-
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { RealtimeAudioCapture, RealtimeAudioPlayer } from '@/utils/realtimeAudioUtils';
 
@@ -117,7 +116,7 @@ export const useRealtimeVoice = ({
         assistantId: assistantId || 'demo',
         userId
       });
-      const wsUrl = `${baseUrl}/functions/v1/realtime-voice-websocket?${params.toString()}`;
+      const wsUrl = `${baseUrl}/functions/realtime-voice-websocket?${params.toString()}`;
       
       log('🌐 WebSocket URL:', wsUrl);
 

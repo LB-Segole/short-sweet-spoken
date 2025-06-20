@@ -1,4 +1,3 @@
-
 import { supabase } from '@/integrations/supabase/client';
 
 export interface VoiceCallParams {
@@ -29,7 +28,7 @@ export interface ProviderKey {
 class VoiceAgentService {
   // Voice WebSocket Connection
   createVoiceConnection(assistantId: string): WebSocket {
-    const wsUrl = `wss://${window.location.hostname}/functions/v1/voice-websocket`;
+    const wsUrl = `wss://${window.location.hostname}/functions/voice-websocket`;
     const ws = new WebSocket(wsUrl);
     
     ws.onopen = () => {

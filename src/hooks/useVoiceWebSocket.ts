@@ -194,7 +194,7 @@ export const useVoiceWebSocket = ({
       if (!authToken) throw new Error('Authentication required');
 
       // Build WebSocket URL
-      const baseUrl = 'wss://csixccpoxpnwowbgkoyw.functions.supabase.co/functions/v1/voice-websocket';
+      const baseUrl = 'wss://csixccpoxpnwowbgkoyw.functions.supabase.co/functions/voice-websocket';
       const params = new URLSearchParams({ callId: callId || 'browser-test', assistantId: assistantId || 'demo', userId, token: authToken });
       const wsUrl = `${baseUrl}?${params.toString()}`;
       log('🌐 WebSocket URL', wsUrl);
