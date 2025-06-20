@@ -16,29 +16,29 @@ interface AssistantFormProps {
   editingAssistant: Assistant | null;
 }
 
-// Voice options for different providers
-const voiceOptions = {
-  openai: [
-    { id: 'alloy', name: 'Alloy (Neutral)' },
-    { id: 'echo', name: 'Echo (Male)' },
-    { id: 'fable', name: 'Fable (British Male)' },
-    { id: 'onyx', name: 'Onyx (Deep Male)' },
-    { id: 'nova', name: 'Nova (Female)' },
-    { id: 'shimmer', name: 'Shimmer (Female)' }
-  ],
-  elevenlabs: [
-    { id: '9BWtsMINqrJLrRacOk9x', name: 'Aria' },
-    { id: 'CwhRBWXzGAHq8TQ4Fs17', name: 'Roger' },
-    { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Sarah' },
-    { id: 'FGY2WhTYpPnrIDTdsKH5', name: 'Laura' },
-    { id: 'IKne3meq5aSn9XLyUdCD', name: 'Charlie' },
-    { id: 'JBFqnCBsd6RMkjVDRZzb', name: 'George' },
-    { id: 'N2lVS1w4EtoT3dr4eOWO', name: 'Callum' },
-    { id: 'SAz9YHcvj6GT2YYXdXww', name: 'River' },
-    { id: 'TX3LPaxmHKxFdv7VOQHJ', name: 'Liam' },
-    { id: 'XB0fDUnXU5powFXDhCwa', name: 'Charlotte' }
-  ]
-};
+// Real Deepgram voice options
+const deepgramVoices = [
+  { id: 'aura-asteria-en', name: 'Asteria (Female, Conversational)' },
+  { id: 'aura-luna-en', name: 'Luna (Female, Expressive)' },
+  { id: 'aura-stella-en', name: 'Stella (Female, Friendly)' },
+  { id: 'aura-athena-en', name: 'Athena (Female, Authoritative)' },
+  { id: 'aura-hera-en', name: 'Hera (Female, Business)' },
+  { id: 'aura-orion-en', name: 'Orion (Male, Authoritative)' },
+  { id: 'aura-arcas-en', name: 'Arcas (Male, Conversational)' },
+  { id: 'aura-perseus-en', name: 'Perseus (Male, Confident)' },
+  { id: 'aura-angus-en', name: 'Angus (Male, Narration)' },
+  { id: 'aura-orpheus-en', name: 'Orpheus (Male, Confident)' },
+  { id: 'aura-helios-en', name: 'Helios (Male, Authoritative)' },
+  { id: 'aura-zeus-en', name: 'Zeus (Male, Authoritative)' }
+];
+
+// Deepgram models
+const deepgramModels = [
+  { id: 'nova-2', name: 'Nova-2 (Latest, Most Accurate)' },
+  { id: 'nova', name: 'Nova (Previous Generation)' },
+  { id: 'enhanced', name: 'Enhanced (Legacy)' },
+  { id: 'base', name: 'Base (Legacy)' }
+];
 
 const AssistantForm: React.FC<AssistantFormProps> = ({
   formData,
@@ -48,12 +48,13 @@ const AssistantForm: React.FC<AssistantFormProps> = ({
   isSubmitting,
   editingAssistant
 }) => {
-  const currentVoiceOptions = voiceOptions[formData.voice_provider as keyof typeof voiceOptions] || voiceOptions.openai;
-
   return (
     <Card>
       <CardHeader>
         <CardTitle>{editingAssistant ? 'Edit AI Agent' : 'Create New AI Agent'}</CardTitle>
+        <p className="text-sm text-gray-600">
+          Voice AI agent powered by DeepGram for real-time conversation
+        </p>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -73,10 +74,11 @@ const AssistantForm: React.FC<AssistantFormProps> = ({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="gpt-4o">GPT-4o</SelectItem>
-                <SelectItem value="gpt-4o-mini">GPT-4o Mini</SelectItem>
-                <SelectItem value="gpt-4">GPT-4</SelectItem>
-                <SelectItem value="gpt-3.5-turbo">GPT-3.5 Turbo</SelectItem>
+                {deepgramModels.map((model) => (
+                  <SelectItem key={model.id} value={model.id}>
+                    {model.name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -87,7 +89,7 @@ const AssistantForm: React.FC<AssistantFormProps> = ({
           <Textarea
             value={formData.system_prompt}
             onChange={(e) => setFormData(prev => ({ ...prev, system_prompt: e.target.value }))}
-            placeholder="Define the assistant's role and personality. For example: 'You are a helpful customer service assistant. Be friendly, professional, and concise in your responses.'"
+            placeholder="Define the assistant's role and personality. For example: 'You are a helpful customer service assistant. Be friendly, professional, and concise in your responses. You work for First Choice Solutions and help customers with their business needs.'"
             className="min-h-[100px]"
           />
         </div>
@@ -97,52 +99,30 @@ const AssistantForm: React.FC<AssistantFormProps> = ({
           <Textarea
             value={formData.first_message}
             onChange={(e) => setFormData(prev => ({ ...prev, first_message: e.target.value }))}
-            placeholder="Hello! I'm your AI assistant. How can I help you today?"
+            placeholder="Hello! I'm your AI assistant from First Choice Solutions. How can I help you today?"
           />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">Voice Provider</label>
-            <Select 
-              value={formData.voice_provider} 
-              onValueChange={(value) => {
-                setFormData(prev => ({ 
-                  ...prev, 
-                  voice_provider: value,
-                  // Reset voice_id when provider changes
-                  voice_id: value === 'openai' ? 'alloy' : '9BWtsMINqrJLrRacOk9x'
-                }))
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="openai">OpenAI</SelectItem>
-                <SelectItem value="elevenlabs">ElevenLabs</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">Voice</label>
-            <Select 
-              value={formData.voice_id} 
-              onValueChange={(value) => setFormData(prev => ({ ...prev, voice_id: value }))}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {currentVoiceOptions.map((voice) => (
-                  <SelectItem key={voice.id} value={voice.id}>
-                    {voice.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">DeepGram Voice</label>
+          <Select 
+            value={formData.voice_id} 
+            onValueChange={(value) => setFormData(prev => ({ ...prev, voice_id: value }))}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {deepgramVoices.map((voice) => (
+                <SelectItem key={voice.id} value={voice.id}>
+                  {voice.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-gray-500 mt-1">
+            All voices use DeepGram's real-time TTS for natural conversation
+          </p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -186,6 +166,11 @@ const AssistantForm: React.FC<AssistantFormProps> = ({
           >
             Cancel
           </Button>
+        </div>
+
+        <div className="text-xs text-blue-600 bg-blue-50 p-3 rounded">
+          💡 <strong>DeepGram Integration:</strong> This agent uses DeepGram for both speech-to-text and text-to-speech, 
+          providing real-time conversation capabilities without OpenAI dependency for voice processing.
         </div>
       </CardContent>
     </Card>

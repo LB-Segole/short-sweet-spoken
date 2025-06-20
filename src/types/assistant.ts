@@ -10,6 +10,7 @@ export interface Assistant {
   temperature: number;
   max_tokens: number;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface AssistantFormData {

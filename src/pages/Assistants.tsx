@@ -16,14 +16,14 @@ const Assistants = () => {
   const [editingAssistant, setEditingAssistant] = useState<Assistant | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Form state
+  // Form state with DeepGram defaults
   const [formData, setFormData] = useState<AssistantFormData>({
     name: '',
     system_prompt: '',
     first_message: '',
-    voice_provider: 'openai',
-    voice_id: 'alloy',
-    model: 'gpt-4o',
+    voice_provider: 'deepgram',
+    voice_id: 'aura-asteria-en',
+    model: 'nova-2',
     temperature: 0.8,
     max_tokens: 500
   });
@@ -56,9 +56,9 @@ const Assistants = () => {
       name: '',
       system_prompt: '',
       first_message: '',
-      voice_provider: 'openai',
-      voice_id: 'alloy',
-      model: 'gpt-4o',
+      voice_provider: 'deepgram',
+      voice_id: 'aura-asteria-en',
+      model: 'nova-2',
       temperature: 0.8,
       max_tokens: 500
     });
@@ -70,11 +70,11 @@ const Assistants = () => {
       name: assistant.name,
       system_prompt: assistant.system_prompt,
       first_message: assistant.first_message || '',
-      voice_provider: assistant.voice_provider,
-      voice_id: assistant.voice_id,
-      model: assistant.model,
-      temperature: assistant.temperature,
-      max_tokens: assistant.max_tokens
+      voice_provider: assistant.voice_provider || 'deepgram',
+      voice_id: assistant.voice_id || 'aura-asteria-en',
+      model: assistant.model || 'nova-2',
+      temperature: assistant.temperature || 0.8,
+      max_tokens: assistant.max_tokens || 500
     });
     setShowCreateForm(true);
   };

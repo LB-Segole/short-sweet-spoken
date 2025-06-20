@@ -36,7 +36,7 @@ const AssistantCard: React.FC<AssistantCardProps> = ({
       const requestBody = {
         text: textToSpeak,
         voice: assistant.voice_id,
-        voice_provider: assistant.voice_provider || 'openai'
+        voice_provider: assistant.voice_provider || 'deepgram'
       };
 
       console.log('Sending request body to text-to-speech:', requestBody);
@@ -60,7 +60,7 @@ const AssistantCard: React.FC<AssistantCardProps> = ({
           bytes[i] = binaryString.charCodeAt(i);
         }
         
-        const audioBlob = new Blob([bytes], { type: 'audio/mp3' });
+        const audioBlob = new Blob([bytes], { type: 'audio/wav' });
         const audioUrl = URL.createObjectURL(audioBlob);
         const audio = new Audio(audioUrl);
         
@@ -144,29 +144,24 @@ const AssistantCard: React.FC<AssistantCardProps> = ({
     }
   };
 
-  // Get voice display name
+  // Get voice display name for DeepGram voices
   const getVoiceDisplayName = () => {
-    const voiceOptions = {
-      openai: {
-        'alloy': 'Alloy (Neutral)',
-        'echo': 'Echo (Male)',
-        'fable': 'Fable (British Male)',
-        'onyx': 'Onyx (Deep Male)',
-        'nova': 'Nova (Female)',
-        'shimmer': 'Shimmer (Female)'
-      },
-      elevenlabs: {
-        '9BWtsMINqrJLrRacOk9x': 'Aria',
-        'CwhRBWXzGAHq8TQ4Fs17': 'Roger',
-        'EXAVITQu4vr4xnSDxMaL': 'Sarah',
-        'FGY2WhTYpPnrIDTdsKH5': 'Laura',
-        'IKne3meq5aSn9XLyUdCD': 'Charlie',
-        'JBFqnCBsd6RMkjVDRZzb': 'George'
-      }
+    const deepgramVoices: Record<string, string> = {
+      'aura-asteria-en': 'Asteria (Female)',
+      'aura-luna-en': 'Luna (Female)',
+      'aura-stella-en': 'Stella (Female)',
+      'aura-athena-en': 'Athena (Female)',
+      'aura-hera-en': 'Hera (Female)',
+      'aura-orion-en': 'Orion (Male)',
+      'aura-arcas-en': 'Arcas (Male)',
+      'aura-perseus-en': 'Perseus (Male)',
+      'aura-angus-en': 'Angus (Male)',
+      'aura-orpheus-en': 'Orpheus (Male)',
+      'aura-helios-en': 'Helios (Male)',
+      'aura-zeus-en': 'Zeus (Male)'
     };
     
-    const providerVoices = voiceOptions[assistant.voice_provider as keyof typeof voiceOptions];
-    return providerVoices?.[assistant.voice_id as keyof typeof providerVoices] || assistant.voice_id;
+    return deepgramVoices[assistant.voice_id] || assistant.voice_id;
   };
 
   return (
@@ -184,7 +179,7 @@ const AssistantCard: React.FC<AssistantCardProps> = ({
           </div>
         </div>
         <p className="text-sm text-gray-600">
-          DeepGram STT/TTS • {assistant.voice_provider || 'openai'} voice
+          DeepGram STT/TTS • {assistant.model || 'nova-2'} model
         </p>
       </CardHeader>
       

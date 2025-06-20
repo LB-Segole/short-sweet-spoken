@@ -17,24 +17,25 @@ export const useAssistants = () => {
       }
 
       console.log('Making GET request to load assistants');
-      const { data, error } = await supabase.functions.invoke('assistants', {
+      const { data, error } = await supabase.functions.invoke('agents', {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${session.access_token}`,
         },
       });
 
-      console.log('Response from assistants function:', { data, error });
+      console.log('Response from agents function:', { data, error });
 
       if (error) {
         console.error('Response error:', error);
         throw error;
       }
 
-      if (data) {
-        console.log('Setting assistants data:', data);
-        console.log('Data type:', typeof data, 'Is array:', Array.isArray(data));
-        setAssistants(Array.isArray(data) ? data : []);
+      if (data?.success && data?.agents) {
+        console.log('Setting assistants data:', data.agents);
+        setAssistants(Array.isArray(data.agents) ? data.agents : []);
+      } else {
+        setAssistants([]);
       }
     } catch (error) {
       console.error('Error loading AI agents:', error);
@@ -61,7 +62,6 @@ export const useAssistants = () => {
         name: formData.name.trim(),
         system_prompt: formData.system_prompt.trim(),
         first_message: formData.first_message.trim(),
-        voice_provider: formData.voice_provider,
         voice_id: formData.voice_id.trim(),
         model: formData.model,
         temperature: Number(formData.temperature),
@@ -70,7 +70,7 @@ export const useAssistants = () => {
 
       console.log('Creating assistant with data:', requestBody);
       
-      const { data, error } = await supabase.functions.invoke('assistants', {
+      const { data, error } = await supabase.functions.invoke('agents', {
         method: 'POST',
         body: requestBody,
         headers: {
@@ -85,14 +85,14 @@ export const useAssistants = () => {
         throw error;
       }
 
-      if (data && typeof data === 'object' && data.id) {
-        console.log('Assistant created successfully, adding to list:', data);
-        setAssistants(prev => [data, ...prev]);
+      if (data?.success && data?.agent) {
+        console.log('Assistant created successfully, adding to list:', data.agent);
+        setAssistants(prev => [data.agent, ...prev]);
         showSuccessToast('AI agent created successfully');
         return true;
       } else {
         console.error('Invalid assistant data received:', data);
-        throw new Error('Invalid response from server');
+        throw new Error(data?.error || 'Invalid response from server');
       }
     } catch (error) {
       console.error('Error creating AI agent:', error);
@@ -110,11 +110,9 @@ export const useAssistants = () => {
       }
 
       const requestBody = {
-        id: assistant.id,
         name: formData.name.trim(),
         system_prompt: formData.system_prompt.trim(),
         first_message: formData.first_message.trim(),
-        voice_provider: formData.voice_provider,
         voice_id: formData.voice_id.trim(),
         model: formData.model,
         temperature: Number(formData.temperature),
@@ -123,7 +121,7 @@ export const useAssistants = () => {
 
       console.log('Updating assistant with data:', requestBody);
       
-      const { data, error } = await supabase.functions.invoke('assistants', {
+      const { data, error } = await supabase.functions.invoke('agents', {
         method: 'PUT',
         body: requestBody,
         headers: {
@@ -138,12 +136,14 @@ export const useAssistants = () => {
         throw error;
       }
 
-      if (data) {
+      if (data?.success && data?.agent) {
         setAssistants(prev => prev.map(a => 
-          a.id === assistant.id ? data : a
+          a.id === assistant.id ? data.agent : a
         ));
         showSuccessToast('AI agent updated successfully');
         return true;
+      } else {
+        throw new Error(data?.error || 'Failed to update assistant');
       }
     } catch (error) {
       console.error('Error updating AI agent:', error);
@@ -159,7 +159,7 @@ export const useAssistants = () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
-      const { error } = await supabase.functions.invoke('assistants', {
+      const { data, error } = await supabase.functions.invoke('agents', {
         method: 'DELETE',
         body: { id },
         headers: {
@@ -171,8 +171,12 @@ export const useAssistants = () => {
         throw error;
       }
 
-      setAssistants(prev => prev.filter(a => a.id !== id));
-      showSuccessToast('AI agent deleted successfully');
+      if (data?.success) {
+        setAssistants(prev => prev.filter(a => a.id !== id));
+        showSuccessToast('AI agent deleted successfully');
+      } else {
+        throw new Error(data?.error || 'Failed to delete assistant');
+      }
     } catch (error) {
       console.error('Error deleting AI agent:', error);
       showErrorToast(error, 'Failed to delete AI agent');
