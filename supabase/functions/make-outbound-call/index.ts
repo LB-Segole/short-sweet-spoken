@@ -1,7 +1,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
 
-console.log('🚀 Edge Function initialized - make-outbound-call v26.0 (Fixed StatusCallbackEvent names)');
+console.log('🚀 Edge Function initialized - make-outbound-call v27.0 (Removed StatusCallbackEvent)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -290,7 +290,7 @@ serve(async (req) => {
     console.log('📄 LaML generated successfully');
     console.log(`📄 LaML content: ${laml}`);
 
-    // Make API call to SignalWire with corrected StatusCallbackEvent format
+    // Make API call to SignalWire without StatusCallbackEvent
     const signalwireUrl = `https://${signalwireSpace}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
     
     const formData = new URLSearchParams({
@@ -298,8 +298,8 @@ serve(async (req) => {
       From: formattedFromNumber,
       Twiml: laml,
       StatusCallback: statusCallback,
-      StatusCallbackMethod: 'POST',
-      StatusCallbackEvent: 'ringing answered completed'
+      StatusCallbackMethod: 'POST'
+      // Removed StatusCallbackEvent as it's causing issues with SignalWire
     });
 
     console.log(`📡 Making SignalWire API call: {
