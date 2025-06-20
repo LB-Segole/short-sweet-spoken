@@ -1,7 +1,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
 
-console.log('🚀 Edge Function initialized - make-outbound-call v25.0 (Fixed StatusCallbackEvent format)');
+console.log('🚀 Edge Function initialized - make-outbound-call v26.0 (Fixed StatusCallbackEvent names)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -299,7 +299,7 @@ serve(async (req) => {
       Twiml: laml,
       StatusCallback: statusCallback,
       StatusCallbackMethod: 'POST',
-      StatusCallbackEvent: 'initiated ringing answered completed'
+      StatusCallbackEvent: 'ringing answered completed'
     });
 
     console.log(`📡 Making SignalWire API call: {
