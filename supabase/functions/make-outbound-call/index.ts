@@ -1,7 +1,8 @@
+
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
 
-console.log('🚀 Edge Function initialized - make-outbound-call v27.0 (Removed StatusCallbackEvent)');
+console.log('🚀 Edge Function initialized - make-outbound-call v28.0 (Fixed Call Connection)');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -254,14 +255,12 @@ serve(async (req) => {
 
     // Construct URLs with proper domain
     const statusCallback = `${supabaseUrl}/functions/v1/call-webhook`;
-    const websocketUrl = `wss://${supabaseUrl.replace('https://', '')}/functions/v1/voice-websocket?callId=${encodeURIComponent(callId)}&assistantId=${encodeURIComponent(assistantId)}&userId=${encodeURIComponent(user.id)}`;
 
     console.log(`🌐 URLs configured: {
-  statusCallback: "${statusCallback}",
-  websocketUrl: "${websocketUrl.substring(0, 80)}..."
+  statusCallback: "${statusCallback}"
 }`);
 
-    // Generate LaML with proper XML encoding for all content
+    // Generate improved LaML with more reliable call flow
     const firstMessage = assistant.first_message || 'Hello! How can I help you today?';
     
     const escapeXml = (text: string): string => {
@@ -274,23 +273,25 @@ serve(async (req) => {
     };
 
     const escapedGreeting = escapeXml(firstMessage);
-    const escapedWebsocketUrl = escapeXml(websocketUrl);
 
-    // Simplified LaML that focuses on making the call work
+    // Improved LaML with better call handling and longer timeouts
     const laml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="alice">${escapedGreeting}</Say>
-  <Pause length="1"/>
-  <Gather input="speech" timeout="10" action="${escapeXml(statusCallback)}" method="POST">
-    <Say voice="alice">Please say something to continue our conversation.</Say>
+  <Pause length="2"/>
+  <Gather input="speech" timeout="15" speechTimeout="auto" action="${escapeXml(statusCallback)}" method="POST" language="en-US" enhanced="true">
+    <Say voice="alice">I'm listening. Please go ahead and speak.</Say>
+    <Pause length="5"/>
+    <Say voice="alice">Are you there? Please say something so I can assist you.</Say>
   </Gather>
-  <Say voice="alice">Thank you for your time. Goodbye!</Say>
+  <Say voice="alice">I didn't hear a response. Let me try to connect you with someone who can help. Thank you for calling!</Say>
+  <Hangup/>
 </Response>`;
 
     console.log('📄 LaML generated successfully');
     console.log(`📄 LaML content: ${laml}`);
 
-    // Make API call to SignalWire without StatusCallbackEvent
+    // Make API call to SignalWire with improved parameters
     const signalwireUrl = `https://${signalwireSpace}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`;
     
     const formData = new URLSearchParams({
@@ -298,14 +299,16 @@ serve(async (req) => {
       From: formattedFromNumber,
       Twiml: laml,
       StatusCallback: statusCallback,
-      StatusCallbackMethod: 'POST'
-      // Removed StatusCallbackEvent as it's causing issues with SignalWire
+      StatusCallbackMethod: 'POST',
+      Timeout: '60', // Wait longer for answer
+      Record: 'false' // Disable recording for now
     });
 
     console.log(`📡 Making SignalWire API call: {
   url: "${signalwireUrl}",
   to: "${formattedToNumber}",
-  from: "${formattedFromNumber}"
+  from: "${formattedFromNumber}",
+  timeout: "60"
 }`);
 
     const response = await fetch(signalwireUrl, {
@@ -337,8 +340,9 @@ serve(async (req) => {
 
     const callData = await response.json();
     console.log(`✅ Call initiated successfully: ${callData.sid}`);
+    console.log(`📞 Call details:`, callData);
 
-    // Store call record in database with status 'calling' instead of 'initiated'
+    // Store call record in database
     const { error: dbError } = await supabase
       .from('calls')
       .insert({
@@ -349,7 +353,7 @@ serve(async (req) => {
         campaign_id: campaignId || null,
         contact_id: contactId || null,
         phone_number: formattedToNumber,
-        status: 'calling', // Changed from 'initiated' to 'calling' to avoid constraint issues
+        status: 'initiated',
         created_at: new Date().toISOString()
       });
 
@@ -364,8 +368,13 @@ serve(async (req) => {
       success: true, 
       callSid: callData.sid,
       callId: callId,
-      message: 'Call initiated successfully',
-      timestamp
+      message: 'Call initiated successfully - please check your phone',
+      timestamp,
+      callDetails: {
+        to: formattedToNumber,
+        from: formattedFromNumber,
+        status: callData.status || 'queued'
+      }
     };
 
     console.log(`✅ Returning success response: ${JSON.stringify(successResponse)}`);

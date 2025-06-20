@@ -2,7 +2,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🤖 Agent Management Function initialized v1.0 - DeepGram Voice Agents');
+console.log('🤖 Agent Management Function initialized v2.0 - Fixed DELETE and improved call handling');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -21,7 +21,7 @@ interface AgentCreateRequest {
 }
 
 interface AgentUpdateRequest extends Partial<AgentCreateRequest> {
-  id: string
+  // No ID needed here as it comes from URL
 }
 
 serve(async (req) => {
@@ -55,50 +55,36 @@ serve(async (req) => {
     }
 
     const url = new URL(req.url)
-    const agentId = url.pathname.split('/').pop()
+    const pathParts = url.pathname.split('/').filter(part => part.length > 0)
+    
+    console.log('📍 Request details:', {
+      method: req.method,
+      pathname: url.pathname,
+      pathParts,
+      user: user.id
+    })
 
     switch (req.method) {
       case 'GET':
-        if (agentId && agentId !== 'agents') {
-          // Get single agent
-          const { data: agent, error } = await supabaseClient
-            .from('assistants')
-            .select('*')
-            .eq('id', agentId)
-            .eq('user_id', user.id)
-            .single()
+        // Get all agents for user
+        const { data: agents, error } = await supabaseClient
+          .from('assistants')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
 
-          if (error) {
-            return new Response(
-              JSON.stringify({ success: false, error: 'Agent not found' }),
-              { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 404 }
-            )
-          }
-
+        if (error) {
+          console.error('❌ Error fetching agents:', error)
           return new Response(
-            JSON.stringify({ success: true, agent }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          )
-        } else {
-          // Get all agents for user
-          const { data: agents, error } = await supabaseClient
-            .from('assistants')
-            .select('*')
-            .eq('user_id', user.id)
-            .order('created_at', { ascending: false })
-
-          if (error) {
-            return new Response(
-              JSON.stringify({ success: false, error: error.message }),
-              { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-            )
-          }
-
-          return new Response(
-            JSON.stringify({ success: true, agents }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            JSON.stringify({ success: false, error: error.message }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
           )
         }
+
+        return new Response(
+          JSON.stringify({ success: true, agents }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
 
       case 'POST':
         const createData: AgentCreateRequest = await req.json()
@@ -128,6 +114,7 @@ serve(async (req) => {
           .single()
 
         if (createError) {
+          console.error('❌ Error creating agent:', createError)
           return new Response(
             JSON.stringify({ success: false, error: createError.message }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
@@ -142,14 +129,26 @@ serve(async (req) => {
         )
 
       case 'PUT':
-        if (!agentId || agentId === 'agents') {
+        const requestBody = await req.text()
+        let updateData: AgentUpdateRequest & { id?: string }
+        
+        try {
+          updateData = JSON.parse(requestBody)
+        } catch (error) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'Invalid JSON in request body' }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+          )
+        }
+
+        if (!updateData.id) {
           return new Response(
             JSON.stringify({ success: false, error: 'Agent ID required for update' }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
           )
         }
 
-        const updateData: AgentUpdateRequest = await req.json()
+        const agentId = updateData.id
         delete updateData.id // Don't allow ID updates
 
         const { data: updatedAgent, error: updateError } = await supabaseClient
@@ -164,6 +163,7 @@ serve(async (req) => {
           .single()
 
         if (updateError) {
+          console.error('❌ Error updating agent:', updateError)
           return new Response(
             JSON.stringify({ success: false, error: updateError.message }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
@@ -178,27 +178,42 @@ serve(async (req) => {
         )
 
       case 'DELETE':
-        if (!agentId || agentId === 'agents') {
+        const deleteBody = await req.text()
+        let deleteData: { id: string }
+        
+        try {
+          deleteData = JSON.parse(deleteBody)
+        } catch (error) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'Invalid JSON in request body' }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+          )
+        }
+
+        if (!deleteData.id) {
           return new Response(
             JSON.stringify({ success: false, error: 'Agent ID required for deletion' }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
           )
         }
 
+        console.log('🗑️ Attempting to delete agent:', deleteData.id, 'for user:', user.id)
+
         const { error: deleteError } = await supabaseClient
           .from('assistants')
           .delete()
-          .eq('id', agentId)
+          .eq('id', deleteData.id)
           .eq('user_id', user.id)
 
         if (deleteError) {
+          console.error('❌ Error deleting agent:', deleteError)
           return new Response(
             JSON.stringify({ success: false, error: deleteError.message }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
           )
         }
 
-        console.log('✅ Agent deleted:', agentId)
+        console.log('✅ Agent deleted:', deleteData.id)
 
         return new Response(
           JSON.stringify({ success: true, message: 'Agent deleted successfully' }),
