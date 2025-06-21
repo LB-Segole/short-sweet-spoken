@@ -291,7 +291,7 @@ export const useVoiceWebSocket = ({
         audioQueueRef.current?.clear();
         if (evt.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
           reconnectAttempts.current++;
-          setTimeout(connect, 1000 * reconn0ectAttempts.current);
+          setTimeout(connect, 1000 * reconnectAttempts.current);
         }
         connectionLockRef.current = false;
       };
