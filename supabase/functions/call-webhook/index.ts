@@ -8,7 +8,7 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-console.log('🚀 Call Webhook Function initialized - v3.0 (Fixed 401 auth issue)')
+console.log('🚀 Call Webhook Function initialized - v4.0 (Fixed JWT and DB issues)')
 
 serve(async (req) => {
   const timestamp = new Date().toISOString()
@@ -82,7 +82,7 @@ serve(async (req) => {
         .from('webhook_logs')
         .insert({
           webhook_type: 'signalwire_status',
-          call_sid: callSid,
+          call_id: callSid,
           status: callStatus || 'unknown',
           payload: webhookData,
           created_at: new Date().toISOString()

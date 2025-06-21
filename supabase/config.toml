@@ -1,1 +1,43 @@
+
 project_id = "csixccpoxpnwowbgkoyw"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+enabled = true
+port = 54324
+smtp_port = 54325
+pop3_port = 54326
+
+[storage]
+enabled = true
+port = 54325
+image_transformation = { enabled = true }
+
+[auth]
+enabled = true
+port = 54326
+
+[functions.call-webhook]
+verify_jwt = false
+
+[functions.make-outbound-call]
+verify_jwt = true
+
+[functions.voice-websocket]
+verify_jwt = false
+
+[functions.end-call]
+verify_jwt = true

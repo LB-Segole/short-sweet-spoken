@@ -1,4 +1,3 @@
-
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -8,7 +7,7 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-console.log('🚀 Edge Function initialized - make-outbound-call v33.0 (Fixed duplicate formatPhoneNumber)')
+console.log('🚀 Edge Function initialized - make-outbound-call v34.0 (Fixed DB column issue)')
 
 serve(async (req) => {
   const timestamp = new Date().toISOString()
@@ -215,11 +214,11 @@ serve(async (req) => {
     const callData = await response.json()
     console.log(`✅ Call initiated successfully: ${callData.sid}`)
 
-    // Store call in database
+    // Store call in database - FIXED: Use correct column names
     const { error: insertError } = await supabase
       .from('calls')
       .insert({
-        call_id: callId,
+        id: callId, // Use 'id' instead of 'call_id'
         user_id: user.id,
         assistant_id: assistantId,
         phone_number: formattedPhoneNumber,
