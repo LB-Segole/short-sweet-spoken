@@ -4,24 +4,26 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-signalwire-signature',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
 // Function to validate SignalWire webhook signature
-const validateSignalWireSignature = (signature: string, url: string, params: Record<string, string>, authToken: string): boolean => {
+const validateSignalWireSignature = async (signature: string, url: string, body: string, authToken: string): Promise<boolean> => {
   try {
     if (!signature || !authToken) {
       console.log('⚠️ Missing signature or auth token for validation')
       return false
     }
 
-    // Create the signature string
-    const sortedParams = Object.keys(params).sort().map(key => `${key}${params[key]}`).join('')
-    const signatureString = url + sortedParams
+    // For now, we'll accept all SignalWire webhooks but log validation attempts
+    console.log('🔐 SignalWire signature validation attempted:', {
+      hasSignature: !!signature,
+      hasToken: !!authToken,
+      url: url
+    })
     
-    // For now, we'll skip strict signature validation but log the attempt
-    console.log('🔐 SignalWire signature validation attempted')
+    // TODO: Implement proper HMAC-SHA1 validation later if needed
     return true // Allow all SignalWire webhooks for now
   } catch (error) {
     console.error('❌ Signature validation error:', error)
@@ -30,8 +32,7 @@ const validateSignalWireSignature = (signature: string, url: string, params: Rec
 }
 
 serve(async (req) => {
-  const timestamp = new Date().toISOString()
-  console.log(`🔄 Webhook received: ${req.method} ${req.url} at ${timestamp}`)
+  console.log(`🔄 Webhook received: ${req.method} ${req.url} at ${new Date().toISOString()}`)
   
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
@@ -45,28 +46,43 @@ serve(async (req) => {
 
     // Parse webhook data
     let webhookData: { [key: string]: string } = {}
+    let bodyText = ''
     
     const contentType = req.headers.get('content-type') || ''
     const url = req.url
     
     if (contentType.includes('application/x-www-form-urlencoded')) {
-      const formData = await req.formData()
+      bodyText = await req.text()
+      const formData = new URLSearchParams(bodyText)
       for (const [key, value] of formData.entries()) {
         webhookData[key] = value.toString()
       }
     } else if (contentType.includes('application/json')) {
-      webhookData = await req.json()
+      bodyText = await req.text()
+      webhookData = JSON.parse(bodyText)
     } else {
-      const text = await req.text()
-      console.log('📝 Raw webhook data:', text)
+      bodyText = await req.text()
+      console.log('📝 Raw webhook data:', bodyText)
       // Try to parse as URL-encoded
-      const params = new URLSearchParams(text)
+      const params = new URLSearchParams(bodyText)
       for (const [key, value] of params.entries()) {
         webhookData[key] = value
       }
     }
 
     console.log('📋 Webhook data received:', JSON.stringify(webhookData, null, 2))
+
+    // Validate SignalWire signature
+    const signature = req.headers.get('x-signalwire-signature') || req.headers.get('x-twilio-signature')
+    const signingKey = Deno.env.get('SIGNALWIRE_SIGNING_KEY') || Deno.env.get('SIGNALWIRE_TOKEN')
+    
+    if (signature && signingKey) {
+      console.log('🔐 Validating SignalWire signature...')
+      const isValid = await validateSignalWireSignature(signature, url, bodyText, signingKey)
+      console.log(`🔐 Signature validation: ${isValid ? 'PASSED' : 'FAILED'}`)
+    } else {
+      console.log('⚠️ No signature or signing key present')
+    }
 
     // Extract key fields
     const callSid = webhookData.CallSid || webhookData.callSid
@@ -78,15 +94,6 @@ serve(async (req) => {
     const sipResultCode = webhookData.SipResultCode || webhookData.sipResultCode
     const hangupBy = webhookData.HangupBy || webhookData.hangupBy
 
-    // Log SignalWire signature validation (optional - can be enhanced later)
-    const signature = req.headers.get('x-signalwire-signature') || req.headers.get('x-twilio-signature')
-    if (signature) {
-      console.log('🔐 SignalWire signature present, validating...')
-      const authToken = Deno.env.get('SIGNALWIRE_TOKEN') || ''
-      const isValid = validateSignalWireSignature(signature, url, webhookData, authToken)
-      console.log(`🔐 Signature validation: ${isValid ? 'PASSED' : 'FAILED'}`)
-    }
-
     // Always log webhook for debugging
     if (callSid) {
       await supabaseClient
@@ -97,20 +104,15 @@ serve(async (req) => {
           status: callStatus || 'unknown',
           payload: webhookData
         })
-        .then(({ error }) => {
-          if (error) console.error('Failed to log webhook:', error)
-          else console.log('✅ Webhook logged successfully')
-        })
     }
 
-    // Handle different call statuses with detailed logging
+    // Handle different call statuses
     if (callStatus) {
       console.log(`📊 Processing call status: ${callStatus} for ${callSid}`)
       
-      // Handle SIP 603 specifically
+      // Handle SIP codes
       if (sipResultCode === '603') {
         console.log('🚫 SIP 603 Decline detected - call was actively rejected by destination')
-        console.log(`📞 Call details: From ${from} to ${to}, hung up by ${hangupBy}`)
       }
 
       const updateData: any = {
@@ -118,12 +120,11 @@ serve(async (req) => {
         updated_at: new Date().toISOString()
       }
 
-      // Add additional fields based on status
       if (duration && !isNaN(parseInt(duration))) {
         updateData.duration = parseInt(duration)
       }
 
-      if (callStatus === 'completed' || callStatus === 'failed' || callStatus === 'busy' || callStatus === 'no-answer') {
+      if (['completed', 'failed', 'busy', 'no-answer'].includes(callStatus)) {
         updateData.ended_at = new Date().toISOString()
         
         if (callStatus === 'completed' && duration) {
@@ -162,12 +163,6 @@ serve(async (req) => {
       case 'answered':
       case 'in-progress':
         console.log('✅ Call in progress')
-        // For answered calls, we might want to provide TwiML instructions
-        twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">Hello! Please wait while we connect you to our AI assistant.</Say>
-  <Pause length="1"/>
-</Response>`
         break
         
       case 'completed':
@@ -175,7 +170,7 @@ serve(async (req) => {
         break
         
       case 'busy':
-        console.log('📵 Call was busy - destination declined or was unavailable')
+        console.log('📵 Call was busy')
         if (sipResultCode === '603') {
           console.log('   → SIP 603: Destination actively declined the call')
         }
@@ -194,10 +189,11 @@ serve(async (req) => {
         break
         
       default:
-        console.log(`ℹ️ Unknown call status: ${callStatus}`)
+        console.log(`ℹ️ Call status: ${callStatus}`)
     }
 
-    // Always return 200 OK to SignalWire to prevent "unsuccessful callback" logs
+    // ALWAYS return 200 OK to SignalWire to prevent "unsuccessful callback" logs
+    console.log('✅ Returning 200 OK to SignalWire')
     return new Response(twimlResponse, {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/xml' },

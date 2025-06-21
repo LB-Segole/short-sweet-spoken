@@ -1,3 +1,4 @@
+
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { AudioRecorder, AudioQueue, AudioEncoder } from '@/utils/audioUtils';
@@ -9,7 +10,7 @@ interface VoiceMessage {
 }
 
 interface UseVoiceWebSocketProps {
-  userId: string;                      // REQUIRED - Add user ID for validation
+  userId: string;
   callId?: string;
   assistantId?: string;
   onConnectionChange?: (connected: boolean) => void;
@@ -38,9 +39,8 @@ export const useVoiceWebSocket = ({
   const maxReconnectAttempts = 3;
   const heartbeatInterval = useRef<number | null>(null);
   const connectionTimeout = useRef<number | null>(null);
-  const connectionLockRef = useRef(false);  // prevent race conditions
+  const connectionLockRef = useRef(false);
 
-  // Enhanced logging with rotation
   const log = useCallback((message: string, data?: any) => {
     const timestamp = new Date().toISOString();
     const logMessage: VoiceMessage = {
@@ -50,14 +50,12 @@ export const useVoiceWebSocket = ({
     };
     console.log(`[${timestamp}] 🎙️ Voice WebSocket: ${message}`, data || '');
     messageLogRef.current.push(logMessage);
-    // Keep only last 100 messages
     if (messageLogRef.current.length > 100) {
       messageLogRef.current = messageLogRef.current.slice(-50);
     }
     onMessage?.(logMessage);
   }, [onMessage]);
 
-  // Initialize audio system
   const initializeAudio = useCallback(async () => {
     try {
       log('🔄 Initializing audio system...');
@@ -84,7 +82,6 @@ export const useVoiceWebSocket = ({
     }
   }, [log, onError]);
 
-  // Validate audio data
   const validateAudioData = (audioData: Float32Array): boolean => {
     if (!audioData || !(audioData instanceof Float32Array)) return false;
     if (audioData.length < 100 || audioData.length > 48000) return false;
@@ -93,7 +90,6 @@ export const useVoiceWebSocket = ({
     return maxAmp >= 0.001 && maxAmp <= 1.0;
   };
 
-  // Handle outgoing audio
   const handleAudioData = useCallback((audioData: Float32Array) => {
     if (wsRef.current?.readyState !== WebSocket.OPEN) return;
     try {
@@ -106,7 +102,6 @@ export const useVoiceWebSocket = ({
       const maxAmplitude = Math.max(...Array.from(audioData).map(Math.abs));
       const message = { event: 'media', media: { payload: base64Audio } };
       wsRef.current.send(JSON.stringify(message));
-      // Log only in development at 0.1%
       if (import.meta.env.DEV && Math.random() < 0.001) {
         log('📤 Audio chunk sent', {
           originalSize: audioData.length,
@@ -121,7 +116,6 @@ export const useVoiceWebSocket = ({
     }
   }, [log, onError]);
 
-  // Recording controls
   const startRecording = useCallback(async () => {
     try {
       log('🎤 Starting recording...');
@@ -147,7 +141,6 @@ export const useVoiceWebSocket = ({
     }
   }, [log]);
 
-  // Heartbeat
   const setupHeartbeat = useCallback(() => {
     if (heartbeatInterval.current) clearInterval(heartbeatInterval.current);
     heartbeatInterval.current = window.setInterval(() => {
@@ -158,9 +151,12 @@ export const useVoiceWebSocket = ({
     }, 30000);
   }, [log]);
 
-  // Connect with auth, validation, locking, and recovery
   const connect = useCallback(async () => {
-    if (!userId) throw new Error('User ID required');
+    if (!userId) {
+      onError?.('User ID required for voice connection');
+      return;
+    }
+    
     if (connectionLockRef.current) return;
     connectionLockRef.current = true;
 
@@ -172,9 +168,9 @@ export const useVoiceWebSocket = ({
 
     try {
       setConnectionState('connecting');
-      log('🔄 Connecting...', { userId, callId, assistantId });
+      log('🔄 Connecting to voice WebSocket...', { userId, callId, assistantId });
 
-      // Validate call ownership
+      // Validate call ownership if callId provided
       if (callId) {
         const { data: callData, error: callErr } = await supabase
           .from('calls')
@@ -188,16 +184,21 @@ export const useVoiceWebSocket = ({
 
       await initializeAudio();
 
-      // Fetch auth token
+      // Get auth token
       const { data: { session } } = await supabase.auth.getSession();
       const authToken = session?.access_token;
       if (!authToken) throw new Error('Authentication required');
 
-      // Build WebSocket URL
-      const baseUrl = 'wss://csixccpoxpnwowbgkoyw.functions.supabase.co/functions/voice-websocket';
-      const params = new URLSearchParams({ callId: callId || 'browser-test', assistantId: assistantId || 'demo', userId, token: authToken });
+      // Build WebSocket URL with proper wss:// protocol
+      const baseUrl = 'wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/voice-websocket';
+      const params = new URLSearchParams({ 
+        callId: callId || 'browser-test', 
+        assistantId: assistantId || 'demo', 
+        userId, 
+        token: authToken 
+      });
       const wsUrl = `${baseUrl}?${params.toString()}`;
-      log('🌐 WebSocket URL', wsUrl);
+      log('🌐 WebSocket URL configured', wsUrl);
 
       wsRef.current = new WebSocket(wsUrl);
       connectionTimeout.current = window.setTimeout(() => {
@@ -205,18 +206,28 @@ export const useVoiceWebSocket = ({
           log('⏰ Connection timeout');
           wsRef.current?.close();
           setConnectionState('error');
-          onError?.('Timeout - failed to connect in 15s');
+          onError?.('Connection timeout - failed to connect in 15 seconds');
         }
       }, 15000);
 
       wsRef.current.onopen = () => {
         if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
-        log('✅ Connected'); setIsConnected(true); setConnectionState('connected'); onConnectionChange?.(true);
+        log('✅ Voice WebSocket connected'); 
+        setIsConnected(true); 
+        setConnectionState('connected'); 
+        onConnectionChange?.(true);
         reconnectAttempts.current = 0;
         setupHeartbeat();
 
-        wsRef.current?.send(JSON.stringify({ event: 'connected', protocol: 'voice-streaming', version: '1.0', callId, assistantId, timestamp: Date.now() }));
-        log('📤 Connect message');
+        wsRef.current?.send(JSON.stringify({ 
+          event: 'connected', 
+          protocol: 'voice-streaming', 
+          version: '1.0', 
+          callId, 
+          assistantId, 
+          timestamp: Date.now() 
+        }));
+        log('📤 Connection handshake sent');
         setTimeout(startRecording, 500);
         connectionLockRef.current = false;
       };
@@ -226,13 +237,15 @@ export const useVoiceWebSocket = ({
         try {
           data = JSON.parse(evt.data);
         } catch { return; }
-        // Validate message type
+        
         const eventType = data.type || data.event;
         const allowed = ['connection_established','audio_response','text_response','greeting_sent','transcript','ai_response','error','pong'];
         if (!allowed.includes(eventType)) {
-          log('❌ Invalid message type', data); return;
+          log('❌ Invalid message type', data); 
+          return;
         }
-        log('📨 Received', { type: eventType });
+        
+        log('📨 Received message', { type: eventType });
         const message: VoiceMessage = { type: eventType, data, timestamp: Date.now() };
         onMessage?.(message);
 
@@ -242,27 +255,27 @@ export const useVoiceWebSocket = ({
               try {
                 const audioBuf = AudioEncoder.decodeAudioFromWebSocket(data.audio);
                 await audioQueueRef.current.addToQueue(audioBuf);
-                log('✅ Audio queued');
+                log('✅ Audio queued for playback');
               } catch (err) {
                 log('❌ Audio processing error', err);
               }
             }
             break;
           case 'error':
-            onError?.(data.message || 'Unknown WS error');
+            onError?.(data.message || 'Unknown WebSocket error');
             break;
         }
       };
 
       wsRef.current.onerror = err => {
         if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
-        log('❌ WS error', err);
+        log('❌ WebSocket error', err);
         setConnectionState('error');
         if (reconnectAttempts.current < maxReconnectAttempts) {
           reconnectAttempts.current++;
           setTimeout(connect, 2000 * reconnectAttempts.current);
         } else {
-          onError?.('Failed after multiple retries');
+          onError?.('Connection failed after multiple retry attempts');
         }
         connectionLockRef.current = false;
       };
@@ -270,52 +283,54 @@ export const useVoiceWebSocket = ({
       wsRef.current.onclose = evt => {
         if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
         if (heartbeatInterval.current) clearInterval(heartbeatInterval.current);
-        log('🔌 Closed', { code: evt.code, reason: evt.reason });
-        setIsConnected(false); setConnectionState('disconnected'); onConnectionChange?.(false);
+        log('🔌 WebSocket closed', { code: evt.code, reason: evt.reason });
+        setIsConnected(false); 
+        setConnectionState('disconnected'); 
+        onConnectionChange?.(false);
         stopRecording();
         audioQueueRef.current?.clear();
         if (evt.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
           reconnectAttempts.current++;
-          setTimeout(connect, 1000 * reconnectAttempts.current);
+          setTimeout(connect, 1000 * reconn0ectAttempts.current);
         }
         connectionLockRef.current = false;
       };
 
     } catch (error) {
-      log('❌ Connect error', error);
+      log('❌ Connection error', error);
       setConnectionState('error');
-      onError?.(`${error}`);
+      onError?.(`Connection failed: ${error}`);
       connectionLockRef.current = false;
     }
   }, [userId, callId, assistantId, initializeAudio, startRecording, setupHeartbeat, onConnectionChange, onMessage, onError]);
 
-  // Disconnect with audio context suspend
   const disconnect = useCallback(async () => {
-    log('🔌 Disconnecting');
+    log('🔌 Disconnecting voice WebSocket');
     reconnectAttempts.current = maxReconnectAttempts;
     if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
     if (heartbeatInterval.current) clearInterval(heartbeatInterval.current);
     stopRecording();
     wsRef.current?.close(1000, 'User disconnected');
     wsRef.current = null;
-    // Suspend audio context for reuse
     if (audioContextRef.current && audioContextRef.current.state === 'running') {
       await audioContextRef.current.suspend();
       log('⏸ Audio context suspended');
     }
-    audioQueueRef.current?.clear(); audioQueueRef.current = null;
-    setIsConnected(false); setIsRecording(false); setConnectionState('disconnected');
-    log('✅ Disconnected');
+    audioQueueRef.current?.clear(); 
+    audioQueueRef.current = null;
+    setIsConnected(false); 
+    setIsRecording(false); 
+    setConnectionState('disconnected');
+    log('✅ Voice WebSocket disconnected');
   }, [stopRecording, log]);
 
-  // Text and greeting
   const sendTextMessage = useCallback((text: string) => {
     if (!text?.trim()) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ event: 'text_input', text: text.trim() }));
-      log('💬 Sent text', { length: text.length });
+      log('💬 Text message sent', { length: text.length });
     } else {
-      onError?.('Not connected');
+      onError?.('Not connected to voice service');
     }
   }, [log, onError]);
 
@@ -324,7 +339,7 @@ export const useVoiceWebSocket = ({
       wsRef.current.send(JSON.stringify({ event: 'request_greeting', callId, timestamp: Date.now() }));
       log('👋 Greeting requested');
     } else {
-      onError?.('Not connected');
+      onError?.('Not connected to voice service');
     }
   }, [callId, log, onError]);
 
@@ -332,11 +347,15 @@ export const useVoiceWebSocket = ({
   useEffect(() => {
     const onOnline = () => {
       if (!isConnected && connectionState === 'error') {
-        log('🌐 Online - retrying'); connect();
+        log('🌐 Network online - attempting reconnection'); 
+        connect();
       }
     };
     const onOffline = () => {
-      if (isConnected) { log('📡 Offline - pausing'); disconnect(); }
+      if (isConnected) { 
+        log('📡 Network offline - pausing connection'); 
+        disconnect(); 
+      }
     };
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
