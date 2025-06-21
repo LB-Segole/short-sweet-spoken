@@ -13,7 +13,6 @@ import {
   HelpCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
-import FloatingAIChat from '@/components/Chatbot/FloatingAIChat';
 import ContactSupportModal from '@/components/Support/ContactSupportModal';
 import PaymentModal from '@/components/Payment/PaymentModal';
 
@@ -96,9 +95,6 @@ const MainLayout = () => {
           <Outlet />
         </main>
       </div>
-
-      {/* Floating AI Chat */}
-      <FloatingAIChat />
 
       {/* Modals */}
       <ContactSupportModal 
