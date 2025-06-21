@@ -1,377 +1,218 @@
-import { LiveTranscription } from './speechService';
-import { generateAIResponse, analyzeCustomerSentiment } from './aiService';
+
 import { supabase } from '@/lib/supabase';
+import { generateAIResponse } from './aiService';
 
 export interface VoiceAgentConfig {
-  assistantId?: string;
-  campaignId?: string;
-  voiceSettings?: {
-    voice: string;
-    speed: number;
-    pitch: number;
+  id: string;
+  name: string;
+  systemPrompt: string;
+  voice: string;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+}
+
+export interface ConversationState {
+  messages: Array<{
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+    timestamp: Date;
+  }>;
+  context: {
+    callId: string;
+    contactId?: string;
+    campaignId?: string;
+    customerInfo?: any;
+  };
+  metadata: {
+    startTime: Date;
+    lastActivity: Date;
+    messageCount: number;
+    sentiment?: 'positive' | 'negative' | 'neutral';
   };
 }
 
-class VoiceAgentClass {
-  private liveTranscription: LiveTranscription | null = null;
-  private callId: string;
+export class VoiceAgent {
   private config: VoiceAgentConfig;
-  private conversationHistory: Array<{ role: string; content: string; timestamp: Date }> = [];
-  private isActive: boolean = false;
-  private callStartTime: Date;
-  private lastActivity: Date;
+  private conversationState: ConversationState;
 
-  constructor(callId: string, config: VoiceAgentConfig = {}) {
-    this.callId = callId;
+  constructor(config: VoiceAgentConfig, callId: string, contactId?: string, campaignId?: string) {
     this.config = config;
-    this.callStartTime = new Date();
-    this.lastActivity = new Date();
-  }
-
-  async startCall(): Promise<void> {
-    try {
-      this.isActive = true;
-      
-      // Initialize live transcription
-      this.liveTranscription = new LiveTranscription(
-        this.handleTranscription.bind(this)
-      );
-      
-      await this.liveTranscription.connect();
-      
-      // Log call start
-      await this.logCallEvent('call_started', {
-        assistant_id: this.config.assistantId,
-        campaign_id: this.config.campaignId,
-        voice_settings: this.config.voiceSettings
-      });
-
-      console.log(`Voice agent started for call ${this.callId}`);
-      
-    } catch (error) {
-      console.error('Failed to start voice agent:', error);
-      this.isActive = false;
-      throw error;
-    }
-  }
-
-  async endCall(): Promise<void> {
-    try {
-      this.isActive = false;
-      
-      if (this.liveTranscription) {
-        this.liveTranscription.disconnect();
-        this.liveTranscription = null;
+    this.conversationState = {
+      messages: [
+        {
+          role: 'system',
+          content: config.systemPrompt,
+          timestamp: new Date()
+        }
+      ],
+      context: {
+        callId,
+        contactId,
+        campaignId
+      },
+      metadata: {
+        startTime: new Date(),
+        lastActivity: new Date(),
+        messageCount: 0
       }
-
-      // Calculate call duration
-      const duration = Math.floor((new Date().getTime() - this.callStartTime.getTime()) / 1000);
-      
-      // Generate call summary
-      const summary = await this.generateCallSummary();
-      
-      // Update call record
-      await supabase
-        .from('calls')
-        .update({
-          status: 'completed',
-          duration,
-          summary,
-          ended_at: new Date().toISOString()
-        })
-        .eq('id', this.callId);
-
-      // Log call end
-      await this.logCallEvent('call_ended', {
-        duration,
-        summary,
-        total_messages: this.conversationHistory.length
-      });
-
-      console.log(`Voice agent ended for call ${this.callId}. Duration: ${duration}s`);
-      
-    } catch (error) {
-      console.error('Error ending voice agent call:', error);
-    }
+    };
   }
 
-  private async handleTranscription(transcript: string, confidence: number): Promise<void> {
-    if (!this.isActive || !transcript.trim()) {
-      return;
-    }
-
+  async processUserInput(transcript: string): Promise<{
+    response: string;
+    shouldEndCall: boolean;
+    shouldTransfer: boolean;
+    intent?: string;
+    confidence?: number;
+  }> {
     try {
-      this.lastActivity = new Date();
-      
-      // Log customer message
-      await this.logMessage('customer', transcript, confidence);
-      
-      // Add to conversation history
-      this.conversationHistory.push({
+      // Add user message to conversation
+      this.conversationState.messages.push({
         role: 'user',
         content: transcript,
         timestamp: new Date()
       });
 
-      // Analyze customer sentiment
-      const sentiment = await analyzeCustomerSentiment(transcript);
-      
-      // Generate AI response
+      // Generate AI response using the aiService
       const aiResponse = await generateAIResponse(transcript, {
-        callId: this.callId,
-        confidence,
-        previousMessages: this.conversationHistory.slice(-5) // Last 5 messages for context
+        callId: this.conversationState.context.callId,
+        previousMessages: this.conversationState.messages
       });
 
-      // Log AI response
-      await this.logMessage('agent', aiResponse.text, aiResponse.confidence);
-      
-      // Add AI response to conversation history
-      this.conversationHistory.push({
+      // Add AI response to conversation
+      this.conversationState.messages.push({
         role: 'assistant',
         content: aiResponse.text,
         timestamp: new Date()
       });
 
-      // Handle call flow based on AI decision
-      await this.handleCallFlow(aiResponse, sentiment);
-      
+      // Update conversation metadata
+      this.conversationState.metadata.lastActivity = new Date();
+      this.conversationState.metadata.messageCount += 1;
+
+      // Log the conversation
+      await this.logConversation(transcript, aiResponse.text, aiResponse.confidence || 0.8);
+
+      return {
+        response: aiResponse.text,
+        shouldEndCall: aiResponse.shouldEndCall,
+        shouldTransfer: aiResponse.shouldTransfer,
+        intent: aiResponse.intent,
+        confidence: aiResponse.confidence
+      };
+
     } catch (error) {
-      console.error('Error handling transcription:', error);
+      console.error('Error processing user input:', error);
       
-      // Fallback response
-      await this.logMessage('agent', 'I apologize, I\'m having technical difficulties. Let me connect you with a human representative.', 0.5);
+      return {
+        response: "I apologize, but I'm experiencing some technical difficulties. Let me connect you with a human representative.",
+        shouldEndCall: false,
+        shouldTransfer: true,
+        intent: 'technical_error',
+        confidence: 1.0
+      };
     }
   }
 
-  private async handleCallFlow(aiResponse: any, sentiment: any): Promise<void> {
-    // Update call analytics
-    await this.updateCallAnalytics(aiResponse, sentiment);
-    
-    // Check for call termination conditions
-    if (aiResponse.shouldEndCall) {
-      await this.scheduleCallEnd('ai_decision');
-    } else if (aiResponse.shouldTransfer) {
-      await this.scheduleTransfer();
-    } else if (this.shouldTimeoutCall()) {
-      await this.scheduleCallEnd('timeout');
+  async generateInitialMessage(): Promise<string> {
+    try {
+      // Use a simple greeting based on the agent's configuration
+      const greeting = "Hello! Thank you for taking my call. I'm an AI assistant from First Choice Solutions. How are you doing today?";
+      
+      // Add to conversation history
+      this.conversationState.messages.push({
+        role: 'assistant',
+        content: greeting,
+        timestamp: new Date()
+      });
+
+      // Log the initial message
+      await this.logConversation('', greeting, 0.9);
+
+      return greeting;
+    } catch (error) {
+      console.error('Error generating initial message:', error);
+      return "Hello! Thank you for taking my call. How can I help you today?";
     }
   }
 
-  private async scheduleCallEnd(reason: string): Promise<void> {
-    await this.logCallEvent('call_end_scheduled', { reason });
-    
-    // In a real implementation, this would trigger the call termination
-    // through your telephony provider's API
-    setTimeout(() => {
-      this.endCall();
-    }, 2000); // Give 2 seconds for final message to play
-  }
-
-  private async scheduleTransfer(): Promise<void> {
-    await this.logCallEvent('transfer_scheduled', {
-      reason: 'ai_requested_transfer',
-      conversation_length: this.conversationHistory.length
-    });
-    
-    // In a real implementation, this would initiate the transfer
-    // through your telephony provider's API
-  }
-
-  private shouldTimeoutCall(): boolean {
-    const maxCallDuration = 10 * 60 * 1000; // 10 minutes
-    const maxInactivity = 30 * 1000; // 30 seconds
-    
-    const callDuration = new Date().getTime() - this.callStartTime.getTime();
-    const inactivityDuration = new Date().getTime() - this.lastActivity.getTime();
-    
-    return callDuration > maxCallDuration || inactivityDuration > maxInactivity;
-  }
-
-  private async logMessage(speaker: string, message: string, confidence: number): Promise<void> {
+  private async logConversation(userMessage: string, agentResponse: string, confidence: number): Promise<void> {
     try {
       await supabase.from('call_logs').insert({
-        call_id: this.callId,
-        speaker,
-        message,
-        confidence,
+        call_id: this.conversationState.context.callId,
+        speaker: userMessage ? 'user' : 'assistant',
+        message: userMessage || agentResponse,
+        confidence: confidence,
         timestamp: new Date().toISOString()
       });
     } catch (error) {
-      console.error('Error logging message:', error);
+      console.error('Error logging conversation:', error);
     }
   }
 
-  private async logCallEvent(eventType: string, eventData: any): Promise<void> {
-    try {
-      await supabase.from('webhook_logs').insert({
-        call_id: this.callId,
-        event_type: eventType,
-        event_data: eventData,
-        created_at: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error('Error logging call event:', error);
-    }
+  getConversationState(): ConversationState {
+    return this.conversationState;
   }
 
-  private async updateCallAnalytics(aiResponse: any, sentiment: any): Promise<void> {
-    try {
-      const analytics = {
-        total_exchanges: this.conversationHistory.length / 2,
-        avg_confidence: this.calculateAverageConfidence(),
-        dominant_sentiment: sentiment.sentiment,
-        last_intent: aiResponse.intent,
-        call_duration: Math.floor((new Date().getTime() - this.callStartTime.getTime()) / 1000)
-      };
-
-      await supabase
-        .from('calls')
-        .update({ 
-          analytics: analytics,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', this.callId);
-        
-    } catch (error) {
-      console.error('Error updating call analytics:', error);
-    }
+  getConfig(): VoiceAgentConfig {
+    return this.config;
   }
 
-  private calculateAverageConfidence(): number {
-    const confidenceScores = this.conversationHistory
-      .filter(msg => msg.role === 'user')
-      .map(() => {
-        // In a real implementation, you'd store confidence with each message
-        return 0.8; // Placeholder
-      });
-    
-    return confidenceScores.length > 0 
-      ? confidenceScores.reduce((sum, score) => sum + score, 0) / confidenceScores.length
-      : 0;
+  // Calculate conversation duration in seconds
+  getConversationDuration(): number {
+    const now = new Date();
+    const startTime = this.conversationState.metadata.startTime;
+    return Math.floor((now.getTime() - startTime.getTime()) / 1000);
   }
 
-  private async generateCallSummary(): Promise<string> {
-    try {
-      const customerMessages = this.conversationHistory
-        .filter(msg => msg.role === 'user')
-        .map(msg => msg.content)
-        .join(' ');
-      
-      const agentMessages = this.conversationHistory
-        .filter(msg => msg.role === 'assistant')
-        .map(msg => msg.content)
-        .join(' ');
-
-      // Simple summary generation - in production, you might use OpenAI for this
-      const summary = `Call Duration: ${Math.floor((new Date().getTime() - this.callStartTime.getTime()) / 1000)}s. ` +
-        `Total Exchanges: ${Math.floor(this.conversationHistory.length / 2)}. ` +
-        `Customer seemed ${this.getDominantSentiment()}. ` +
-        `Key topics discussed: ${this.extractKeyTopics(customerMessages + ' ' + agentMessages)}`;
-
-      return summary;
-      
-    } catch (error) {
-      console.error('Error generating call summary:', error);
-      return 'Call completed - summary generation failed';
-    }
-  }
-
-  private getDominantSentiment(): string {
-    // Placeholder - in production, you'd analyze all sentiment data
-    return 'neutral';
-  }
-
-  private extractKeyTopics(text: string): string {
-    // Simple keyword extraction - in production, you might use NLP
-    const keywords = ['business', 'service', 'help', 'price', 'consultation', 'marketing'];
-    const foundKeywords = keywords.filter(keyword => 
-      text.toLowerCase().includes(keyword)
-    );
-    
-    return foundKeywords.length > 0 ? foundKeywords.join(', ') : 'general inquiry';
-  }
-
-  // Public methods for external control
-  public async pauseTranscription(): Promise<void> {
-    if (this.liveTranscription) {
-      this.liveTranscription.disconnect();
-    }
-  }
-
-  public async resumeTranscription(): Promise<void> {
-    if (!this.liveTranscription && this.isActive) {
-      this.liveTranscription = new LiveTranscription(
-        this.handleTranscription.bind(this)
-      );
-      await this.liveTranscription.connect();
-    }
-  }
-
-  public getCallStatus(): {
-    isActive: boolean;
+  // Get conversation summary
+  getConversationSummary(): {
     duration: number;
     messageCount: number;
     lastActivity: Date;
+    sentiment?: string;
   } {
     return {
-      isActive: this.isActive,
-      duration: Math.floor((new Date().getTime() - this.callStartTime.getTime()) / 1000),
-      messageCount: this.conversationHistory.length,
-      lastActivity: this.lastActivity
+      duration: this.getConversationDuration(),
+      messageCount: this.conversationState.metadata.messageCount,
+      lastActivity: this.conversationState.metadata.lastActivity,
+      sentiment: this.conversationState.metadata.sentiment
     };
   }
-
-  public async injectMessage(message: string, speaker: 'agent' | 'customer' = 'agent'): Promise<void> {
-    await this.logMessage(speaker, message, 1.0);
-    this.conversationHistory.push({
-      role: speaker === 'agent' ? 'assistant' : 'user',
-      content: message,
-      timestamp: new Date()
-    });
-  }
 }
 
-// Factory function to create and manage voice agents
-export class VoiceAgentManager {
-  private static agents: Map<string, VoiceAgentClass> = new Map();
+// Factory function to create a voice agent
+export async function createVoiceAgent(
+  agentId: string, 
+  callId: string, 
+  contactId?: string, 
+  campaignId?: string
+): Promise<VoiceAgent> {
+  try {
+    // Fetch agent configuration from database
+    const { data: agent, error } = await supabase
+      .from('assistants')
+      .select('*')
+      .eq('id', agentId)
+      .single();
 
-  static async createAgent(callId: string, config: VoiceAgentConfig): Promise<VoiceAgentClass> {
-    if (this.agents.has(callId)) {
-      throw new Error(`Voice agent already exists for call ${callId}`);
-    }
+    if (error) throw error;
+    if (!agent) throw new Error('Agent not found');
 
-    const agent = new VoiceAgentClass(callId, config);
-    this.agents.set(callId, agent);
-    
-    await agent.startCall();
-    return agent;
-  }
+    const config: VoiceAgentConfig = {
+      id: agent.id,
+      name: agent.name,
+      systemPrompt: agent.system_prompt,
+      voice: agent.voice_id || 'default',
+      model: agent.model || 'gpt-3.5-turbo',
+      temperature: agent.temperature || 0.7,
+      maxTokens: agent.max_tokens || 500
+    };
 
-  static getAgent(callId: string): VoiceAgentClass | undefined {
-    return this.agents.get(callId);
-  }
-
-  static async endAgent(callId: string): Promise<void> {
-    const agent = this.agents.get(callId);
-    if (agent) {
-      await agent.endCall();
-      this.agents.delete(callId);
-    }
-  }
-
-  static getAllActiveAgents(): VoiceAgentClass[] {
-    return Array.from(this.agents.values()).filter(agent => 
-      agent.getCallStatus().isActive
-    );
-  }
-
-  static async endAllAgents(): Promise<void> {
-    const promises = Array.from(this.agents.keys()).map(callId => 
-      this.endAgent(callId)
-    );
-    await Promise.all(promises);
+    return new VoiceAgent(config, callId, contactId, campaignId);
+  } catch (error) {
+    console.error('Error creating voice agent:', error);
+    throw error;
   }
 }
-
-export { VoiceAgentClass as VoiceAgent };

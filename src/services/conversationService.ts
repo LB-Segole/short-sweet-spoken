@@ -26,7 +26,7 @@ export const generateConversationResponse = async (
     console.log('Context:', context);
 
     // Simple AI response logic - in production, you'd use a proper LLM
-    const response = await generateSimpleResponse(transcript, context);
+    const response = await generateSimpleResponse(transcript);
 
     // Log the conversation to database
     await supabase.from('conversation_logs').insert({
@@ -53,8 +53,7 @@ export const generateConversationResponse = async (
 };
 
 const generateSimpleResponse = async (
-  transcript: string,
-  context: ConversationContext
+  transcript: string
 ): Promise<ConversationResponse> => {
   const lowerTranscript = transcript.toLowerCase();
   

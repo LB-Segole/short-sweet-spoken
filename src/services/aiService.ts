@@ -23,7 +23,7 @@ export const generateAIResponse = async (
     console.log('Generating AI response for:', transcript);
     
     // Simple rule-based AI response
-    const response = await processTranscript(transcript, context);
+    const response = await processTranscript(transcript);
     
     // Log the interaction
     await logAIInteraction(transcript, response, context);
@@ -43,8 +43,7 @@ export const generateAIResponse = async (
 };
 
 const processTranscript = async (
-  transcript: string,
-  context: AIResponseContext
+  transcript: string
 ): Promise<AIResponse> => {
   const lowerTranscript = transcript.toLowerCase();
   
