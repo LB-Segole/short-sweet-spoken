@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -44,9 +43,8 @@ const VoiceCallInterface: React.FC<VoiceCallInterfaceProps> = ({
   const handleInitiateCall = async () => {
     try {
       const webhookUrl = `${window.location.origin}/api/signalwire/webhook`;
-      const streamUrl = `wss://${window.location.host}/voice-stream`;
       
-      const sid = await initiateCall(phoneNumber, webhookUrl, streamUrl);
+      const sid = await initiateCall(phoneNumber, webhookUrl);
       setCallSid(sid);
     } catch (error) {
       console.error('Failed to initiate call:', error);
