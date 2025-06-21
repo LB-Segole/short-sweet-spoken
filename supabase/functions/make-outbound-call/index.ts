@@ -1,3 +1,4 @@
+
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -7,7 +8,7 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-console.log('🚀 Edge Function initialized - make-outbound-call v32.0 (Fixed SignalWire space env var)')
+console.log('🚀 Edge Function initialized - make-outbound-call v33.0 (Fixed duplicate formatPhoneNumber)')
 
 serve(async (req) => {
   const timestamp = new Date().toISOString()
@@ -59,7 +60,7 @@ serve(async (req) => {
       })
     }
 
-    // Format SignalWire phone number
+    // Format SignalWire phone number - FIXED: Single formatPhoneNumber function
     const formatPhoneNumber = (phone: string) => phone.replace(/[^\d+]/g, '')
     const signalwireFromNumber = formatPhoneNumber(requiredEnvVars.signalwirePhone || '')
     console.log(`📞 Formatted SignalWire phone number: ${requiredEnvVars.signalwirePhone} → ${signalwireFromNumber}`)
@@ -109,7 +110,6 @@ serve(async (req) => {
 }`)
 
     // Format destination phone number
-    const formatPhoneNumber = (phone: string) => phone.replace(/[^\d+]/g, '')
     const formattedPhoneNumber = formatPhoneNumber(phoneNumber)
     console.log(`📞 Formatted destination phone number: ${phoneNumber} → ${formattedPhoneNumber}`)
 
@@ -138,7 +138,6 @@ serve(async (req) => {
     console.log(`🆔 Generated call ID: ${callId}`)
 
     // Configure URLs
-    const signalwireSpaceName = (requiredEnvVars.signalwireSpace || '').replace('https://', '').split('.signalwire.com')[0]
     const baseUrl = `https://${signalwireSpaceName}.signalwire.com`
     const statusCallbackUrl = `https://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/call-webhook`
     const voiceWebSocketUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/voice-websocket`
@@ -184,11 +183,16 @@ serve(async (req) => {
       Twiml: twimlContent,
       StatusCallback: statusCallbackUrl,
       StatusCallbackMethod: 'POST',
-      StatusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'].join(','),
+      StatusCallbackEvent: 'initiated',
       Timeout: '30',
       MachineDetection: 'Enable',
       MachineDetectionTimeout: '15'
     })
+
+    // Add additional status callback events
+    callPayload.append('StatusCallbackEvent', 'ringing')
+    callPayload.append('StatusCallbackEvent', 'answered')
+    callPayload.append('StatusCallbackEvent', 'completed')
 
     // Make the call
     const response = await fetch(signalwireUrl, {
