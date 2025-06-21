@@ -1,183 +1,195 @@
+
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🎤 Voice WebSocket Function initialized v2.2 - Deepgram Only, Rate Limited');
-console.log('SIGNALWIRE_PROJECT_ID:', Deno.env.get('SIGNALWIRE_PROJECT_ID'));
-console.log('SIGNALWIRE_TOKEN:', Deno.env.get('SIGNALWIRE_TOKEN'));
-console.log('SIGNALWIRE_SPACE_URL:', Deno.env.get('SIGNALWIRE_SPACE_URL'));
+console.log('🎙️ Voice WebSocket Function initialized')
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, UPGRADE',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 }
 
 serve(async (req) => {
+  const url = new URL(req.url)
+  console.log(`🔄 Voice WebSocket request: ${req.method} ${url.pathname}`)
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
   }
 
-  const upgradeHeader = req.headers.get('upgrade')
-  if (upgradeHeader?.toLowerCase() !== 'websocket') {
-    return new Response('Expected websocket connection', { status: 426 })
+  // Check if this is a WebSocket upgrade request
+  const upgrade = req.headers.get('upgrade') || ''
+  if (upgrade.toLowerCase() !== 'websocket') {
+    return new Response('Expected WebSocket', { 
+      status: 400,
+      headers: corsHeaders
+    })
   }
 
-  // Environment variables & Clients
-  const supabaseClient = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-  const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')!;
+  try {
+    const { socket, response } = Deno.upgradeWebSocket(req)
+    
+    // Parse query parameters
+    const callId = url.searchParams.get('callId')
+    const assistantId = url.searchParams.get('assistantId')
+    const userId = url.searchParams.get('userId')
+    
+    console.log(`🎯 WebSocket connection params:`, { callId, assistantId, userId })
 
-  // Get parameters from the request URL
-  const url = new URL(req.url);
-  const callId = url.searchParams.get('callId');
-  const assistantId = url.searchParams.get('assistantId');
-  const userId = url.searchParams.get('userId'); // Important for security/RLS
-
-  if (!callId || !assistantId || !userId) {
-    return new Response('Missing required URL parameters: callId, assistantId, userId', { status: 400 });
-  }
-
-  const { socket: signalwireSocket, response } = Deno.upgradeWebSocket(req)
-  
-  let deepgramSocket: WebSocket | null = null
-  let streamSid: string | null = null;
-  let lastTTSCall = 0;
-  let lastSTTCall = 0;
-  const TTS_RATE_LIMIT_MS = 1000; // 1 second between TTS calls
-  const STT_RATE_LIMIT_MS = 500;  // 0.5 second between STT calls
-
-  const log = (message: string, data?: any) => {
-    console.log(`[Call: ${callId}] ${message}`, data || '')
-  }
-
-  const sendToSignalWire = (data: any) => {
-    if (signalwireSocket.readyState === WebSocket.OPEN) {
-      signalwireSocket.send(JSON.stringify(data))
+    if (!callId || !assistantId) {
+      console.log('❌ Missing required parameters')
+      socket.close(1008, 'Missing callId or assistantId')
+      return response
     }
-  }
 
-  const initializeDeepgram = () => {
-    const deepgramUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=false&endpointing=300&encoding=mulaw&sample_rate=8000`
-    deepgramSocket = new WebSocket(deepgramUrl, { headers: { Authorization: `Token ${deepgramApiKey}` } })
+    // Initialize Supabase client
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    )
 
-    deepgramSocket.onopen = () => log('Deepgram socket opened')
-    deepgramSocket.onclose = () => log('Deepgram socket closed')
-    deepgramSocket.onerror = (error) => log('Deepgram socket error', error)
-    deepgramSocket.onmessage = (event) => {
-      const data = JSON.parse(event.data)
-      if (data.type === 'Results' && data.channel?.alternatives?.[0]?.transcript) {
-        const now = Date.now();
-        if (now - lastSTTCall < STT_RATE_LIMIT_MS) {
-          log('STT rate limit hit, skipping this transcript');
-          return;
+    // WebSocket event handlers
+    socket.onopen = () => {
+      console.log(`✅ Voice WebSocket connected for call: ${callId}`)
+      
+      // Send connection confirmation
+      socket.send(JSON.stringify({
+        type: 'connection_established',
+        callId,
+        assistantId,
+        timestamp: new Date().toISOString()
+      }))
+    }
+
+    socket.onmessage = async (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        console.log(`📨 Received message type: ${data.event || data.type}`)
+
+        switch (data.event || data.type) {
+          case 'connected':
+            console.log('🔗 Client connected')
+            break
+
+          case 'media':
+            // Handle audio data from SignalWire
+            if (data.media?.payload) {
+              console.log('🎵 Received audio data')
+              // Process audio data here
+              // This would typically go to speech-to-text service
+            }
+            break
+
+          case 'text_input':
+            // Handle text input for processing
+            if (data.text) {
+              console.log(`💬 Text input: ${data.text}`)
+              
+              // Generate AI response (simplified)
+              const response = await generateSimpleResponse(data.text)
+              
+              // Send response back
+              socket.send(JSON.stringify({
+                type: 'text_response',
+                text: response.text,
+                shouldEndCall: response.shouldEndCall,
+                timestamp: new Date().toISOString()
+              }))
+
+              // Log conversation
+              await supabase.from('call_logs').insert({
+                call_id: callId,
+                speaker: 'user',
+                message: data.text,
+                timestamp: new Date().toISOString()
+              })
+
+              await supabase.from('call_logs').insert({
+                call_id: callId,
+                speaker: 'assistant',
+                message: response.text,
+                timestamp: new Date().toISOString()
+              })
+            }
+            break
+
+          case 'request_greeting':
+            console.log('👋 Greeting requested')
+            socket.send(JSON.stringify({
+              type: 'greeting_sent',
+              text: 'Hello! How can I help you today?',
+              timestamp: new Date().toISOString()
+            }))
+            break
+
+          case 'ping':
+            socket.send(JSON.stringify({
+              type: 'pong',
+              timestamp: new Date().toISOString()
+            }))
+            break
+
+          default:
+            console.log(`❓ Unknown message type: ${data.event || data.type}`)
         }
-        lastSTTCall = now;
-        const transcript = data.channel.alternatives[0].transcript
-        if (transcript.trim().length > 0) {
-          log('Received transcript:', transcript)
-          // Echo the transcript back as TTS (demo: repeat what user said)
-          generateAndStreamTTS(transcript)
-        }
+      } catch (error) {
+        console.error('❌ Error processing message:', error)
+        socket.send(JSON.stringify({
+          type: 'error',
+          message: 'Failed to process message',
+          timestamp: new Date().toISOString()
+        }))
       }
     }
-  }
 
-  const generateAndStreamTTS = async (text: string) => {
-    const now = Date.now();
-    if (now - lastTTSCall < TTS_RATE_LIMIT_MS) {
-      log('TTS rate limit hit, skipping this TTS');
-      return;
+    socket.onerror = (error) => {
+      console.error('❌ WebSocket error:', error)
     }
-    lastTTSCall = now;
-    try {
-      const response = await fetch('https://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=mulaw&sample_rate=8000', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Token ${deepgramApiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ text })
-      })
 
-      if (response.ok && response.body) {
-        const reader = response.body.getReader()
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          const base64Audio = btoa(String.fromCharCode(...value))
-          if (streamSid) {
-            sendToSignalWire({
-              event: "media",
-              streamSid: streamSid,
-              media: {
-                payload: base64Audio
-              }
-            })
-          }
-        }
-        log('Finished streaming TTS audio')
-      } else {
-        log('Deepgram TTS API error', { status: response.status, text: await response.text() })
-      }
-    } catch (error) {
-      log('Error with TTS generation', error)
+    socket.onclose = (event) => {
+      console.log(`🔌 WebSocket closed: ${event.code} ${event.reason}`)
     }
-  }
 
-  signalwireSocket.onopen = () => {
-    log('SignalWire socket connected')
-  }
+    return response
 
-  signalwireSocket.onmessage = async (event) => {
-    const msg = JSON.parse(event.data)
-    switch (msg.event) {
-      case 'start':
-        log('Received start event from SignalWire', msg)
-        streamSid = msg.streamSid; // Capture the streamSid
-        // Fetch assistant details to start the conversation
-        const { data: assistant, error } = await supabaseClient
-          .from('assistants')
-          .select('system_prompt, first_message')
-          .eq('id', assistantId)
-          .eq('user_id', userId) // Ensure user owns assistant
-          .single();
-        if (error || !assistant) {
-          log('Error fetching assistant or access denied', error);
-          generateAndStreamTTS("I'm sorry, I can't seem to access my configuration right now. Please try again later.");
-          return;
-        }
-        initializeDeepgram();
-        if(assistant.first_message) {
-            log('Sending first message:', assistant.first_message);
-            generateAndStreamTTS(assistant.first_message);
-        }
-        break
-      case 'media':
-        if (deepgramSocket && deepgramSocket.readyState === WebSocket.OPEN) {
-          // Decode the base64 payload from SignalWire and send it to Deepgram
-          const audioData = atob(msg.media.payload)
-          const audioBuffer = new Uint8Array(audioData.length)
-          for (let i = 0; i < audioData.length; i++) {
-            audioBuffer[i] = audioData.charCodeAt(i)
-          }
-          deepgramSocket.send(audioBuffer)
-        }
-        break
-      case 'stop':
-        log('Received stop event from SignalWire', msg)
-        if (deepgramSocket) deepgramSocket.close()
-        break
-    }
+  } catch (error) {
+    console.error('💥 Voice WebSocket error:', error)
+    return new Response('Internal Server Error', { 
+      status: 500,
+      headers: corsHeaders
+    })
   }
-
-  signalwireSocket.onclose = () => {
-    log('SignalWire socket closed')
-    if (deepgramSocket) deepgramSocket.close()
-  }
-
-  signalwireSocket.onerror = (error) => {
-    log('SignalWire socket error', error)
-    if (deepgramSocket) deepgramSocket.close()
-  }
-
-  return response
 })
+
+// Simple AI response generator
+async function generateSimpleResponse(text: string) {
+  const lowerText = text.toLowerCase()
+  
+  if (lowerText.includes('goodbye') || lowerText.includes('bye')) {
+    return {
+      text: "Thank you for calling. Have a great day!",
+      shouldEndCall: true
+    }
+  }
+  
+  if (lowerText.includes('hello') || lowerText.includes('hi')) {
+    return {
+      text: "Hello! Thank you for calling. How can I assist you today?",
+      shouldEndCall: false
+    }
+  }
+  
+  if (lowerText.includes('transfer') || lowerText.includes('human')) {
+    return {
+      text: "I'll connect you with a human representative right away.",
+      shouldEndCall: false,
+      transfer: true
+    }
+  }
+  
+  return {
+    text: "I understand. Can you tell me more about how I can help you?",
+    shouldEndCall: false
+  }
+}

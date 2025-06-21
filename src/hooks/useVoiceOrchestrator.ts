@@ -1,10 +1,6 @@
 
-import { useState, useCallback, useRef, useEffect } from 'react';
-import { DeepgramSTTClient } from '../services/deepgram/sttClient';
-import { DeepgramTTSClient } from '../services/deepgram/ttsClient';
-import { SignalWireCallHandler } from '../services/signalwire/callHandler';
-import { TranscriptResult, AudioChunk } from '../services/deepgram/types';
-import { generateConversationResponse } from '../services/conversationService';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { toast } from 'sonner';
 
 interface VoiceOrchestratorConfig {
   deepgramApiKey: string;
@@ -14,19 +10,13 @@ interface VoiceOrchestratorConfig {
     spaceUrl: string;
     phoneNumber: string;
   };
-  assistantId?: string;
-  agentPrompt?: string;
-  agentPersonality?: string;
 }
 
 interface VoiceState {
   isConnected: boolean;
   isListening: boolean;
   isSpeaking: boolean;
-  currentTranscript: string;
-  lastResponse: string;
   error: string | null;
-  callStatus: 'idle' | 'connecting' | 'connected' | 'ended';
 }
 
 export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
@@ -34,264 +24,156 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
     isConnected: false,
     isListening: false,
     isSpeaking: false,
-    currentTranscript: '',
-    lastResponse: '',
-    error: null,
-    callStatus: 'idle'
+    error: null
   });
 
-  const sttClient = useRef<DeepgramSTTClient | null>(null);
-  const ttsClient = useRef<DeepgramTTSClient | null>(null);
-  const callHandler = useRef<SignalWireCallHandler | null>(null);
-  const streamSid = useRef<string | null>(null);
-  const conversationHistory = useRef<Array<{ role: string; content: string }>>([]);
-
-  useEffect(() => {
-    // Initialize clients
-    sttClient.current = new DeepgramSTTClient(
-      { apiKey: config.deepgramApiKey },
-      {
-        model: 'nova-2',
-        language: 'en-US',
-        smartFormat: true,
-        interimResults: true,
-        endpointing: 300
-      }
-    );
-
-    ttsClient.current = new DeepgramTTSClient(
-      { apiKey: config.deepgramApiKey },
-      {
-        model: 'aura-asteria-en',
-        encoding: 'linear16',
-        sampleRate: 8000
-      }
-    );
-
-    callHandler.current = new SignalWireCallHandler(config.signalwireConfig);
-
-    return () => {
-      disconnect();
-    };
-  }, [config]);
-
-  const handleTranscript = useCallback(async (result: TranscriptResult) => {
-    setState(prev => ({
-      ...prev,
-      currentTranscript: result.transcript,
-      isListening: !result.isFinal
-    }));
-
-    if (result.isFinal && result.transcript.trim()) {
-      console.log('Final transcript received:', result.transcript);
-      
-      // Add to conversation history
-      conversationHistory.current.push({
-        role: 'user',
-        content: result.transcript
-      });
-
-      // Process the conversation
-      await processConversation(result.transcript);
-    }
-  }, []);
-
-  const handleAudioResponse = useCallback((chunk: AudioChunk) => {
-    setState(prev => ({ ...prev, isSpeaking: true }));
-    
-    // Convert audio chunk to base64 for SignalWire
-    const base64Audio = btoa(String.fromCharCode(...chunk.data));
-    
-    if (streamSid.current && callHandler.current) {
-      callHandler.current.sendAudioToCall(streamSid.current, base64Audio);
-    }
-
-    // Reset speaking state after a delay
-    setTimeout(() => {
-      setState(prev => ({ ...prev, isSpeaking: false }));
-    }, 1000);
-  }, []);
-
-  const processConversation = useCallback(async (transcript: string) => {
-    try {
-      console.log('Processing conversation with transcript:', transcript);
-      
-      // Generate AI response using conversation service
-      const response = await generateConversationResponse(transcript, {
-        callId: streamSid.current || 'direct-call',
-        agentPrompt: config.agentPrompt,
-        agentPersonality: config.agentPersonality,
-        previousMessages: conversationHistory.current
-      });
-
-      console.log('Generated response:', response);
-      
-      // Add AI response to conversation history
-      conversationHistory.current.push({
-        role: 'assistant',
-        content: response.text
-      });
-
-      // Update state with response
-      setState(prev => ({
-        ...prev,
-        lastResponse: response.text
-      }));
-
-      // Send to TTS for speech synthesis
-      if (ttsClient.current) {
-        ttsClient.current.sendText(response.text);
-      }
-
-      // Handle special actions
-      if (response.shouldEndCall) {
-        console.log('AI decided to end call');
-        setTimeout(() => {
-          disconnect();
-          setState(prev => ({ ...prev, callStatus: 'ended' }));
-        }, 3000); // Give time for TTS to finish
-      } else if (response.shouldTransfer) {
-        console.log('AI decided to transfer call');
-        // Handle transfer logic here
-      }
-
-    } catch (error) {
-      console.error('Error processing conversation:', error);
-      setState(prev => ({
-        ...prev,
-        error: 'Failed to process conversation'
-      }));
-    }
-  }, [config.agentPrompt, config.agentPersonality]);
-
-  const connect = useCallback(async () => {
-    try {
-      setState(prev => ({ ...prev, error: null, callStatus: 'connecting' }));
-
-      // Connect to DeepGram services
-      if (sttClient.current && ttsClient.current) {
-        await Promise.all([
-          sttClient.current.connect(handleTranscript),
-          ttsClient.current.connect(handleAudioResponse)
-        ]);
-      }
-
-      setState(prev => ({ 
-        ...prev, 
-        isConnected: true,
-        callStatus: 'connected'
-      }));
-
-      console.log('Voice orchestrator connected successfully');
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Connection failed';
-      setState(prev => ({ 
-        ...prev, 
-        error: errorMessage,
-        callStatus: 'idle'
-      }));
-      throw error;
-    }
-  }, [handleTranscript, handleAudioResponse]);
+  const wsRef = useRef<WebSocket | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   const disconnect = useCallback(() => {
     console.log('Disconnecting voice orchestrator');
     
-    sttClient.current?.disconnect();
-    ttsClient.current?.disconnect();
-    
+    // Close WebSocket connection
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
+    // Stop media recorder
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
+    }
+
+    // Close audio context
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+
     setState({
       isConnected: false,
       isListening: false,
       isSpeaking: false,
-      currentTranscript: '',
-      lastResponse: '',
-      error: null,
-      callStatus: 'ended'
+      error: null
     });
-
-    // Clear conversation history
-    conversationHistory.current = [];
-    streamSid.current = null;
   }, []);
 
-  const sendAudioChunk = useCallback((audioData: Uint8Array) => {
-    if (sttClient.current && state.isConnected) {
-      sttClient.current.sendAudio(audioData);
-    }
-  }, [state.isConnected]);
-
-  const handleSignalWireStream = useCallback((event: MessageEvent) => {
+  const connect = useCallback(async () => {
     try {
-      const data = JSON.parse(event.data);
-      
-      switch (data.event) {
-        case 'connected':
-          console.log('SignalWire stream connected');
-          break;
-          
-        case 'start':
-          streamSid.current = data.streamSid;
-          console.log('SignalWire stream started:', data.streamSid);
-          setState(prev => ({ ...prev, callStatus: 'connected' }));
-          break;
-          
-        case 'media':
-          if (data.media?.payload) {
-            // Convert base64 audio to Uint8Array and send to STT
-            const audioData = Uint8Array.from(atob(data.media.payload), c => c.charCodeAt(0));
-            sendAudioChunk(audioData);
-          }
-          break;
-          
-        case 'stop':
-          console.log('SignalWire stream stopped');
-          streamSid.current = null;
-          setState(prev => ({ ...prev, callStatus: 'ended' }));
-          break;
+      if (!config.deepgramApiKey) {
+        throw new Error('Deepgram API key is required');
       }
-    } catch (error) {
-      console.error('Error handling SignalWire stream event:', error);
-    }
-  }, [sendAudioChunk]);
 
-  const initiateCall = useCallback(async (phoneNumber: string, webhookUrl: string, streamUrl: string) => {
-    if (!callHandler.current) {
-      throw new Error('Call handler not initialized');
-    }
+      setState(prev => ({ ...prev, error: null }));
 
-    try {
-      setState(prev => ({ ...prev, callStatus: 'connecting' }));
+      // Request microphone permission
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      const callSid = await callHandler.current.initiateCall(phoneNumber, webhookUrl, streamUrl);
-      console.log('Call initiated successfully:', callSid);
+      // Create WebSocket connection to Deepgram (fixed subprotocol issue)
+      const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&encoding=linear16&sample_rate=16000`;
       
-      return callSid;
+      // Create WebSocket without invalid subprotocol
+      wsRef.current = new WebSocket(wsUrl, [], {
+        headers: {
+          'Authorization': `Token ${config.deepgramApiKey}`
+        }
+      });
+
+      wsRef.current.onopen = () => {
+        console.log('Connected to Deepgram');
+        setState(prev => ({ ...prev, isConnected: true }));
+      };
+
+      wsRef.current.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.channel?.alternatives?.[0]?.transcript) {
+          console.log('Transcript:', data.channel.alternatives[0].transcript);
+          // Handle transcript here
+        }
+      };
+
+      wsRef.current.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        setState(prev => ({ ...prev, error: 'WebSocket connection failed' }));
+      };
+
+      wsRef.current.onclose = () => {
+        console.log('WebSocket closed');
+        setState(prev => ({ ...prev, isConnected: false }));
+      };
+
+      // Setup media recorder
+      audioContextRef.current = new AudioContext({ sampleRate: 16000 });
+      const source = audioContextRef.current.createMediaStreamSource(stream);
+      
+      // Create media recorder for audio processing
+      mediaRecorderRef.current = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      });
+
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+          // Convert audio data and send to Deepgram
+          wsRef.current.send(event.data);
+        }
+      };
+
+      mediaRecorderRef.current.start(100); // Send data every 100ms
+      setState(prev => ({ ...prev, isListening: true }));
+
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Call initiation failed';
+      console.error('Connection error:', error);
       setState(prev => ({ 
         ...prev, 
-        error: errorMessage,
-        callStatus: 'idle'
+        error: error instanceof Error ? error.message : 'Connection failed'
       }));
+    }
+  }, [config.deepgramApiKey]);
+
+  const initiateCall = useCallback(async (phoneNumber: string, webhookUrl: string, streamUrl: string) => {
+    try {
+      const response = await fetch(`https://${config.signalwireConfig.spaceUrl}/api/laml/2010-04-01/Accounts/${config.signalwireConfig.projectId}/Calls.json`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${btoa(`${config.signalwireConfig.projectId}:${config.signalwireConfig.token}`)}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          To: phoneNumber,
+          From: config.signalwireConfig.phoneNumber,
+          Url: webhookUrl,
+          StatusCallback: webhookUrl,
+          StatusCallbackMethod: 'POST'
+        })
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`SignalWire API error: ${response.status} ${error}`);
+      }
+
+      const data = await response.json();
+      console.log('Call initiated:', data);
+      return data;
+    } catch (error) {
+      console.error('Call initiation error:', error);
       throw error;
     }
-  }, []);
+  }, [config.signalwireConfig]);
 
-  const sendTextMessage = useCallback(async (text: string) => {
-    if (text.trim()) {
-      await processConversation(text);
-    }
-  }, [processConversation]);
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      disconnect();
+    };
+  }, [disconnect]);
 
   return {
     state,
     connect,
     disconnect,
-    sendAudioChunk,
-    handleSignalWireStream,
-    initiateCall,
-    sendTextMessage,
-    conversationHistory: conversationHistory.current
+    initiateCall
   };
 };
