@@ -1,4 +1,3 @@
-
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -8,7 +7,7 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-console.log('🚀 Edge Function initialized - make-outbound-call v31.0 (Fixed table name)')
+console.log('🚀 Edge Function initialized - make-outbound-call v32.0 (Fixed SignalWire space env var)')
 
 serve(async (req) => {
   const timestamp = new Date().toISOString()
@@ -26,13 +25,13 @@ serve(async (req) => {
   }
 
   try {
-    // Environment validation
+    // Environment validation - FIXED: Use SIGNALWIRE_SPACE_URL instead of SIGNALWIRE_SPACE
     const requiredEnvVars = {
       supabaseUrl: Deno.env.get('SUPABASE_URL'),
       serviceKey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
       signalwireProjectId: Deno.env.get('SIGNALWIRE_PROJECT_ID'),
       signalwireToken: Deno.env.get('SIGNALWIRE_TOKEN'),
-      signalwireSpace: Deno.env.get('SIGNALWIRE_SPACE'),
+      signalwireSpace: Deno.env.get('SIGNALWIRE_SPACE_URL'), // FIXED: Use correct env var name
       signalwirePhone: Deno.env.get('SIGNALWIRE_PHONE_NUMBER')
     }
 
@@ -42,10 +41,38 @@ serve(async (req) => {
     }
     console.log('}')
 
+    // Validate all required environment variables are present
+    const missingVars = Object.entries(requiredEnvVars)
+      .filter(([key, value]) => !value)
+      .map(([key]) => key)
+
+    if (missingVars.length > 0) {
+      console.error('❌ Missing required environment variables:', missingVars)
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Missing required environment variables',
+        missingVars: missingVars,
+        timestamp: new Date().toISOString()
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
+
     // Format SignalWire phone number
     const formatPhoneNumber = (phone: string) => phone.replace(/[^\d+]/g, '')
     const signalwireFromNumber = formatPhoneNumber(requiredEnvVars.signalwirePhone || '')
     console.log(`📞 Formatted SignalWire phone number: ${requiredEnvVars.signalwirePhone} → ${signalwireFromNumber}`)
+
+    // Extract SignalWire space name from URL (e.g., "myspace.signalwire.com" → "myspace")
+    let signalwireSpaceName = requiredEnvVars.signalwireSpace || ''
+    if (signalwireSpaceName.includes('.signalwire.com')) {
+      signalwireSpaceName = signalwireSpaceName.split('.signalwire.com')[0]
+      if (signalwireSpaceName.startsWith('https://')) {
+        signalwireSpaceName = signalwireSpaceName.replace('https://', '')
+      }
+    }
+    console.log(`🌐 SignalWire space name extracted: ${signalwireSpaceName}`)
 
     // Initialize Supabase client
     const supabase = createClient(
@@ -110,11 +137,12 @@ serve(async (req) => {
     console.log(`🆔 Generated call ID: ${callId}`)
 
     // Configure URLs - Use FULL wss:// URL for stream
-    const baseUrl = `https://${requiredEnvVars.signalwireSpace}.signalwire.com`
+    const baseUrl = `https://${signalwireSpaceName}.signalwire.com` // FIXED: Use extracted space name
     const statusCallbackUrl = `https://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/call-webhook`
     const voiceWebSocketUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/voice-websocket`
     
     console.log(`🌐 URLs configured: {
+  baseUrl: "${baseUrl}",
   statusCallback: "${statusCallbackUrl}",
   voiceWebSocketUrl: "${voiceWebSocketUrl}"
 }`)
@@ -187,7 +215,7 @@ serve(async (req) => {
     console.log(`✅ Call initiated successfully: ${callData.sid}`)
     console.log(`📞 Call details: ${JSON.stringify(callData, null, 2)}`)
 
-    // Store call in database - FIXED: Use 'agent_id' column (which references assistants table)
+    // Store call in database - FIXED: Use 'assistant_id' column (which references assistants table)
     const { error: insertError } = await supabase
       .from('calls')
       .insert({
