@@ -561,6 +561,10 @@ export type Database = {
           message_timestamp: string
         }[]
       }
+      safe_delete_assistant: {
+        Args: { assistant_uuid: string }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never
