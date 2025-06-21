@@ -1,6 +1,5 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { toast } from 'sonner';
 
 interface VoiceOrchestratorConfig {
   deepgramApiKey: string;
@@ -17,6 +16,7 @@ interface VoiceState {
   isListening: boolean;
   isSpeaking: boolean;
   error: string | null;
+  currentTranscript: string;
 }
 
 export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
@@ -24,7 +24,8 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
     isConnected: false,
     isListening: false,
     isSpeaking: false,
-    error: null
+    error: null,
+    currentTranscript: ''
   });
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -56,7 +57,8 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
       isConnected: false,
       isListening: false,
       isSpeaking: false,
-      error: null
+      error: null,
+      currentTranscript: ''
     });
   }, []);
 
@@ -71,26 +73,31 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
       // Request microphone permission
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // Create WebSocket connection to Deepgram (fixed subprotocol issue)
+      // Create WebSocket connection to Deepgram
       const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&encoding=linear16&sample_rate=16000`;
       
-      // Create WebSocket without invalid subprotocol
-      wsRef.current = new WebSocket(wsUrl, [], {
-        headers: {
-          'Authorization': `Token ${config.deepgramApiKey}`
-        }
-      });
+      // Create WebSocket with proper authorization header
+      wsRef.current = new WebSocket(wsUrl);
 
+      // Set authorization header after connection
       wsRef.current.onopen = () => {
         console.log('Connected to Deepgram');
+        // Send authorization message
+        if (wsRef.current) {
+          wsRef.current.send(JSON.stringify({
+            type: 'auth',
+            token: config.deepgramApiKey
+          }));
+        }
         setState(prev => ({ ...prev, isConnected: true }));
       };
 
       wsRef.current.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.channel?.alternatives?.[0]?.transcript) {
-          console.log('Transcript:', data.channel.alternatives[0].transcript);
-          // Handle transcript here
+          const transcript = data.channel.alternatives[0].transcript;
+          console.log('Transcript:', transcript);
+          setState(prev => ({ ...prev, currentTranscript: transcript }));
         }
       };
 
@@ -106,7 +113,6 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
 
       // Setup media recorder
       audioContextRef.current = new AudioContext({ sampleRate: 16000 });
-      const source = audioContextRef.current.createMediaStreamSource(stream);
       
       // Create media recorder for audio processing
       mediaRecorderRef.current = new MediaRecorder(stream, {
@@ -132,7 +138,7 @@ export const useVoiceOrchestrator = (config: VoiceOrchestratorConfig) => {
     }
   }, [config.deepgramApiKey]);
 
-  const initiateCall = useCallback(async (phoneNumber: string, webhookUrl: string, streamUrl: string) => {
+  const initiateCall = useCallback(async (phoneNumber: string, webhookUrl: string) => {
     try {
       const response = await fetch(`https://${config.signalwireConfig.spaceUrl}/api/laml/2010-04-01/Accounts/${config.signalwireConfig.projectId}/Calls.json`, {
         method: 'POST',
