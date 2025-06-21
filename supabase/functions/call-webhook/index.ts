@@ -8,7 +8,7 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-console.log('🚀 Call Webhook Function initialized - v2.0 (Fixed 401 auth issue)')
+console.log('🚀 Call Webhook Function initialized - v3.0 (Fixed 401 auth issue)')
 
 serve(async (req) => {
   const timestamp = new Date().toISOString()
