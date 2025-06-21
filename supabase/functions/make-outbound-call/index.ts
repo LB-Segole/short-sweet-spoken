@@ -109,6 +109,7 @@ serve(async (req) => {
 }`)
 
     // Format destination phone number
+    const formatPhoneNumber = (phone: string) => phone.replace(/[^\d+]/g, '')
     const formattedPhoneNumber = formatPhoneNumber(phoneNumber)
     console.log(`📞 Formatted destination phone number: ${phoneNumber} → ${formattedPhoneNumber}`)
 
@@ -117,7 +118,7 @@ serve(async (req) => {
       return new Response('Missing phoneNumber or assistantId', { status: 400, headers: corsHeaders })
     }
 
-    // Load assistant configuration - FIXED: Query 'assistants' table instead of 'agents'
+    // Load assistant configuration
     const { data: assistant, error: assistantError } = await supabase
       .from('assistants')
       .select('*')
@@ -136,8 +137,9 @@ serve(async (req) => {
     const callId = crypto.randomUUID()
     console.log(`🆔 Generated call ID: ${callId}`)
 
-    // Configure URLs - Use FULL wss:// URL for stream
-    const baseUrl = `https://${signalwireSpaceName}.signalwire.com` // FIXED: Use extracted space name
+    // Configure URLs
+    const signalwireSpaceName = (requiredEnvVars.signalwireSpace || '').replace('https://', '').split('.signalwire.com')[0]
+    const baseUrl = `https://${signalwireSpaceName}.signalwire.com`
     const statusCallbackUrl = `https://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/call-webhook`
     const voiceWebSocketUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/voice-websocket`
     
@@ -147,14 +149,11 @@ serve(async (req) => {
   voiceWebSocketUrl: "${voiceWebSocketUrl}"
 }`)
 
-    // Generate enhanced LaML with proper Stream URL
-    const lamlContent = `<?xml version="1.0" encoding="UTF-8"?>
+    // Generate proper TwiML
+    const twimlContent = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <!-- Initial greeting -->
   <Say voice="alice">${assistant.first_message || 'Hello! How can I help you today?'}</Say>
   <Pause length="1"/>
-  
-  <!-- Connect to real-time voice websocket for conversation -->
   <Connect>
     <Stream url="${voiceWebSocketUrl}" name="voice_stream">
       <Parameter name="callId" value="${callId}"/>
@@ -162,14 +161,11 @@ serve(async (req) => {
       <Parameter name="userId" value="${user.id}"/>
     </Stream>
   </Connect>
-  
-  <!-- Fallback if connection fails -->
   <Say voice="alice">I'm having trouble connecting to my conversation system. Please try calling back in a moment.</Say>
   <Hangup/>
 </Response>`
 
-    console.log('📄 Enhanced LaML generated successfully')
-    console.log(`📄 LaML content: ${lamlContent}`)
+    console.log('📄 TwiML generated successfully')
 
     // Prepare SignalWire API call
     const signalwireUrl = `${baseUrl}/api/laml/2010-04-01/Accounts/${requiredEnvVars.signalwireProjectId}/Calls.json`
@@ -185,9 +181,10 @@ serve(async (req) => {
     const callPayload = new URLSearchParams({
       To: formattedPhoneNumber,
       From: signalwireFromNumber,
-      Twiml: lamlContent,
+      Twiml: twimlContent,
       StatusCallback: statusCallbackUrl,
       StatusCallbackMethod: 'POST',
+      StatusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'].join(','),
       Timeout: '30',
       MachineDetection: 'Enable',
       MachineDetectionTimeout: '15'
@@ -213,9 +210,8 @@ serve(async (req) => {
 
     const callData = await response.json()
     console.log(`✅ Call initiated successfully: ${callData.sid}`)
-    console.log(`📞 Call details: ${JSON.stringify(callData, null, 2)}`)
 
-    // Store call in database - FIXED: Use 'assistant_id' column (which references assistants table)
+    // Store call in database
     const { error: insertError } = await supabase
       .from('calls')
       .insert({
@@ -242,17 +238,10 @@ serve(async (req) => {
       callSid: callData.sid,
       callId: callId,
       message: 'Call initiated successfully - please check your phone',
-      timestamp: new Date().toISOString(),
-      callDetails: {
-        to: formattedPhoneNumber,
-        from: signalwireFromNumber,
-        status: callData.status,
-        realtimeAudio: true,
-        websocketUrl: voiceWebSocketUrl
-      }
+      timestamp: new Date().toISOString()
     }
 
-    console.log(`✅ Returning success response: ${JSON.stringify(successResponse)}`)
+    console.log(`✅ Returning success response`)
 
     return new Response(JSON.stringify(successResponse), {
       status: 200,

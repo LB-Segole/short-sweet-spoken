@@ -8,48 +8,36 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-// Function to validate SignalWire webhook signature
-const validateSignalWireSignature = async (signature: string, url: string, body: string, authToken: string): Promise<boolean> => {
-  try {
-    if (!signature || !authToken) {
-      console.log('⚠️ Missing signature or auth token for validation')
-      return false
-    }
-
-    // For now, we'll accept all SignalWire webhooks but log validation attempts
-    console.log('🔐 SignalWire signature validation attempted:', {
-      hasSignature: !!signature,
-      hasToken: !!authToken,
-      url: url
-    })
-    
-    // TODO: Implement proper HMAC-SHA1 validation later if needed
-    return true // Allow all SignalWire webhooks for now
-  } catch (error) {
-    console.error('❌ Signature validation error:', error)
-    return false
-  }
-}
+console.log('🚀 Call Webhook Function initialized - v2.0 (Fixed 401 auth issue)')
 
 serve(async (req) => {
-  console.log(`🔄 Webhook received: ${req.method} ${req.url} at ${new Date().toISOString()}`)
+  const timestamp = new Date().toISOString()
   
+  console.log(`📞 call-webhook invoked: {
+  method: "${req.method}",
+  url: "${req.url}",
+  timestamp: "${timestamp}",
+  headers: ${JSON.stringify(Object.fromEntries(req.headers.entries()))}
+}`)
+
   if (req.method === 'OPTIONS') {
+    console.log('🔄 Handling CORS preflight request - returning 200')
     return new Response(null, { headers: corsHeaders })
   }
 
   try {
+    // Initialize Supabase client with service role key (no user auth needed for webhooks)
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // Parse webhook data
+    // Parse webhook data from SignalWire
     let webhookData: { [key: string]: string } = {}
     let bodyText = ''
     
     const contentType = req.headers.get('content-type') || ''
-    const url = req.url
+    console.log(`📋 Content-Type: ${contentType}`)
     
     if (contentType.includes('application/x-www-form-urlencoded')) {
       bodyText = await req.text()
@@ -57,9 +45,6 @@ serve(async (req) => {
       for (const [key, value] of formData.entries()) {
         webhookData[key] = value.toString()
       }
-    } else if (contentType.includes('application/json')) {
-      bodyText = await req.text()
-      webhookData = JSON.parse(bodyText)
     } else {
       bodyText = await req.text()
       console.log('📝 Raw webhook data:', bodyText)
@@ -70,114 +55,120 @@ serve(async (req) => {
       }
     }
 
-    console.log('📋 Webhook data received:', JSON.stringify(webhookData, null, 2))
+    console.log('📋 Parsed webhook data:', JSON.stringify(webhookData, null, 2))
 
-    // Validate SignalWire signature
-    const signature = req.headers.get('x-signalwire-signature') || req.headers.get('x-twilio-signature')
-    const signingKey = Deno.env.get('SIGNALWIRE_SIGNING_KEY') || Deno.env.get('SIGNALWIRE_TOKEN')
-    
-    if (signature && signingKey) {
-      console.log('🔐 Validating SignalWire signature...')
-      const isValid = await validateSignalWireSignature(signature, url, bodyText, signingKey)
-      console.log(`🔐 Signature validation: ${isValid ? 'PASSED' : 'FAILED'}`)
-    } else {
-      console.log('⚠️ No signature or signing key present')
-    }
+    // Extract key fields from SignalWire webhook
+    const callSid = webhookData.CallSid || webhookData.SipCallId
+    const callStatus = webhookData.CallStatus
+    const duration = webhookData.CallDuration
+    const from = webhookData.From
+    const to = webhookData.To
+    const direction = webhookData.Direction
+    const hangupBy = webhookData.HangupBy
+    const hangupDirection = webhookData.HangupDirection
 
-    // Extract key fields
-    const callSid = webhookData.CallSid || webhookData.callSid
-    const callStatus = webhookData.CallStatus || webhookData.callStatus
-    const duration = webhookData.CallDuration || webhookData.duration
-    const from = webhookData.From || webhookData.from
-    const to = webhookData.To || webhookData.to
-    const direction = webhookData.Direction || webhookData.direction
-    const sipResultCode = webhookData.SipResultCode || webhookData.sipResultCode
-    const hangupBy = webhookData.HangupBy || webhookData.hangupBy
+    console.log(`📊 Key webhook fields: {
+  callSid: "${callSid}",
+  callStatus: "${callStatus}",
+  duration: "${duration}",
+  from: "${from?.replace(/\d(?=\d{4})/g, '*') || 'null'}",
+  to: "${to?.replace(/\d(?=\d{4})/g, '*') || 'null'}",
+  hangupBy: "${hangupBy?.replace(/\d(?=\d{4})/g, '*') || 'null'}"
+}`)
 
     // Always log webhook for debugging
     if (callSid) {
-      await supabaseClient
+      const { error: logError } = await supabaseClient
         .from('webhook_logs')
         .insert({
           webhook_type: 'signalwire_status',
           call_sid: callSid,
           status: callStatus || 'unknown',
-          payload: webhookData
+          payload: webhookData,
+          created_at: new Date().toISOString()
         })
+
+      if (logError) {
+        console.error('❌ Failed to log webhook:', logError)
+      } else {
+        console.log('✅ Webhook logged successfully')
+      }
     }
 
     // Handle different call statuses
-    if (callStatus) {
+    if (callStatus && callSid) {
       console.log(`📊 Processing call status: ${callStatus} for ${callSid}`)
       
-      // Handle SIP codes
-      if (sipResultCode === '603') {
-        console.log('🚫 SIP 603 Decline detected - call was actively rejected by destination')
-      }
-
       const updateData: any = {
         status: callStatus.toLowerCase(),
         updated_at: new Date().toISOString()
       }
 
+      // Add duration if call completed
       if (duration && !isNaN(parseInt(duration))) {
         updateData.duration = parseInt(duration)
+        console.log(`⏱️ Call duration: ${duration} seconds`)
       }
 
-      if (['completed', 'failed', 'busy', 'no-answer'].includes(callStatus)) {
+      // Mark call as ended for final statuses
+      if (['completed', 'failed', 'busy', 'no-answer', 'canceled'].includes(callStatus.toLowerCase())) {
         updateData.ended_at = new Date().toISOString()
         
-        if (callStatus === 'completed' && duration) {
+        // Calculate cost for completed calls
+        if (callStatus.toLowerCase() === 'completed' && duration) {
           const callDuration = parseInt(duration)
           updateData.call_cost = Math.max(0.01, (callDuration / 60) * 0.01)
+          console.log(`💰 Calculated call cost: $${updateData.call_cost}`)
         }
       }
 
-      // Update call in database
-      const { error: updateError } = await supabaseClient
+      // Update call in database using SignalWire call ID
+      const { data: updatedCall, error: updateError } = await supabaseClient
         .from('calls')
         .update(updateData)
         .eq('signalwire_call_id', callSid)
+        .select()
 
       if (updateError) {
         console.error('❌ Failed to update call:', updateError)
-      } else {
+      } else if (updatedCall && updatedCall.length > 0) {
         console.log(`✅ Call ${callSid} updated with status: ${callStatus}`)
+        console.log(`📞 Updated call record:`, updatedCall[0])
+      } else {
+        console.log(`⚠️ No call found with SignalWire ID: ${callSid}`)
       }
     }
 
-    // Generate appropriate TwiML response
-    let twimlResponse = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
-
-    // Handle specific statuses
-    switch (callStatus) {
+    // Log call status analysis
+    console.log('=== CALL STATUS ANALYSIS ===')
+    switch (callStatus?.toLowerCase()) {
       case 'initiated':
       case 'queued':
-        console.log(`📞 Call ${callStatus}`)
+        console.log(`📞 Call ${callStatus} - call is being processed`)
         break
         
       case 'ringing':
-        console.log('📞 Call is ringing')
+        console.log('📞 Call is ringing - successfully reached the recipient')
         break
         
       case 'answered':
       case 'in-progress':
-        console.log('✅ Call in progress')
+        console.log('✅ Call answered and in progress')
         break
         
       case 'completed':
         console.log('🏁 Call completed successfully')
-        break
-        
-      case 'busy':
-        console.log('📵 Call was busy')
-        if (sipResultCode === '603') {
-          console.log('   → SIP 603: Destination actively declined the call')
+        if (duration) {
+          console.log(`📊 Total call duration: ${duration} seconds`)
         }
         break
         
+      case 'busy':
+        console.log('📵 Call was busy - recipient phone is busy')
+        break
+        
       case 'no-answer':
-        console.log('📵 No answer from destination')
+        console.log('📵 No answer from recipient')
         break
         
       case 'failed':
@@ -189,14 +180,21 @@ serve(async (req) => {
         break
         
       default:
-        console.log(`ℹ️ Call status: ${callStatus}`)
+        console.log(`ℹ️ Call status: ${callStatus || 'unknown'}`)
     }
 
     // ALWAYS return 200 OK to SignalWire to prevent "unsuccessful callback" logs
     console.log('✅ Returning 200 OK to SignalWire')
-    return new Response(twimlResponse, {
+    
+    return new Response(JSON.stringify({
+      success: true,
+      message: 'Webhook processed successfully',
+      callSid: callSid,
+      status: callStatus,
+      timestamp: new Date().toISOString()
+    }), {
       status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/xml' },
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
 
   } catch (error) {
@@ -204,12 +202,14 @@ serve(async (req) => {
     console.error('Stack trace:', error.stack)
     
     // Still return 200 OK to prevent SignalWire from marking as failed
-    return new Response(
-      '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-      {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/xml' },
-      }
-    )
+    return new Response(JSON.stringify({
+      success: false,
+      error: 'Internal server error',
+      message: error.message,
+      timestamp: new Date().toISOString()
+    }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
   }
 })
