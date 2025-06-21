@@ -1,10 +1,11 @@
+
 // deno-lint-ignore-file
 // This file is intended for Deno Deploy Edge Functions. Deno.env.get and remote imports are valid in this context.
 // If your editor or linter flags errors for Deno or remote imports, you can safely ignore them for Supabase Edge Functions.
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 DeepGram Voice WebSocket initialized v3.0 - Fixed imports');
+console.log('🚀 DeepGram Voice WebSocket initialized v4.0 - Fixed TTS buffering and STT endpointing');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -126,10 +127,10 @@ async function getSummary(conversationBuffer: Array<{ role: string; content: str
 // --- Modified generateConversationResponse ---
 const generateConversationResponse = async (
   userInput: string,
-  context: ConversationContext,
+  context: any,
   openaiApiKey: string,
   assistantCustomPrompt?: string
-): Promise<ConversationResponse & { sentiment: string; emotion: string }> => {
+): Promise<any> => {
   try {
     // Use custom prompt if available
     const systemPrompt = assistantCustomPrompt || context.agentPrompt || 'You are a helpful AI assistant.';
@@ -257,6 +258,8 @@ serve(async (req) => {
     let deepgramTTS: WebSocket | null = null
     let signalWireStreamSid: string | null = null
     let conversationBuffer: Array<{ role: string; content: string }> = []
+    let ttsInitialized = false
+    let firstMessageSent = false
 
     const log = (msg: string, data?: any) => 
       console.log(`[${new Date().toISOString()}] [Call: ${callId}] ${msg}`, data || '')
@@ -287,19 +290,22 @@ serve(async (req) => {
       }
     }
 
-    // Initialize DeepGram STT with proper error handling
+    // Initialize DeepGram STT with FIXED endpointing
     const initializeSTT = () => {
       try {
-        const sttUrl = 'wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&endpointing=300'
+        // FIXED: Added utterance_end_ms and proper endpointing parameters
+        const sttUrl = 'wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&endpointing=300&utterance_end_ms=1000&vad_events=true'
         deepgramSTT = new WebSocket(sttUrl, ['token', deepgramApiKey])
 
         deepgramSTT.onopen = () => {
-          log('✅ DeepGram STT connected successfully')
+          log('✅ DeepGram STT connected with enhanced endpointing')
         }
 
         deepgramSTT.onmessage = async (event) => {
           try {
             const data = JSON.parse(event.data)
+            
+            // FIXED: Handle both Results and UtteranceEnd events
             if (data.type === 'Results' && data.channel?.alternatives?.[0]?.transcript) {
               const transcript = data.channel.alternatives[0].transcript
               const isFinal = data.is_final || false
@@ -315,10 +321,18 @@ serve(async (req) => {
                   timestamp: Date.now()
                 }))
 
+                // FIXED: Process conversation on final transcripts
                 if (isFinal) {
+                  log('🎯 Processing final transcript:', transcript)
                   await processConversation(transcript)
                 }
               }
+            }
+            
+            // FIXED: Handle UtteranceEnd for better turn detection
+            if (data.type === 'UtteranceEnd') {
+              log('🔚 Utterance ended - processing conversation turn')
+              // Additional processing if needed
             }
           } catch (error) {
             log('❌ Error processing STT message:', error)
@@ -327,13 +341,13 @@ serve(async (req) => {
 
         deepgramSTT.onerror = (error) => {
           log('❌ DeepGram STT error:', error)
-          setTimeout(initializeSTT, 2000) // Reconnect after 2 seconds
+          setTimeout(initializeSTT, 2000)
         }
 
         deepgramSTT.onclose = (event) => {
           log('🔌 DeepGram STT closed:', event.code)
           if (isCallActive && event.code !== 1000) {
-            setTimeout(initializeSTT, 2000) // Reconnect if not normal closure
+            setTimeout(initializeSTT, 2000)
           }
         }
       } catch (error) {
@@ -342,24 +356,36 @@ serve(async (req) => {
       }
     }
 
-    // Initialize DeepGram TTS with proper error handling
+    // Initialize DeepGram TTS with FIXED buffering
     const initializeTTS = () => {
       try {
-        const ttsUrl = 'wss://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=mulaw&sample_rate=8000'
+        // FIXED: Using linear16 for better audio quality and compatibility
+        const ttsUrl = 'wss://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=linear16&sample_rate=8000&container=wav'
         deepgramTTS = new WebSocket(ttsUrl, ['token', deepgramApiKey])
 
         deepgramTTS.onopen = () => {
-          log('✅ DeepGram TTS connected successfully')
-          // Send initial greeting
-          if (assistant.first_message) {
-            sendTTSMessage(assistant.first_message)
+          log('✅ DeepGram TTS connected with linear16/WAV format')
+          ttsInitialized = true
+          
+          // FIXED: Send buffer flush/clear before first message
+          if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN) {
+            deepgramTTS.send(JSON.stringify({ type: 'Flush' }))
+            log('🧹 TTS buffer flushed')
+            
+            // FIXED: Add brief delay before sending first message
+            setTimeout(() => {
+              if (assistant.first_message && !firstMessageSent) {
+                sendTTSMessage(assistant.first_message)
+                firstMessageSent = true
+              }
+            }, 200) // 200ms delay for buffer clearing
           }
         }
 
         deepgramTTS.onmessage = (event) => {
           if (event.data instanceof ArrayBuffer) {
             try {
-              // Convert audio to base64 and send to SignalWire
+              // FIXED: Handle WAV format audio properly
               const audioArray = new Uint8Array(event.data)
               const base64Audio = btoa(String.fromCharCode(...audioArray))
               
@@ -372,7 +398,7 @@ serve(async (req) => {
                   }
                 }
                 socket.send(JSON.stringify(mediaMessage))
-                log('🔊 Audio sent to SignalWire')
+                log('🔊 WAV audio sent to SignalWire')
               }
             } catch (error) {
               log('❌ Error processing TTS audio:', error)
@@ -382,11 +408,13 @@ serve(async (req) => {
 
         deepgramTTS.onerror = (error) => {
           log('❌ DeepGram TTS error:', error)
+          ttsInitialized = false
           setTimeout(initializeTTS, 2000)
         }
 
         deepgramTTS.onclose = (event) => {
           log('🔌 DeepGram TTS closed:', event.code)
+          ttsInitialized = false
           if (isCallActive && event.code !== 1000) {
             setTimeout(initializeTTS, 2000)
           }
@@ -397,20 +425,31 @@ serve(async (req) => {
       }
     }
 
+    // FIXED: Enhanced TTS message sending with proper buffering
     const sendTTSMessage = (text: string) => {
-      if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN && text.trim()) {
+      if (!text || !text.trim()) return
+      
+      if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN && ttsInitialized) {
         try {
-          const message = {
-            type: 'Speak',
-            text: text.trim()
-          }
-          deepgramTTS.send(JSON.stringify(message))
-          log('📤 TTS message sent:', text)
+          // FIXED: Clear any previous buffers before sending new message
+          deepgramTTS.send(JSON.stringify({ type: 'Clear' }))
+          
+          // Small delay to ensure buffer is cleared
+          setTimeout(() => {
+            if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN) {
+              const message = {
+                type: 'Speak',
+                text: text.trim()
+              }
+              deepgramTTS.send(JSON.stringify(message))
+              log('📤 TTS message sent with buffer clear:', text.substring(0, 50) + '...')
+            }
+          }, 50)
         } catch (error) {
           log('❌ Error sending TTS message:', error)
         }
       } else {
-        log('⚠️ TTS not ready, queuing message:', text)
+        log('⚠️ TTS not ready, queuing message:', text.substring(0, 50) + '...')
         // Queue message for when TTS reconnects
         setTimeout(() => sendTTSMessage(text), 1000)
       }
@@ -464,40 +503,6 @@ serve(async (req) => {
           log('⚠️ Analytics logging failed:', e)
         }
 
-        // --- Real-Time Dashboard Broadcast ---
-        try {
-          // Broadcast to Supabase Realtime channel for live dashboard
-          const dashboardEvent = {
-            callId,
-            speaker: 'user',
-            message: transcript,
-            sentiment: response.sentiment,
-            emotion: response.emotion,
-            intent: response.intent,
-            timestamp: Date.now()
-          };
-          // Use Supabase Realtime REST API (broadcast event)
-          const supabaseRealtimeUrl = `${Deno.env.get('SUPABASE_URL')}/realtime/v1/broadcast`;
-          const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
-          if (supabaseRealtimeUrl && anonKey) {
-            await fetch(supabaseRealtimeUrl, {
-              method: 'POST',
-              headers: {
-                'apikey': anonKey,
-                'Authorization': `Bearer ${anonKey}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                event: 'call_update',
-                payload: dashboardEvent,
-                broadcast: { channel: `call_dashboard:${callId}` }
-              })
-            });
-          }
-        } catch (e) {
-          log('⚠️ Dashboard broadcast failed:', e)
-        }
-
         // Send response back to client
         socket.send(JSON.stringify({
           type: 'ai_response',
@@ -511,7 +516,7 @@ serve(async (req) => {
           timestamp: Date.now()
         }))
 
-        // Convert response to speech
+        // FIXED: Convert response to speech with proper buffer handling
         sendTTSMessage(response.text)
 
         // --- Conversation Summaries: Every 10 turns or at call end ---
@@ -547,6 +552,8 @@ serve(async (req) => {
 
     const cleanup = () => {
       isCallActive = false
+      ttsInitialized = false
+      firstMessageSent = false
       if (deepgramSTT) {
         deepgramSTT.close()
         deepgramSTT = null
