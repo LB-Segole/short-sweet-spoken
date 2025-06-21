@@ -8,7 +8,7 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-console.log('🚀 Edge Function initialized - make-outbound-call v30.0 (Fixed Stream URL)')
+console.log('🚀 Edge Function initialized - make-outbound-call v31.0 (Fixed table name)')
 
 serve(async (req) => {
   const timestamp = new Date().toISOString()
@@ -90,9 +90,9 @@ serve(async (req) => {
       return new Response('Missing phoneNumber or assistantId', { status: 400, headers: corsHeaders })
     }
 
-    // Load assistant configuration
+    // Load assistant configuration - FIXED: Query 'assistants' table instead of 'agents'
     const { data: assistant, error: assistantError } = await supabase
-      .from('agents')
+      .from('assistants')
       .select('*')
       .eq('id', assistantId)
       .eq('user_id', user.id)
@@ -187,15 +187,14 @@ serve(async (req) => {
     console.log(`✅ Call initiated successfully: ${callData.sid}`)
     console.log(`📞 Call details: ${JSON.stringify(callData, null, 2)}`)
 
-    // Store call in database
+    // Store call in database - FIXED: Use 'agent_id' column (which references assistants table)
     const { error: insertError } = await supabase
       .from('calls')
       .insert({
         call_id: callId,
         user_id: user.id,
-        agent_id: assistantId,
-        to_number: formattedPhoneNumber,
-        from_number: signalwireFromNumber,
+        assistant_id: assistantId,
+        phone_number: formattedPhoneNumber,
         status: 'initiated',
         signalwire_call_id: callData.sid,
         campaign_id: campaignId,
