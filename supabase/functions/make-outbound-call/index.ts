@@ -1,3 +1,4 @@
+
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -7,262 +8,125 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-console.log('🚀 Edge Function initialized - make-outbound-call v34.0 (Fixed DB column issue)')
-
 serve(async (req) => {
-  const timestamp = new Date().toISOString()
-  
-  console.log(`📞 make-outbound-call invoked: {
-  method: "${req.method}",
-  url: "${req.url}",
-  timestamp: "${timestamp}",
-  headers: ${JSON.stringify(Object.fromEntries(req.headers.entries()))}
-}`)
-
   if (req.method === 'OPTIONS') {
-    console.log('🔄 Handling CORS preflight request - returning 200')
     return new Response(null, { headers: corsHeaders })
   }
 
   try {
-    // Environment validation - FIXED: Use SIGNALWIRE_SPACE_URL instead of SIGNALWIRE_SPACE
-    const requiredEnvVars = {
-      supabaseUrl: Deno.env.get('SUPABASE_URL'),
-      serviceKey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
-      signalwireProjectId: Deno.env.get('SIGNALWIRE_PROJECT_ID'),
-      signalwireToken: Deno.env.get('SIGNALWIRE_TOKEN'),
-      signalwireSpace: Deno.env.get('SIGNALWIRE_SPACE_URL'), // FIXED: Use correct env var name
-      signalwirePhone: Deno.env.get('SIGNALWIRE_PHONE_NUMBER')
-    }
-
-    console.log('🔧 Environment Check: {')
-    for (const [key, value] of Object.entries(requiredEnvVars)) {
-      console.log(`  ${key}: "${value ? 'Present' : 'Missing'}"`)
-    }
-    console.log('}')
-
-    // Validate all required environment variables are present
-    const missingVars = Object.entries(requiredEnvVars)
-      .filter(([key, value]) => !value)
-      .map(([key]) => key)
-
-    if (missingVars.length > 0) {
-      console.error('❌ Missing required environment variables:', missingVars)
-      return new Response(JSON.stringify({
-        success: false,
-        error: 'Missing required environment variables',
-        missingVars: missingVars,
-        timestamp: new Date().toISOString()
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
-    }
-
-    // Format SignalWire phone number - FIXED: Single formatPhoneNumber function
-    const formatPhoneNumber = (phone: string) => phone.replace(/[^\d+]/g, '')
-    const signalwireFromNumber = formatPhoneNumber(requiredEnvVars.signalwirePhone || '')
-    console.log(`📞 Formatted SignalWire phone number: ${requiredEnvVars.signalwirePhone} → ${signalwireFromNumber}`)
-
-    // Extract SignalWire space name from URL (e.g., "myspace.signalwire.com" → "myspace")
-    let signalwireSpaceName = requiredEnvVars.signalwireSpace || ''
-    if (signalwireSpaceName.includes('.signalwire.com')) {
-      signalwireSpaceName = signalwireSpaceName.split('.signalwire.com')[0]
-      if (signalwireSpaceName.startsWith('https://')) {
-        signalwireSpaceName = signalwireSpaceName.replace('https://', '')
-      }
-    }
-    console.log(`🌐 SignalWire space name extracted: ${signalwireSpaceName}`)
-
-    // Initialize Supabase client
-    const supabase = createClient(
-      requiredEnvVars.supabaseUrl!,
-      requiredEnvVars.serviceKey!
-    )
-
-    // Get authenticated user
-    const authHeader = req.headers.get('Authorization')
-    console.log(`🔐 Auth header: ${authHeader ? 'Present' : 'Missing'}`)
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser(
-      authHeader?.replace('Bearer ', '') || ''
-    )
-
-    if (authError || !user) {
-      console.error('❌ Authentication failed:', authError)
-      return new Response('Unauthorized', { status: 401, headers: corsHeaders })
-    }
-
-    console.log(`✅ User authenticated: ${user.id} (${user.email})`)
-
-    // Parse request body
-    const bodyText = await req.text()
-    console.log(`📋 Request body text: ${bodyText}`)
-
-    const { phoneNumber, assistantId, campaignId, contactId } = JSON.parse(bodyText)
+    const { agentId, phoneNumber, userId } = await req.json()
     
-    console.log(`📋 Request parsed: {
-  phoneNumber: "${phoneNumber?.replace(/\d(?=\d{4})/g, '*') || 'Missing'}",
-  assistantId: "${assistantId || 'null'}",
-  campaignId: "${campaignId || 'null'}",
-  contactId: "${contactId || 'null'}"
-}`)
-
-    // Format destination phone number
-    const formattedPhoneNumber = formatPhoneNumber(phoneNumber)
-    console.log(`📞 Formatted destination phone number: ${phoneNumber} → ${formattedPhoneNumber}`)
-
-    if (!formattedPhoneNumber || !assistantId) {
-      console.error('❌ Missing required fields')
-      return new Response('Missing phoneNumber or assistantId', { status: 400, headers: corsHeaders })
+    if (!agentId || !phoneNumber) {
+      throw new Error('Agent ID and phone number are required')
     }
 
-    // Load assistant configuration
-    const { data: assistant, error: assistantError } = await supabase
-      .from('assistants')
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    )
+
+    // Get voice agent configuration
+    const { data: agent, error: agentError } = await supabase
+      .from('voice_agents')
       .select('*')
-      .eq('id', assistantId)
-      .eq('user_id', user.id)
+      .eq('id', agentId)
+      .eq('is_active', true)
       .single()
 
-    if (assistantError || !assistant) {
-      console.error('❌ Assistant not found:', assistantError)
-      return new Response('Assistant not found', { status: 404, headers: corsHeaders })
+    if (agentError || !agent) {
+      throw new Error('Voice agent not found or inactive')
     }
 
-    console.log(`✅ Assistant loaded: ${assistant.name} (ID: ${assistant.id})`)
+    // SignalWire configuration
+    const signalwireSpaceUrl = Deno.env.get('SIGNALWIRE_SPACE_URL')
+    const signalwireProjectId = Deno.env.get('SIGNALWIRE_PROJECT_ID')
+    const signalwireToken = Deno.env.get('SIGNALWIRE_TOKEN')
+    const signalwirePhoneNumber = Deno.env.get('SIGNALWIRE_PHONE_NUMBER')
 
-    // Generate unique call ID
-    const callId = crypto.randomUUID()
-    console.log(`🆔 Generated call ID: ${callId}`)
+    if (!signalwireSpaceUrl || !signalwireProjectId || !signalwireToken || !signalwirePhoneNumber) {
+      throw new Error('SignalWire configuration missing')
+    }
 
-    // Configure URLs
-    const baseUrl = `https://${signalwireSpaceName}.signalwire.com`
-    const statusCallbackUrl = `https://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/call-webhook`
-    const voiceWebSocketUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/voice-websocket`
-    
-    console.log(`🌐 URLs configured: {
-  baseUrl: "${baseUrl}",
-  statusCallback: "${statusCallbackUrl}",
-  voiceWebSocketUrl: "${voiceWebSocketUrl}"
-}`)
+    // Create SWML for the call
+    const webhookUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/signalwire-webhook`
+    const streamUrl = `wss://${Deno.env.get('SUPABASE_URL')?.replace('https://', '')}/functions/v1/deepgram-voice-agent?agentId=${agentId}`
 
-    // Generate proper TwiML
-    const twimlContent = `<?xml version="1.0" encoding="UTF-8"?>
+    const swml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice">${assistant.first_message || 'Hello! How can I help you today?'}</Say>
-  <Pause length="1"/>
+  <Say voice="alice">Hello! Connecting you to ${agent.name}.</Say>
   <Connect>
-    <Stream url="${voiceWebSocketUrl}" name="voice_stream">
-      <Parameter name="callId" value="${callId}"/>
-      <Parameter name="assistantId" value="${assistantId}"/>
-      <Parameter name="userId" value="${user.id}"/>
-    </Stream>
+    <Stream url="${streamUrl}" />
   </Connect>
-  <Say voice="alice">I'm having trouble connecting to my conversation system. Please try calling back in a moment.</Say>
-  <Hangup/>
 </Response>`
 
-    console.log('📄 TwiML generated successfully')
-
-    // Prepare SignalWire API call
-    const signalwireUrl = `${baseUrl}/api/laml/2010-04-01/Accounts/${requiredEnvVars.signalwireProjectId}/Calls.json`
-    const credentials = btoa(`${requiredEnvVars.signalwireProjectId}:${requiredEnvVars.signalwireToken}`)
-
-    console.log(`📡 Making SignalWire API call: {
-  url: "${signalwireUrl}",
-  to: "${formattedPhoneNumber}",
-  from: "${signalwireFromNumber}",
-  timeout: "30"
-}`)
-
-    const callPayload = new URLSearchParams({
-      To: formattedPhoneNumber,
-      From: signalwireFromNumber,
-      Twiml: twimlContent,
-      StatusCallback: statusCallbackUrl,
-      StatusCallbackMethod: 'POST',
-      StatusCallbackEvent: 'initiated',
-      Timeout: '30',
-      MachineDetection: 'Enable',
-      MachineDetectionTimeout: '15'
-    })
-
-    // Add additional status callback events
-    callPayload.append('StatusCallbackEvent', 'ringing')
-    callPayload.append('StatusCallbackEvent', 'answered')
-    callPayload.append('StatusCallbackEvent', 'completed')
-
-    // Make the call
-    const response = await fetch(signalwireUrl, {
+    // Make the outbound call
+    const callResponse = await fetch(`https://${signalwireSpaceUrl}/api/laml/2010-04-01/Accounts/${signalwireProjectId}/Calls.json`, {
       method: 'POST',
       headers: {
-        'Authorization': `Basic ${credentials}`,
+        'Authorization': `Basic ${btoa(`${signalwireProjectId}:${signalwireToken}`)}`,
         'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: callPayload
-    })
-
-    console.log(`📊 SignalWire Response: ${response.status} ${response.statusText}`)
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error('❌ SignalWire API Error:', errorText)
-      return new Response(`SignalWire API Error: ${response.status}`, { status: 500, headers: corsHeaders })
-    }
-
-    const callData = await response.json()
-    console.log(`✅ Call initiated successfully: ${callData.sid}`)
-
-    // Store call in database - FIXED: Use correct column names
-    const { error: insertError } = await supabase
-      .from('calls')
-      .insert({
-        id: callId, // Use 'id' instead of 'call_id'
-        user_id: user.id,
-        assistant_id: assistantId,
-        phone_number: formattedPhoneNumber,
-        status: 'initiated',
-        signalwire_call_id: callData.sid,
-        campaign_id: campaignId,
-        contact_id: contactId,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+      body: new URLSearchParams({
+        To: phoneNumber,
+        From: signalwirePhoneNumber,
+        Twiml: swml,
+        StatusCallback: `${webhookUrl}?agentId=${agentId}`,
+        StatusCallbackMethod: 'POST'
       })
-
-    if (insertError) {
-      console.error('❌ Database insert error:', insertError)
-    } else {
-      console.log('✅ Call record stored in database')
-    }
-
-    const successResponse = {
-      success: true,
-      callSid: callData.sid,
-      callId: callId,
-      message: 'Call initiated successfully - please check your phone',
-      timestamp: new Date().toISOString()
-    }
-
-    console.log(`✅ Returning success response`)
-
-    return new Response(JSON.stringify(successResponse), {
-      status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
+
+    if (!callResponse.ok) {
+      const error = await callResponse.text()
+      throw new Error(`SignalWire API error: ${callResponse.status} ${error}`)
+    }
+
+    const callData = await callResponse.json()
+
+    // Create call session record
+    const { data: session, error: sessionError } = await supabase
+      .from('call_sessions')
+      .insert({
+        agent_id: agentId,
+        user_id: userId,
+        session_type: 'outbound',
+        phone_number: phoneNumber,
+        status: 'active',
+        metadata: {
+          signalwire_call_sid: callData.sid,
+          agent_name: agent.name
+        }
+      })
+      .select()
+      .single()
+
+    if (sessionError) {
+      console.error('Error creating call session:', sessionError)
+    }
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        call_sid: callData.sid,
+        session_id: session?.id,
+        agent_name: agent.name,
+        phone_number: phoneNumber
+      }),
+      {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 200,
+      }
+    )
 
   } catch (error) {
-    console.error('💥 Critical error:', error)
-    console.error('Stack trace:', error.stack)
-    
-    return new Response(JSON.stringify({
-      success: false,
-      error: 'Internal server error',
-      message: error.message,
-      timestamp: new Date().toISOString()
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    })
+    console.error('Outbound call error:', error)
+    return new Response(
+      JSON.stringify({
+        error: error.message
+      }),
+      {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 500,
+      }
+    )
   }
 })
