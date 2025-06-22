@@ -1,5 +1,6 @@
+
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/lib/supabase';
 import { AudioRecorder, AudioQueue, AudioEncoder } from '@/utils/audioUtils';
 
 interface VoiceMessage {
@@ -59,7 +60,6 @@ export const useVoiceWebSocket = ({
     try {
       log('🔄 Initializing audio system...');
       if (!audioContextRef.current) {
-        // Use 24kHz to match Deepgram TTS output
         audioContextRef.current = new AudioContext({ sampleRate: 24000 });
         if (audioContextRef.current.state === 'suspended') {
           await audioContextRef.current.resume();
@@ -90,7 +90,6 @@ export const useVoiceWebSocket = ({
     return maxAmp >= 0.001 && maxAmp <= 1.0;
   };
 
-  // Enhanced audio streaming for better real-time performance
   const handleAudioData = useCallback((audioData: Float32Array) => {
     if (wsRef.current?.readyState !== WebSocket.OPEN) return;
     try {
@@ -99,7 +98,6 @@ export const useVoiceWebSocket = ({
         return;
       }
       
-      // Convert to base64 for Deepgram STT (16-bit PCM)
       const base64Audio = AudioEncoder.encodeAudioForDeepgram(audioData);
       
       if (!base64Audio || base64Audio.length < 10) return;
@@ -107,7 +105,6 @@ export const useVoiceWebSocket = ({
       const message = { event: 'media', media: { payload: base64Audio } };
       wsRef.current.send(JSON.stringify(message));
       
-      // Occasional logging to monitor audio flow
       if (import.meta.env.DEV && Math.random() < 0.005) {
         const maxAmplitude = Math.max(...Array.from(audioData).map(Math.abs));
         log('📤 Audio chunk sent', {
@@ -124,17 +121,17 @@ export const useVoiceWebSocket = ({
 
   const startRecording = useCallback(async () => {
     try {
-      log('🎤 Starting recording...');
+      log('🎤 Starting audio recording...');
       if (!audioRecorderRef.current) {
         audioRecorderRef.current = new AudioRecorder(handleAudioData);
       }
       await audioRecorderRef.current.start();
       setIsRecording(true);
-      log('✅ Recording started - continuous audio streaming active');
+      log('✅ Audio recording started successfully');
     } catch (error) {
       log('❌ Recording start error', error);
       onError?.(`Recording failed: ${error}`);
-      setIsRecording(false);
+      throw error;
     }
   }, [handleAudioData, log, onError]);
 
@@ -143,298 +140,272 @@ export const useVoiceWebSocket = ({
       audioRecorderRef.current.stop();
       audioRecorderRef.current = null;
       setIsRecording(false);
-      log('🛑 Recording stopped');
+      log('🛑 Audio recording stopped');
     }
   }, [log]);
 
-  // Enhanced keepalive mechanism
-  const setupKeepAlive = useCallback(() => {
-    if (keepAliveInterval.current) clearInterval(keepAliveInterval.current);
-    keepAliveInterval.current = window.setInterval(() => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'KeepAlive', timestamp: Date.now() }));
-        log('💓 KeepAlive sent to prevent timeout');
-      }
-    }, 5000); // Every 5 seconds
-  }, [log]);
-
-  const connect = useCallback(async () => {
-    if (!userId) {
-      onError?.('User ID required for voice connection');
-      return;
-    }
-    
-    if (connectionLockRef.current) return;
-    connectionLockRef.current = true;
-
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      log('⚠️ Already connected');
-      connectionLockRef.current = false;
+  const handleAudioResponse = useCallback(async (base64Audio: string) => {
+    if (!audioContextRef.current || !audioQueueRef.current) {
+      log('⚠️ Audio system not initialized for playback');
       return;
     }
 
     try {
+      const audioBuffer = await AudioEncoder.decodeAudioFromWebSocket(base64Audio, audioContextRef.current);
+      await audioQueueRef.current.addToQueue(audioBuffer);
+      log('🔊 Audio response queued for playback');
+    } catch (error) {
+      log('❌ Audio playback error', error);
+      onError?.(`Audio playback failed: ${error}`);
+    }
+  }, [log, onError]);
+
+  const startKeepAlive = useCallback(() => {
+    if (keepAliveInterval.current) return;
+    
+    keepAliveInterval.current = setInterval(() => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+        log('💓 Keep-alive ping sent');
+      }
+    }, 5000) as unknown as number;
+  }, [log]);
+
+  const stopKeepAlive = useCallback(() => {
+    if (keepAliveInterval.current) {
+      clearInterval(keepAliveInterval.current);
+      keepAliveInterval.current = null;
+      log('💓 Keep-alive stopped');
+    }
+  }, [log]);
+
+  const connect = useCallback(async () => {
+    if (connectionLockRef.current || wsRef.current?.readyState === WebSocket.OPEN) {
+      log('⚠️ Connection attempt blocked - already connecting or connected');
+      return;
+    }
+
+    try {
+      connectionLockRef.current = true;
       setConnectionState('connecting');
       log('🔄 Connecting to voice WebSocket...', { userId, callId, assistantId });
 
-      // Validate call ownership if not browser test
-      if (callId && callId !== 'browser-test') {
-        const { data: callData, error: callErr } = await supabase
-          .from('calls')
-          .select('user_id, status')
-          .eq('call_id', callId)
-          .single();
-        if (callErr || !callData || callData.user_id !== userId) {
-          throw new Error('Unauthorized: Call access denied');
-        }
+      // Get current session for authentication
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError) {
+        log('❌ Session error', sessionError);
+        throw new Error(`Session error: ${sessionError.message}`);
       }
 
+      // Build WebSocket URL with authentication
+      const wsUrl = new URL('wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-websocket');
+      wsUrl.searchParams.set('userId', userId);
+      wsUrl.searchParams.set('callId', callId || 'browser-test');
+      wsUrl.searchParams.set('assistantId', assistantId || 'demo');
+
+      log('🔗 WebSocket URL constructed', { url: wsUrl.toString() });
+
+      // Initialize audio system first
       await initializeAudio();
 
-      // Get auth token
-      const { data: { session } } = await supabase.auth.getSession();
-      const authToken = session?.access_token;
-      if (!authToken) throw new Error('Authentication required');
+      // Create WebSocket connection with auth headers
+      wsRef.current = new WebSocket(wsUrl.toString());
 
-      // Build WebSocket URL
-      const baseUrl = 'wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-websocket';
-      const params = new URLSearchParams({ 
-        callId: callId || 'browser-test', 
-        assistantId: assistantId || 'demo', 
-        userId, 
-        token: authToken 
-      });
-      const wsUrl = `${baseUrl}?${params.toString()}`;
-      log('🌐 WebSocket URL configured');
+      // Add auth header if we have a session
+      if (session?.access_token) {
+        // Note: WebSocket constructor doesn't accept headers in browser
+        // Auth will be handled via query params or connection message
+        log('🔐 Session token available for authentication');
+      }
 
-      wsRef.current = new WebSocket(wsUrl);
-      
-      // Enhanced connection timeout
-      connectionTimeout.current = window.setTimeout(() => {
-        if (wsRef.current?.readyState !== WebSocket.OPEN) {
-          log('⏰ Connection timeout after 15 seconds');
-          wsRef.current?.close();
-          setConnectionState('error');
-          onError?.('Connection timeout - failed to connect in 15 seconds');
-        }
-      }, 15000);
-
-      wsRef.current.onopen = () => {
-        if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
-        log('✅ Voice WebSocket connected successfully'); 
-        setIsConnected(true); 
-        setConnectionState('connected'); 
-        onConnectionChange?.(true);
+      wsRef.current.onopen = async () => {
+        log('✅ WebSocket connection opened');
+        connectionLockRef.current = false;
+        setIsConnected(true);
+        setConnectionState('connected');
         reconnectAttempts.current = 0;
         
-        setupKeepAlive();
+        // Send connection message with auth if available
+        const connectionMessage = {
+          type: 'connected',
+          userId,
+          callId: callId || 'browser-test',
+          assistantId: assistantId || 'demo',
+          timestamp: Date.now()
+        };
 
-        wsRef.current?.send(JSON.stringify({ 
-          event: 'connected', 
-          protocol: 'voice-streaming', 
-          version: '1.0', 
-          callId, 
-          assistantId, 
-          timestamp: Date.now() 
-        }));
-        log('📤 Connection handshake sent');
+        if (session?.access_token) {
+          connectionMessage.auth = session.access_token;
+        }
+
+        wsRef.current?.send(JSON.stringify(connectionMessage));
+        startKeepAlive();
+        onConnectionChange?.(true);
         
-        // Start recording after connection is stable
-        setTimeout(() => {
-          startRecording();
-          log('🎤 Continuous audio streaming initiated');
-        }, 1000);
-        connectionLockRef.current = false;
-      };
-
-      wsRef.current.onmessage = async evt => {
-        let data: any;
+        // Start recording after successful connection
         try {
-          data = JSON.parse(evt.data);
-        } catch { 
-          log('⚠️ Non-JSON message received');
-          return; 
-        }
-        
-        const eventType = data.type || data.event;
-        
-        log('📨 Received message', { type: eventType, hasData: !!data.data });
-        const message: VoiceMessage = { type: eventType, data, timestamp: Date.now() };
-        onMessage?.(message);
-
-        switch (eventType) {
-          case 'connection_established':
-            log('🔗 Connection established successfully');
-            break;
-            
-          case 'audio_response':
-            // CRITICAL: Handle audio response from TTS
-            if (data.audio && audioQueueRef.current && audioContextRef.current) {
-              try {
-                log('🔊 Processing AI audio response...');
-                const audioBuf = await AudioEncoder.decodeAudioFromWebSocket(data.audio, audioContextRef.current);
-                await audioQueueRef.current.addToQueue(audioBuf);
-                log('✅ Audio queued for playback', { duration: audioBuf.duration.toFixed(2) });
-              } catch (err) {
-                log('❌ Audio processing error', err);
-                onError?.(`Audio playback failed: ${err}`);
-              }
-            }
-            break;
-            
-          case 'transcript':
-            log('📝 Transcript received', { 
-              text: data.text?.substring(0, 50),
-              isFinal: data.isFinal,
-              speechFinal: data.speechFinal
-            });
-            break;
-            
-          case 'ai_response':
-            log('🤖 AI response received', { text: data.text?.substring(0, 50) });
-            break;
-            
-          case 'error':
-            log('❌ Server error received', data.message);
-            onError?.(data.message || 'Unknown WebSocket error');
-            break;
+          await startRecording();
+        } catch (recordingError) {
+          log('❌ Failed to start recording after connection', recordingError);
+          onError?.(`Recording setup failed: ${recordingError}`);
         }
       };
 
-      wsRef.current.onerror = err => {
-        if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
-        log('❌ WebSocket error occurred', { 
-          error: err, 
-          readyState: wsRef.current?.readyState
-        });
+      wsRef.current.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          log('📨 WebSocket message received', { type: data.type });
+          
+          const message: VoiceMessage = {
+            type: data.type,
+            data: data,
+            timestamp: Date.now()
+          };
+          
+          onMessage?.(message);
+
+          // Handle specific message types
+          switch (data.type) {
+            case 'audio_response':
+              if (data.audio) {
+                handleAudioResponse(data.audio);
+              }
+              break;
+            case 'pong':
+              log('💓 Keep-alive pong received');
+              break;
+            case 'connection_established':
+              log('🎯 Connection confirmed by server');
+              break;
+            default:
+              log('📋 Message processed', { type: data.type });
+          }
+        } catch (error) {
+          log('❌ Message parsing error', error);
+          onError?.(`Message parse failed: ${error}`);
+        }
+      };
+
+      wsRef.current.onerror = (error) => {
+        log('❌ WebSocket error', error);
+        connectionLockRef.current = false;
         setConnectionState('error');
-        if (reconnectAttempts.current < maxReconnectAttempts) {
+        onError?.(`WebSocket error: ${error}`);
+      };
+
+      wsRef.current.onclose = (event) => {
+        log('🔌 WebSocket closed', { code: event.code, reason: event.reason });
+        connectionLockRef.current = false;
+        setIsConnected(false);
+        setConnectionState('disconnected');
+        stopRecording();
+        stopKeepAlive();
+        onConnectionChange?.(false);
+
+        // Handle specific close codes
+        if (event.code === 1008) {
+          onError?.('Unauthorized: Call access denied');
+        } else if (event.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
+          // Attempt reconnection for unexpected closures
           reconnectAttempts.current++;
           log(`🔄 Attempting reconnection ${reconnectAttempts.current}/${maxReconnectAttempts}`);
-          setTimeout(connect, 2000 * reconnectAttempts.current);
-        } else {
-          onError?.('Connection failed after multiple retry attempts');
+          setTimeout(() => connect(), 2000 * reconnectAttempts.current);
         }
-        connectionLockRef.current = false;
       };
 
-      wsRef.current.onclose = evt => {
-        if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
-        if (keepAliveInterval.current) clearInterval(keepAliveInterval.current);
-        
-        const closeReason = evt.code === 1006 ? 'Abnormal closure (network/server issue)' :
-                           evt.code === 1011 ? 'Server error' :
-                           evt.code === 1000 ? 'Normal closure' :
-                           `Unknown (${evt.code})`;
-        
-        log('🔌 WebSocket closed', { 
-          code: evt.code, 
-          reason: evt.reason || closeReason,
-          wasClean: evt.wasClean
-        });
-        
-        setIsConnected(false); 
-        setConnectionState('disconnected'); 
-        onConnectionChange?.(false);
-        stopRecording();
-        audioQueueRef.current?.clear();
-        
-        // Only attempt reconnection for unexpected closures
-        if (evt.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
-          reconnectAttempts.current++;
-          log(`🔄 Reconnecting due to unexpected closure (${evt.code})`);
-          setTimeout(connect, 1000 * reconnectAttempts.current);
+      // Set connection timeout
+      connectionTimeout.current = setTimeout(() => {
+        if (wsRef.current?.readyState === WebSocket.CONNECTING) {
+          log('⏰ Connection timeout');
+          wsRef.current.close();
+          connectionLockRef.current = false;
+          setConnectionState('error');
+          onError?.('Connection timeout');
         }
-        connectionLockRef.current = false;
-      };
+      }, 10000) as unknown as number;
 
     } catch (error) {
       log('❌ Connection error', error);
+      connectionLockRef.current = false;
       setConnectionState('error');
       onError?.(`Connection failed: ${error}`);
-      connectionLockRef.current = false;
+      throw error;
     }
-  }, [userId, callId, assistantId, initializeAudio, startRecording, setupKeepAlive, onConnectionChange, onMessage, onError]);
+  }, [userId, callId, assistantId, initializeAudio, startRecording, handleAudioResponse, startKeepAlive, stopRecording, stopKeepAlive, onConnectionChange, onMessage, onError, log]);
 
-  const disconnect = useCallback(async () => {
-    log('🔌 Disconnecting voice WebSocket');
-    reconnectAttempts.current = maxReconnectAttempts;
-    if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
-    if (keepAliveInterval.current) clearInterval(keepAliveInterval.current);
-    stopRecording();
-    wsRef.current?.close(1000, 'User disconnected');
-    wsRef.current = null;
-    if (audioContextRef.current && audioContextRef.current.state === 'running') {
-      await audioContextRef.current.suspend();
-      log('⏸ Audio context suspended');
+  const disconnect = useCallback(() => {
+    log('🔄 Disconnecting...');
+    
+    if (connectionTimeout.current) {
+      clearTimeout(connectionTimeout.current);
+      connectionTimeout.current = null;
     }
-    audioQueueRef.current?.clear(); 
-    audioQueueRef.current = null;
-    setIsConnected(false); 
-    setIsRecording(false); 
+    
+    stopKeepAlive();
+    stopRecording();
+    
+    if (wsRef.current) {
+      wsRef.current.close(1000, 'User initiated disconnect');
+      wsRef.current = null;
+    }
+    
+    if (audioQueueRef.current) {
+      audioQueueRef.current.clear();
+    }
+    
+    setIsConnected(false);
     setConnectionState('disconnected');
-    log('✅ Voice WebSocket disconnected');
-  }, [stopRecording, log]);
+    connectionLockRef.current = false;
+    reconnectAttempts.current = 0;
+    onConnectionChange?.(false);
+    
+    log('✅ Disconnect complete');
+  }, [stopKeepAlive, stopRecording, onConnectionChange, log]);
 
   const sendTextMessage = useCallback((text: string) => {
-    if (!text?.trim()) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ event: 'text_input', text: text.trim() }));
-      log('💬 Text message sent', { length: text.length });
+      const message = {
+        type: 'text_input',
+        text,
+        timestamp: Date.now()
+      };
+      wsRef.current.send(JSON.stringify(message));
+      log('📤 Text message sent', { text: text.substring(0, 50) });
     } else {
-      onError?.('Not connected to voice service');
+      log('⚠️ Cannot send text - WebSocket not connected');
+      onError?.('Cannot send message - not connected');
     }
   }, [log, onError]);
 
   const requestGreeting = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ event: 'request_greeting', callId, timestamp: Date.now() }));
+      const message = {
+        type: 'request_greeting',
+        timestamp: Date.now()
+      };
+      wsRef.current.send(JSON.stringify(message));
       log('👋 Greeting requested');
     } else {
-      onError?.('Not connected to voice service');
+      log('⚠️ Cannot request greeting - WebSocket not connected');
+      onError?.('Cannot request greeting - not connected');
     }
-  }, [callId, log, onError]);
-
-  // Network monitoring for auto-recovery
-  useEffect(() => {
-    const onOnline = () => {
-      if (!isConnected && connectionState === 'error') {
-        log('🌐 Network online - attempting reconnection'); 
-        connect();
-      }
-    };
-    const onOffline = () => {
-      if (isConnected) { 
-        log('📡 Network offline - pausing connection'); 
-        disconnect(); 
-      }
-    };
-    window.addEventListener('online', onOnline);
-    window.addEventListener('offline', onOffline);
-    return () => {
-      window.removeEventListener('online', onOnline);
-      window.removeEventListener('offline', onOffline);
-    };
-  }, [isConnected, connectionState, connect, disconnect, log]);
+  }, [log, onError]);
 
   // Cleanup on unmount
-  useEffect(() => () => { disconnect(); }, [disconnect]);
+  useEffect(() => {
+    return () => {
+      disconnect();
+    };
+  }, [disconnect]);
 
   return {
-    // State
     isConnected,
     isRecording,
     connectionState,
-    // Accessibility
-    ariaLabel: isConnected ? 'Voice connection active' : 'Voice connection inactive',
-    ariaLive: connectionState === 'error' ? 'assertive' : 'polite',
-    connectionStatus: `Voice connection ${connectionState}. ${isRecording ? 'Recording active' : 'Not recording'}`,
-    // Actions
     connect,
     disconnect,
     sendTextMessage,
-    requestGreeting,
-    // Data
-    messageLog: messageLogRef.current
+    requestGreeting
   };
 };

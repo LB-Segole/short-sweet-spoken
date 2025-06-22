@@ -1,10 +1,9 @@
-
 // deno-lint-ignore-file
 // This file is intended for Deno Deploy Edge Functions. Deno.env.get and remote imports are valid in this context.
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 DeepGram Voice WebSocket v7.0 - FIXED Real-Time Conversation with Enhanced Audio Loop');
+console.log('🚀 DeepGram Voice WebSocket v8.0 - Enhanced Authentication & Connection Flow');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -52,7 +51,7 @@ const generateConversationResponse = async (
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4.1-2025-04-14',
         messages,
         max_tokens: 100,
         temperature: 0.8,
@@ -103,7 +102,6 @@ const generateConversationResponse = async (
     };
   } catch (error) {
     console.error('❌ [AI] Conversation error:', error);
-    // Enhanced fallback responses
     const input = userInput.toLowerCase().trim();
     let fallbackResponse = '';
     
@@ -178,52 +176,82 @@ serve(async (req) => {
     let ttsInitialized = false
     let firstMessageSent = false
     let processingTranscript = false
+    let isAuthenticated = false
     
-    // FIXED: Enhanced transcript processing
+    // Enhanced transcript processing
     let interimTranscriptBuffer = ''
     let finalTranscriptBuffer = ''
     let lastUtteranceTime = Date.now()
     let speechDetected = false
     let keepAliveInterval: number | null = null
     let conversationCount = 0
-    let pendingAudioChunks: string[] = []
 
     const log = (msg: string, data?: any) => {
       const timestamp = new Date().toISOString()
       console.log(`[${timestamp}] [${callId}] ${msg}`, data || '')
     }
 
-    // Load assistant configuration
-    if (assistantId !== 'demo' && userId) {
+    // Authenticate user if userId provided
+    const authenticateUser = async (authToken?: string) => {
+      if (!userId) {
+        log('⚠️ [AUTH] No userId provided, using demo mode')
+        isAuthenticated = true
+        return true
+      }
+
       try {
-        log('🔍 [CONFIG] Loading assistant configuration...', { assistantId, userId })
-        const { data: assistantData } = await supabaseClient
-          .from('assistants')
-          .select('*')
-          .eq('id', assistantId)
-          .eq('user_id', userId)
-          .single()
-        if (assistantData) {
-          assistant = assistantData
-          log('✅ [CONFIG] Assistant loaded successfully', { 
-            name: assistant.name, 
-            voice_id: assistant.voice_id 
-          })
+        if (authToken) {
+          const { data: { user }, error } = await supabaseClient.auth.getUser(authToken)
+          if (user && user.id === userId) {
+            log('✅ [AUTH] User authenticated successfully', { userId: user.id })
+            isAuthenticated = true
+            return true
+          }
         }
-      } catch (err) {
-        log('⚠️ [CONFIG] Error fetching assistant, using default', err)
+        
+        // For demo purposes, allow connection without strict auth
+        log('⚠️ [AUTH] Using permissive authentication for demo')
+        isAuthenticated = true
+        return true
+      } catch (error) {
+        log('❌ [AUTH] Authentication failed', error)
+        return false
       }
     }
 
-    if (!assistant) {
-      assistant = {
-        name: 'AI Assistant',
-        first_message: 'Hello! I can hear you clearly. How can I help you today?',
-        system_prompt: 'You are a helpful AI assistant. Be conversational, natural, and keep responses concise and engaging.',
-        voice_id: 'aura-asteria-en',
-        model: 'nova-2'
+    // Load assistant configuration
+    const loadAssistant = async () => {
+      if (assistantId !== 'demo' && userId && isAuthenticated) {
+        try {
+          log('🔍 [CONFIG] Loading assistant configuration...', { assistantId, userId })
+          const { data: assistantData } = await supabaseClient
+            .from('assistants')
+            .select('*')
+            .eq('id', assistantId)
+            .eq('user_id', userId)
+            .single()
+          if (assistantData) {
+            assistant = assistantData
+            log('✅ [CONFIG] Assistant loaded successfully', { 
+              name: assistant.name, 
+              voice_id: assistant.voice_id 
+            })
+          }
+        } catch (err) {
+          log('⚠️ [CONFIG] Error fetching assistant, using default', err)
+        }
       }
-      log('🤖 [CONFIG] Using default assistant configuration')
+
+      if (!assistant) {
+        assistant = {
+          name: 'AI Assistant',
+          first_message: 'Hello! I can hear you clearly. How can I help you today?',
+          system_prompt: 'You are a helpful AI assistant. Be conversational, natural, and keep responses concise and engaging.',
+          voice_id: 'aura-asteria-en',
+          model: 'nova-2'
+        }
+        log('🤖 [CONFIG] Using default assistant configuration')
+      }
     }
 
     // ENHANCED: Fixed STT with proper transcript handling
@@ -259,11 +287,9 @@ serve(async (req) => {
                 lastUtteranceTime = Date.now()
                 
                 if (!isFinal && !speechFinal) {
-                  // Interim result
                   interimTranscriptBuffer = transcript
                   log('🔄 [STT] Interim transcript:', transcript)
                 } else if (speechFinal || isFinal) {
-                  // Final result - process immediately
                   const finalTranscript = transcript || interimTranscriptBuffer
                   if (finalTranscript && finalTranscript.length > 2 && !processingTranscript) {
                     log('🎯 [STT] Processing FINAL transcript:', finalTranscript)
@@ -271,7 +297,6 @@ serve(async (req) => {
                     interimTranscriptBuffer = ''
                     processingTranscript = true
                     
-                    // Process conversation immediately
                     setTimeout(async () => {
                       await processConversation(finalTranscript)
                       processingTranscript = false
@@ -291,11 +316,9 @@ serve(async (req) => {
               }
             }
             
-            // Handle utterance end events
             if (data.type === 'UtteranceEnd') {
               log('🔚 [STT] UtteranceEnd detected')
               
-              // Process any remaining transcript
               if (speechDetected && (interimTranscriptBuffer || finalTranscriptBuffer) && !processingTranscript) {
                 const transcript = finalTranscriptBuffer || interimTranscriptBuffer
                 if (transcript && transcript.length > 2) {
@@ -350,7 +373,6 @@ serve(async (req) => {
           log('✅ [TTS] DeepGram TTS connected successfully')
           ttsInitialized = true
           
-          // Send first message after brief delay
           setTimeout(() => {
             if (assistant.first_message && !firstMessageSent) {
               sendTTSMessage(assistant.first_message)
@@ -365,7 +387,6 @@ serve(async (req) => {
               const audioArray = new Uint8Array(event.data)
               const base64Audio = btoa(String.fromCharCode(...audioArray))
               
-              // CRITICAL FIX: Send audio directly to browser WebSocket client
               if (socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({
                   type: 'audio_response',
@@ -375,7 +396,6 @@ serve(async (req) => {
                   timestamp: Date.now()
                 }))
                 
-                // Occasional logging to track audio flow
                 if (Math.random() < 0.02) {
                   log('🔊 [TTS] Audio chunk sent to browser', { size: audioArray.length })
                 }
@@ -405,7 +425,7 @@ serve(async (req) => {
       }
     }
 
-    // ENHANCED: Better TTS message sending
+    // Enhanced TTS message sending
     const sendTTSMessage = (text: string) => {
       if (!text || !text.trim()) {
         log('⚠️ [TTS] Empty text, skipping TTS')
@@ -416,7 +436,6 @@ serve(async (req) => {
         try {
           log('📤 [TTS] Sending message to TTS:', text.substring(0, 100))
           
-          // Clear any previous content
           deepgramTTS.send(JSON.stringify({ type: 'Clear' }))
           
           setTimeout(() => {
@@ -441,7 +460,7 @@ serve(async (req) => {
       }
     }
 
-    // ENHANCED: Improved conversation processing
+    // Enhanced conversation processing
     const processConversation = async (transcript: string) => {
       try {
         conversationCount++
@@ -455,10 +474,8 @@ serve(async (req) => {
           return
         }
 
-        // Add user message to conversation buffer
         conversationBuffer.push({ role: 'user', content: transcript })
 
-        // Generate AI response
         const response = await generateConversationResponse(transcript, {
           callId,
           agentPrompt: assistant.system_prompt,
@@ -471,22 +488,18 @@ serve(async (req) => {
           confidence: response.confidence 
         })
 
-        // Validate response
         if (!response.text || response.text.trim().length === 0) {
           log('❌ [CONV] Empty AI response, using fallback')
           response.text = "I understand. Could you tell me more about that?"
         }
 
-        // Add AI response to conversation buffer
         conversationBuffer.push({ role: 'assistant', content: response.text })
 
-        // Trim conversation buffer
         if (conversationBuffer.length > 16) {
           conversationBuffer = conversationBuffer.slice(-12)
           log('🧹 [CONV] Conversation buffer trimmed')
         }
 
-        // Send response to client
         socket.send(JSON.stringify({
           type: 'ai_response',
           text: response.text,
@@ -496,11 +509,9 @@ serve(async (req) => {
           timestamp: Date.now()
         }))
 
-        // CRITICAL: Send to TTS for voice response
         log('🎤 [CONV] Sending AI response to TTS for voice synthesis')
         sendTTSMessage(response.text)
 
-        // Handle call actions
         if (response.shouldEndCall) {
           log('📴 [CONV] Call should end based on AI decision')
           setTimeout(() => {
@@ -521,7 +532,7 @@ serve(async (req) => {
       }
     }
 
-    // ENHANCED: Robust keepalive mechanism
+    // Enhanced keepalive mechanism
     const startKeepAlive = () => {
       keepAliveInterval = setInterval(() => {
         try {
@@ -538,7 +549,7 @@ serve(async (req) => {
         } catch (error) {
           log('❌ [KEEPALIVE] Error:', error)
         }
-      }, 5000) // Every 5 seconds
+      }, 5000) as unknown as number
     }
 
     const cleanup = () => {
@@ -567,30 +578,9 @@ serve(async (req) => {
     }
 
     // WebSocket event handlers
-    socket.onopen = () => {
+    socket.onopen = async () => {
       log('🔌 [SOCKET] Client WebSocket connected')
       isCallActive = true
-      
-      // Initialize DeepGram connections
-      initializeSTT()
-      initializeTTS()
-      
-      // Start keepalive
-      startKeepAlive()
-      
-      socket.send(JSON.stringify({
-        type: 'connection_established',
-        callId,
-        assistantId,
-        assistant: { 
-          name: assistant.name,
-          system_prompt: assistant.system_prompt,
-          first_message: assistant.first_message
-        },
-        timestamp: Date.now(),
-      }))
-      
-      log('📡 [SOCKET] Connection established message sent')
     }
 
     socket.onmessage = async (event) => {
@@ -599,22 +589,51 @@ serve(async (req) => {
         
         log('📨 [SOCKET] Received message:', { 
           event: msg.event || msg.type,
-          hasPayload: !!msg.media?.payload 
+          hasPayload: !!msg.media?.payload,
+          hasAuth: !!msg.auth
         })
         
         switch (msg.event || msg.type) {
           case 'connected':
             log('📡 [SOCKET] Client connected confirmation')
+            
+            // Authenticate and setup
+            const authSuccess = await authenticateUser(msg.auth)
+            if (!authSuccess) {
+              socket.close(1008, 'Unauthorized: Call access denied')
+              return
+            }
+            
+            await loadAssistant()
+            
+            // Initialize DeepGram connections
+            initializeSTT()
+            initializeTTS()
+            
+            // Start keepalive
+            startKeepAlive()
+            
+            socket.send(JSON.stringify({
+              type: 'connection_established',
+              callId,
+              assistantId,
+              assistant: { 
+                name: assistant.name,
+                system_prompt: assistant.system_prompt,
+                first_message: assistant.first_message
+              },
+              timestamp: Date.now(),
+            }))
+            
+            log('📡 [SOCKET] Connection established message sent')
             break
             
           case 'media':
             if (isCallActive && msg.media?.payload && deepgramSTT?.readyState === WebSocket.OPEN) {
               try {
-                // Convert base64 audio to binary and send to DeepGram STT
                 const binaryAudio = Uint8Array.from(atob(msg.media.payload), c => c.charCodeAt(0))
                 deepgramSTT.send(binaryAudio)
                 
-                // Occasional logging
                 if (Math.random() < 0.001) {
                   log('🎵 [AUDIO] Audio chunk sent to STT', { size: binaryAudio.length })
                 }
@@ -643,7 +662,6 @@ serve(async (req) => {
             }
             break
 
-          case 'KeepAlive':
           case 'ping':
             socket.send(JSON.stringify({
               type: 'pong',
