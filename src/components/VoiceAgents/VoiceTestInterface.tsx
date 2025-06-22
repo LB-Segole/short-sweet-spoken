@@ -18,8 +18,6 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
   onClose,
 }) => {
   const [textInput, setTextInput] = useState('');
-  const [transcript, setTranscript] = useState<string[]>([]);
-  const [agentResponses, setAgentResponses] = useState<string[]>([]);
   const [conversation, setConversation] = useState<Array<{
     speaker: 'user' | 'agent';
     text: string;
@@ -38,7 +36,6 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
   } = useVoiceAgentWebSocket({
     agent,
     onTranscript: (text) => {
-      setTranscript(prev => [...prev, text]);
       setConversation(prev => [...prev, {
         speaker: 'user',
         text,
@@ -46,7 +43,6 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
       }]);
     },
     onAgentResponse: (text) => {
-      setAgentResponses(prev => [...prev, text]);
       setConversation(prev => [...prev, {
         speaker: 'agent',
         text,

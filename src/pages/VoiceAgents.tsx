@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -13,7 +13,7 @@ const VoiceAgents = () => {
   const navigate = useNavigate();
   const { agents, isLoading, createAgent, updateAgent, deleteAgent, toggleAgentStatus } = useVoiceAgents();
   const [showForm, setShowForm] = useState(false);
-  const [editingAgent, setEditingAgent] = useState<VoiceAgent | null>(null);
+  const [editingAgent, setEditingAgent] = useState<VoiceAgent | undefined>(undefined);
   const [testingAgent, setTestingAgent] = useState<VoiceAgent | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -36,7 +36,7 @@ const VoiceAgents = () => {
     try {
       const updatedAgent = await updateAgent(editingAgent.id, formData);
       if (updatedAgent) {
-        setEditingAgent(null);
+        setEditingAgent(undefined);
         setShowForm(false);
       }
     } finally {
@@ -67,7 +67,7 @@ const VoiceAgents = () => {
 
   const handleCancel = () => {
     setShowForm(false);
-    setEditingAgent(null);
+    setEditingAgent(undefined);
   };
 
   if (isLoading) {

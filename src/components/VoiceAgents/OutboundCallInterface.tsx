@@ -59,7 +59,8 @@ export const OutboundCallInterface: React.FC<OutboundCallInterfaceProps> = ({
 
     } catch (error) {
       console.error('Call error:', error);
-      setCallStatus(`Error: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      setCallStatus(`Error: ${errorMessage}`);
     } finally {
       setIsLoading(false);
     }
