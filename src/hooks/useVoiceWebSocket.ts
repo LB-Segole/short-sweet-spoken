@@ -59,7 +59,8 @@ export const useVoiceWebSocket = ({
     try {
       log('🔄 Initializing audio system...');
       if (!audioContextRef.current) {
-        audioContextRef.current = new AudioContext({ sampleRate: 16000 }); // Match Deepgram expected rate
+        // Use 24kHz to match Deepgram TTS output
+        audioContextRef.current = new AudioContext({ sampleRate: 24000 });
         if (audioContextRef.current.state === 'suspended') {
           await audioContextRef.current.resume();
           log('✅ Audio context resumed');
@@ -89,35 +90,30 @@ export const useVoiceWebSocket = ({
     return maxAmp >= 0.001 && maxAmp <= 1.0;
   };
 
-  // Enhanced audio streaming with better buffering for Deepgram
+  // Enhanced audio streaming for better real-time performance
   const handleAudioData = useCallback((audioData: Float32Array) => {
     if (wsRef.current?.readyState !== WebSocket.OPEN) return;
     try {
       if (!validateAudioData(audioData)) {
-        log('⚠️ Invalid audio data detected, skipping chunk');
+        if (import.meta.env.DEV) log('⚠️ Invalid audio data detected, skipping chunk');
         return;
       }
       
-      // Convert to 16-bit PCM for Deepgram (better compatibility)
-      const pcm16Buffer = new Int16Array(audioData.length);
-      for (let i = 0; i < audioData.length; i++) {
-        pcm16Buffer[i] = Math.max(-32768, Math.min(32767, audioData[i] * 32768));
-      }
-      
-      const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcm16Buffer.buffer)));
+      // Convert to base64 for Deepgram STT (16-bit PCM)
+      const base64Audio = AudioEncoder.encodeAudioForDeepgram(audioData);
       
       if (!base64Audio || base64Audio.length < 10) return;
       
-      const maxAmplitude = Math.max(...Array.from(audioData).map(Math.abs));
       const message = { event: 'media', media: { payload: base64Audio } };
       wsRef.current.send(JSON.stringify(message));
       
-      if (import.meta.env.DEV && Math.random() < 0.01) { // Log 1% of chunks
+      // Occasional logging to monitor audio flow
+      if (import.meta.env.DEV && Math.random() < 0.005) {
+        const maxAmplitude = Math.max(...Array.from(audioData).map(Math.abs));
         log('📤 Audio chunk sent', {
           originalSize: audioData.length,
           encodedSize: base64Audio.length,
-          maxAmplitude: maxAmplitude.toFixed(4),
-          timestamp: Date.now()
+          maxAmplitude: maxAmplitude.toFixed(4)
         });
       }
     } catch (error) {
@@ -151,16 +147,15 @@ export const useVoiceWebSocket = ({
     }
   }, [log]);
 
-  // Enhanced keepalive with WebSocket ping/pong
+  // Enhanced keepalive mechanism
   const setupKeepAlive = useCallback(() => {
     if (keepAliveInterval.current) clearInterval(keepAliveInterval.current);
     keepAliveInterval.current = window.setInterval(() => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
-        // Send JSON keepalive as recommended by Deepgram docs
         wsRef.current.send(JSON.stringify({ type: 'KeepAlive', timestamp: Date.now() }));
         log('💓 KeepAlive sent to prevent timeout');
       }
-    }, 3000); // Every 3 seconds as per Deepgram recommendations
+    }, 5000); // Every 5 seconds
   }, [log]);
 
   const connect = useCallback(async () => {
@@ -182,7 +177,7 @@ export const useVoiceWebSocket = ({
       setConnectionState('connecting');
       log('🔄 Connecting to voice WebSocket...', { userId, callId, assistantId });
 
-      // Only validate call ownership if callId is NOT 'browser-test'
+      // Validate call ownership if not browser test
       if (callId && callId !== 'browser-test') {
         const { data: callData, error: callErr } = await supabase
           .from('calls')
@@ -201,7 +196,7 @@ export const useVoiceWebSocket = ({
       const authToken = session?.access_token;
       if (!authToken) throw new Error('Authentication required');
 
-      // Build WebSocket URL - Use the correct endpoint for voice streaming
+      // Build WebSocket URL
       const baseUrl = 'wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-websocket';
       const params = new URLSearchParams({ 
         callId: callId || 'browser-test', 
@@ -210,11 +205,11 @@ export const useVoiceWebSocket = ({
         token: authToken 
       });
       const wsUrl = `${baseUrl}?${params.toString()}`;
-      log('🌐 WebSocket URL configured', wsUrl);
+      log('🌐 WebSocket URL configured');
 
       wsRef.current = new WebSocket(wsUrl);
       
-      // Enhanced connection timeout with detailed logging
+      // Enhanced connection timeout
       connectionTimeout.current = window.setTimeout(() => {
         if (wsRef.current?.readyState !== WebSocket.OPEN) {
           log('⏰ Connection timeout after 15 seconds');
@@ -232,7 +227,6 @@ export const useVoiceWebSocket = ({
         onConnectionChange?.(true);
         reconnectAttempts.current = 0;
         
-        // Setup keepalive immediately after connection
         setupKeepAlive();
 
         wsRef.current?.send(JSON.stringify({ 
@@ -245,11 +239,11 @@ export const useVoiceWebSocket = ({
         }));
         log('📤 Connection handshake sent');
         
-        // Start recording after a brief delay to ensure connection is stable
+        // Start recording after connection is stable
         setTimeout(() => {
           startRecording();
           log('🎤 Continuous audio streaming initiated');
-        }, 500);
+        }, 1000);
         connectionLockRef.current = false;
       };
 
@@ -263,34 +257,46 @@ export const useVoiceWebSocket = ({
         }
         
         const eventType = data.type || data.event;
-        const allowed = ['connection_established','audio_response','text_response','greeting_sent','transcript','ai_response','error','pong'];
-        if (!allowed.includes(eventType)) {
-          log('❌ Invalid message type received', data); 
-          return;
-        }
         
         log('📨 Received message', { type: eventType, hasData: !!data.data });
         const message: VoiceMessage = { type: eventType, data, timestamp: Date.now() };
         onMessage?.(message);
 
         switch (eventType) {
+          case 'connection_established':
+            log('🔗 Connection established successfully');
+            break;
+            
           case 'audio_response':
-            if (data.audio && audioQueueRef.current) {
+            // CRITICAL: Handle audio response from TTS
+            if (data.audio && audioQueueRef.current && audioContextRef.current) {
               try {
-                const audioBuf = AudioEncoder.decodeAudioFromWebSocket(data.audio);
+                log('🔊 Processing AI audio response...');
+                const audioBuf = await AudioEncoder.decodeAudioFromWebSocket(data.audio, audioContextRef.current);
                 await audioQueueRef.current.addToQueue(audioBuf);
-                log('✅ Audio queued for playback', { audioLength: audioBuf.length });
+                log('✅ Audio queued for playback', { duration: audioBuf.duration.toFixed(2) });
               } catch (err) {
                 log('❌ Audio processing error', err);
+                onError?.(`Audio playback failed: ${err}`);
               }
             }
             break;
+            
+          case 'transcript':
+            log('📝 Transcript received', { 
+              text: data.text?.substring(0, 50),
+              isFinal: data.isFinal,
+              speechFinal: data.speechFinal
+            });
+            break;
+            
+          case 'ai_response':
+            log('🤖 AI response received', { text: data.text?.substring(0, 50) });
+            break;
+            
           case 'error':
             log('❌ Server error received', data.message);
             onError?.(data.message || 'Unknown WebSocket error');
-            break;
-          case 'transcript':
-            log('📝 Transcript received', { text: data.text?.substring(0, 50) });
             break;
         }
       };
@@ -299,8 +305,7 @@ export const useVoiceWebSocket = ({
         if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
         log('❌ WebSocket error occurred', { 
           error: err, 
-          readyState: wsRef.current?.readyState,
-          url: wsRef.current?.url
+          readyState: wsRef.current?.readyState
         });
         setConnectionState('error');
         if (reconnectAttempts.current < maxReconnectAttempts) {
@@ -317,7 +322,6 @@ export const useVoiceWebSocket = ({
         if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
         if (keepAliveInterval.current) clearInterval(keepAliveInterval.current);
         
-        // Enhanced close event logging with specific error codes
         const closeReason = evt.code === 1006 ? 'Abnormal closure (network/server issue)' :
                            evt.code === 1011 ? 'Server error' :
                            evt.code === 1000 ? 'Normal closure' :
