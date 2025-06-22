@@ -1,7 +1,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 DeepGram Voice Agent v9.0 - Real AI Assistant Integration');
+console.log('🚀 DeepGram Voice Agent v10.0 - ChatGPT-4 Voice Assistant');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -42,6 +42,7 @@ serve(async (req) => {
   let conversationHistory: Array<{role: string, content: string}> = [];
   let isConnected = false;
   let sessionId = '';
+  let isProcessing = false;
 
   const log = (msg: string, data?: any) => {
     const timestamp = new Date().toISOString();
@@ -53,7 +54,7 @@ serve(async (req) => {
   socket.onopen = () => {
     log('✅ Client WebSocket connected');
     isConnected = true;
-    sessionId = `session-${Date.now()}`;
+    sessionId = `voice-session-${Date.now()}`;
     
     socket.send(JSON.stringify({
       type: 'connection_established',
@@ -76,11 +77,15 @@ serve(async (req) => {
           break;
           
         case 'audio_data':
-          await handleAudioData(message);
+          if (!isProcessing) {
+            await handleAudioData(message);
+          }
           break;
           
         case 'text_input':
-          await handleTextInput(message);
+          if (!isProcessing) {
+            await handleTextInput(message);
+          }
           break;
           
         case 'end_conversation':
@@ -127,7 +132,7 @@ serve(async (req) => {
       currentAgent = agent;
       conversationHistory = [{
         role: 'system',
-        content: agent.system_prompt || 'You are a helpful AI assistant. Be conversational and natural.'
+        content: agent.system_prompt || 'You are a helpful AI voice assistant. Keep responses natural and conversational, as if speaking to someone.'
       }];
 
       log('🤖 Agent loaded successfully:', {
@@ -185,8 +190,7 @@ serve(async (req) => {
     try {
       const { audio } = message;
       
-      if (!audio) {
-        log('⚠️ No audio data received');
+      if (!audio || isProcessing) {
         return;
       }
 
@@ -213,7 +217,7 @@ serve(async (req) => {
       if (transcriptionData.success && transcriptionData.transcript) {
         const transcript = transcriptionData.transcript.trim();
         
-        if (transcript.length > 2) {
+        if (transcript.length > 3) {
           log('📝 Transcription successful:', transcript);
           
           // Send transcript to client
@@ -221,7 +225,7 @@ serve(async (req) => {
             type: 'transcript',
             data: {
               text: transcript,
-              confidence: 0.9,
+              confidence: transcriptionData.confidence || 0.9,
               timestamp: Date.now()
             }
           }));
@@ -240,7 +244,7 @@ serve(async (req) => {
   async function handleTextInput(message: VoiceAgentWebSocketMessage) {
     const { text } = message;
     
-    if (!currentAgent || !text) {
+    if (!currentAgent || !text || isProcessing) {
       return;
     }
 
@@ -261,9 +265,10 @@ serve(async (req) => {
   }
 
   async function generateAIResponse(userInput: string) {
-    if (!currentAgent) return;
+    if (!currentAgent || isProcessing) return;
 
     try {
+      isProcessing = true;
       log('🧠 Generating AI response for:', userInput.substring(0, 50));
 
       // Add user message to conversation history
@@ -285,10 +290,10 @@ serve(async (req) => {
         });
 
         // Keep conversation history manageable
-        if (conversationHistory.length > 20) {
+        if (conversationHistory.length > 12) {
           conversationHistory = [
             conversationHistory[0], // Keep system prompt
-            ...conversationHistory.slice(-15) // Keep last 15 messages
+            ...conversationHistory.slice(-10) // Keep last 10 messages
           ];
         }
 
@@ -326,6 +331,8 @@ serve(async (req) => {
       }));
 
       await generateTTSAudio(fallbackResponse);
+    } finally {
+      isProcessing = false;
     }
   }
 
@@ -343,7 +350,7 @@ serve(async (req) => {
           body: JSON.stringify({
             agentId: currentAgent.id,
             message: userInput,
-            conversationHistory: conversationHistory.slice(-10) // Send last 10 messages for context
+            conversationHistory: conversationHistory.slice(-8) // Send last 8 messages for context
           }),
         }
       );
