@@ -267,6 +267,13 @@ serve(async (req) => {
   const assistantId = url.searchParams.get('assistantId') || 'demo'
   const userId = url.searchParams.get('userId')
 
+  console.log('🔗 Voice WebSocket Connection Request:', { 
+    callId, 
+    assistantId, 
+    userId, 
+    userAgent: req.headers.get('user-agent')?.substring(0, 50) 
+  });
+
   const upgradeHeader = req.headers.get('upgrade')
   if (upgradeHeader?.toLowerCase() !== 'websocket') {
     return new Response('Expected websocket connection', {
@@ -276,8 +283,16 @@ serve(async (req) => {
   }
 
   const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')
+  const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
+  
   if (!deepgramApiKey) {
+    console.error('❌ Missing DEEPGRAM_API_KEY')
     return new Response('DeepGram API key not configured', { status: 500, headers: corsHeaders })
+  }
+  
+  if (!openaiApiKey) {
+    console.error('❌ Missing OPENAI_API_KEY')
+    return new Response('OpenAI API key not configured', { status: 500, headers: corsHeaders })
   }
 
   try {
@@ -298,18 +313,22 @@ serve(async (req) => {
     let firstMessageSent = false
     let processingTranscript = false
     
-    // NEW: Enhanced transcript buffering
+    // Enhanced transcript buffering with detailed logging
     let interimTranscriptBuffer = ''
     let lastUtteranceTime = Date.now()
     let speechDetected = false
     let keepAliveInterval: number | null = null
+    let conversationCount = 0
 
-    const log = (msg: string, data?: any) => 
-      console.log(`[${new Date().toISOString()}] [Call: ${callId}] ${msg}`, data || '')
+    const log = (msg: string, data?: any) => {
+      const timestamp = new Date().toISOString()
+      console.log(`[${timestamp}] [Call: ${callId}] ${msg}`, data || '')
+    }
 
-    // Load assistant configuration
+    // Load assistant configuration with enhanced logging
     if (assistantId !== 'demo' && userId) {
       try {
+        log('🔍 Loading assistant configuration...', { assistantId, userId })
         const { data: assistantData } = await supabaseClient
           .from('assistants')
           .select('*')
@@ -318,7 +337,14 @@ serve(async (req) => {
           .single()
         if (assistantData) {
           assistant = assistantData
-          log('✅ Assistant loaded', { name: assistant.name, system_prompt: assistant.system_prompt })
+          log('✅ Assistant loaded successfully', { 
+            name: assistant.name, 
+            voice_id: assistant.voice_id,
+            model: assistant.model,
+            system_prompt_length: assistant.system_prompt?.length 
+          })
+        } else {
+          log('⚠️ No assistant found, using default')
         }
       } catch (err) {
         log('⚠️ Error fetching assistant, using default', err)
@@ -329,8 +355,11 @@ serve(async (req) => {
       assistant = {
         name: 'AI Assistant',
         first_message: 'Hello! Thank you for taking my call. This is your AI assistant. How can I help you today?',
-        system_prompt: 'You are a helpful AI assistant in a phone conversation. Be natural, conversational, and keep responses concise. Respond as if speaking directly to the person.'
+        system_prompt: 'You are a helpful AI assistant in a phone conversation. Be natural, conversational, and keep responses concise. Respond as if speaking directly to the person.',
+        voice_id: 'aura-asteria-en',
+        model: 'nova-2'
       }
+      log('🤖 Using default assistant configuration')
     }
 
     // FIXED: Enhanced STT with proper endpointing and interim results
@@ -548,33 +577,50 @@ serve(async (req) => {
       }
     }
 
-    // ENHANCED: Better conversation processing with validation
+    // Enhanced conversation processing with detailed validation
     const processConversation = async (transcript: string) => {
       try {
-        log('🧠 Processing conversation:', transcript)
-        const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
-        if (!openaiApiKey) {
-          log('❌ OPENAI_API_KEY not configured')
+        conversationCount++
+        log(`🧠 Processing conversation #${conversationCount}:`, { 
+          transcript: transcript.substring(0, 100) + (transcript.length > 100 ? '...' : ''),
+          transcriptLength: transcript.length,
+          bufferLength: conversationBuffer.length 
+        })
+
+        if (!transcript || transcript.trim().length < 2) {
+          log('⚠️ Transcript too short, skipping processing')
           return
         }
 
         // Add user message to conversation buffer
         conversationBuffer.push({ role: 'user', content: transcript })
 
-        // Generate AI response
+        // Generate AI response with enhanced validation
         const response = await generateConversationResponse(transcript, {
           callId,
           agentPrompt: assistant.system_prompt,
           agentPersonality: 'conversational',
           previousMessages: conversationBuffer
-        }, openaiApiKey, assistant.instructions || assistant.system_prompt)
+        }, openaiApiKey, assistant.system_prompt)
 
-        log('🤖 AI response generated:', response.text.substring(0, 80) + '...')
+        log('🤖 AI response generated:', { 
+          responseLength: response.text?.length,
+          intent: response.intent,
+          confidence: response.confidence,
+          shouldEndCall: response.shouldEndCall,
+          shouldTransfer: response.shouldTransfer
+        })
 
-        // VALIDATION: Ensure response has content
+        // Enhanced response validation
         if (!response.text || response.text.trim().length === 0) {
-          log('❌ Empty AI response, using fallback')
+          log('❌ Empty AI response detected, using fallback')
           response.text = "I understand. Could you tell me more about that?"
+        }
+
+        // Validate response quality
+        if (response.text.length > 500) {
+          log('⚠️ Response too long, truncating')
+          response.text = response.text.substring(0, 400) + "..."
         }
 
         // Add AI response to conversation buffer
@@ -583,9 +629,10 @@ serve(async (req) => {
         // Keep conversation buffer manageable
         if (conversationBuffer.length > 20) {
           conversationBuffer = conversationBuffer.slice(-16)
+          log('🧹 Conversation buffer trimmed to 16 messages')
         }
 
-        // Send response back to client
+        // Send response back to client with enhanced data
         socket.send(JSON.stringify({
           type: 'ai_response',
           text: response.text,
@@ -595,13 +642,15 @@ serve(async (req) => {
           shouldEndCall: response.shouldEndCall,
           sentiment: response.sentiment,
           emotion: response.emotion,
+          conversationCount,
           timestamp: Date.now()
         }))
 
-        // CRITICAL: Send to TTS for voice response
+        // CRITICAL: Send to TTS for voice response with validation
+        log('🎤 Sending response to TTS:', response.text.substring(0, 60) + '...')
         sendTTSMessage(response.text)
 
-        // Handle call actions
+        // Handle call actions with logging
         if (response.shouldEndCall) {
           log('📴 Call should end based on AI decision')
           setTimeout(() => {
@@ -612,7 +661,7 @@ serve(async (req) => {
           socket.send(JSON.stringify({ type: 'transfer_call', reason: 'ai_decision' }))
         }
 
-        // Log conversation for analytics (async)
+        // Log conversation for analytics (async) with enhanced metadata
         Promise.all([
           supabaseClient.from('conversation_logs').insert({
             call_id: callId,
@@ -622,7 +671,11 @@ serve(async (req) => {
             emotion: response.emotion,
             intent: response.intent,
             timestamp: new Date().toISOString(),
-            metadata: { confidence: response.confidence }
+            metadata: { 
+              confidence: response.confidence,
+              conversation_count: conversationCount,
+              transcript_length: transcript.length
+            }
           }),
           supabaseClient.from('conversation_logs').insert({
             call_id: callId,
@@ -632,7 +685,11 @@ serve(async (req) => {
             emotion: 'neutral',
             intent: response.intent,
             timestamp: new Date().toISOString(),
-            metadata: { confidence: response.confidence }
+            metadata: { 
+              confidence: response.confidence,
+              conversation_count: conversationCount,
+              response_length: response.text.length
+            }
           })
         ]).catch(e => log('⚠️ Analytics logging failed:', e))
 
@@ -640,6 +697,13 @@ serve(async (req) => {
         log('❌ Error processing conversation:', error)
         const fallbackResponse = "I'm having a moment of difficulty processing that. Could you repeat what you said?"
         sendTTSMessage(fallbackResponse)
+        
+        // Log the error for debugging
+        socket.send(JSON.stringify({
+          type: 'processing_error',
+          error: error.message,
+          timestamp: Date.now()
+        }))
       }
     }
 
@@ -684,7 +748,7 @@ serve(async (req) => {
       log('🧹 Cleanup completed')
     }
 
-    // WebSocket event handlers
+    // WebSocket event handlers with enhanced logging
     socket.onopen = () => {
       log('🔌 SignalWire WebSocket connected')
       isCallActive = true
@@ -703,15 +767,26 @@ serve(async (req) => {
         assistant: { 
           name: assistant.name,
           system_prompt: assistant.system_prompt,
-          first_message: assistant.first_message
+          first_message: assistant.first_message,
+          voice_id: assistant.voice_id,
+          model: assistant.model
         },
         timestamp: Date.now(),
       }))
+      
+      log('📡 Connection established message sent')
     }
 
     socket.onmessage = async (event) => {
       try {
         const msg = JSON.parse(event.data)
+        
+        // Enhanced message logging
+        log('📨 Received SignalWire message:', { 
+          event: msg.event || msg.type,
+          hasPayload: !!msg.media?.payload,
+          streamSid: msg.streamSid 
+        })
         
         switch (msg.event || msg.type) {
           case 'connected':
@@ -729,6 +804,11 @@ serve(async (req) => {
                 // Convert base64 audio to binary and send to DeepGram STT
                 const binaryAudio = Uint8Array.from(atob(msg.media.payload), c => c.charCodeAt(0))
                 deepgramSTT.send(binaryAudio)
+                
+                // Log audio processing occasionally
+                if (Math.random() < 0.001) {
+                  log('🎵 Audio chunk processed', { size: binaryAudio.length })
+                }
               } catch (error) {
                 log('❌ Error processing incoming audio:', error)
               }
@@ -744,6 +824,7 @@ serve(async (req) => {
             
           case 'text_input':
             if (msg.text?.trim()) {
+              log('💬 Processing text input:', msg.text.substring(0, 50) + '...')
               await processConversation(msg.text)
             }
             break
@@ -754,7 +835,7 @@ serve(async (req) => {
     }
 
     socket.onclose = (ev) => {
-      log('🔌 SignalWire WebSocket closed:', ev.code)
+      log('🔌 SignalWire WebSocket closed:', { code: ev.code, reason: ev.reason })
       cleanup()
     }
 

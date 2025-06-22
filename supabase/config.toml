@@ -41,3 +41,12 @@ verify_jwt = false
 
 [functions.end-call]
 verify_jwt = true
+
+[functions.deepgram-voice-websocket]
+verify_jwt = false
+
+[functions.agents]
+verify_jwt = true
+
+[functions.realtime-voice-websocket]
+verify_jwt = false

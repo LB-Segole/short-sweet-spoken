@@ -170,8 +170,8 @@ export const useVoiceWebSocket = ({
       setConnectionState('connecting');
       log('🔄 Connecting to voice WebSocket...', { userId, callId, assistantId });
 
-      // Validate call ownership if callId provided
-      if (callId) {
+      // Only validate call ownership if callId is NOT 'browser-test'
+      if (callId && callId !== 'browser-test') {
         const { data: callData, error: callErr } = await supabase
           .from('calls')
           .select('user_id, status')
@@ -189,8 +189,8 @@ export const useVoiceWebSocket = ({
       const authToken = session?.access_token;
       if (!authToken) throw new Error('Authentication required');
 
-      // Build WebSocket URL with proper wss:// protocol
-      const baseUrl = 'wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/voice-websocket';
+      // Build WebSocket URL - Use the correct endpoint for voice streaming
+      const baseUrl = 'wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-websocket';
       const params = new URLSearchParams({ 
         callId: callId || 'browser-test', 
         assistantId: assistantId || 'demo', 

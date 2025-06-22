@@ -62,6 +62,7 @@ export const useAssistants = () => {
         name: formData.name.trim(),
         system_prompt: formData.system_prompt.trim(),
         first_message: formData.first_message.trim(),
+        voice_provider: formData.voice_provider || 'deepgram',
         voice_id: formData.voice_id.trim(),
         model: formData.model,
         temperature: Number(formData.temperature),
@@ -110,9 +111,11 @@ export const useAssistants = () => {
       }
 
       const requestBody = {
+        id: assistant.id, // Include the agent ID
         name: formData.name.trim(),
         system_prompt: formData.system_prompt.trim(),
         first_message: formData.first_message.trim(),
+        voice_provider: formData.voice_provider || 'deepgram',
         voice_id: formData.voice_id.trim(),
         model: formData.model,
         temperature: Number(formData.temperature),

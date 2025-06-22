@@ -1,7 +1,8 @@
+
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🤖 Agent Management Function initialized v3.0 - Fixed DELETE with proper foreign key handling');
+console.log('🤖 Agent Management Function initialized v4.0 - Enhanced Authentication & Logging');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -9,151 +10,120 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
 }
 
-interface AgentCreateRequest {
-  name: string
-  system_prompt: string
-  first_message?: string
-  voice_id?: string
-  model?: string
-  temperature?: number
-  max_tokens?: number
-}
-
-interface AgentUpdateRequest extends Partial<AgentCreateRequest> {
-  // No ID needed here as it comes from URL
-}
-
 serve(async (req) => {
+  console.log('📍 Request details:', {
+    method: req.method,
+    pathname: new URL(req.url).pathname,
+    pathParts: new URL(req.url).pathname.split('/').filter(Boolean),
+    headers: Object.fromEntries(req.headers.entries())
+  });
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
   }
 
   try {
     const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // Authenticate user
+    // Get user from auth header
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'Authorization header required' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
-      )
+      console.log('❌ No authorization header provided')
+      throw new Error('No authorization header')
     }
 
     const token = authHeader.replace('Bearer ', '')
+    console.log('🔐 Attempting to authenticate user with token length:', token.length)
+    
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token)
-
+    
     if (authError || !user) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'Invalid or expired token' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
-      )
+      console.log('❌ Authentication failed:', authError)
+      throw new Error('Invalid authentication')
     }
 
-    const url = new URL(req.url)
-    const pathParts = url.pathname.split('/').filter(part => part.length > 0)
-    
-    console.log('📍 Request details:', {
-      method: req.method,
-      pathname: url.pathname,
-      pathParts,
-      user: user.id
-    })
+    console.log('✅ User authenticated:', user.id)
 
     switch (req.method) {
       case 'GET':
-        // Get all agents for user
-        const { data: agents, error } = await supabaseClient
+        console.log('📋 Fetching agents for user:', user.id)
+        const { data: agents, error: fetchError } = await supabaseClient
           .from('assistants')
           .select('*')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
 
-        if (error) {
-          console.error('❌ Error fetching agents:', error)
-          return new Response(
-            JSON.stringify({ success: false, error: error.message }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-          )
+        if (fetchError) {
+          console.log('❌ Fetch error:', fetchError)
+          throw fetchError
         }
 
+        console.log('✅ Found agents:', agents?.length || 0)
         return new Response(
-          JSON.stringify({ success: true, agents }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ success: true, agents: agents || [] }),
+          {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            status: 200,
+          }
         )
 
       case 'POST':
-        const createData: AgentCreateRequest = await req.json()
+        console.log('➕ Creating new agent for user:', user.id)
+        const createData = await req.json()
+        console.log('📝 Agent data:', createData)
         
-        // Validate required fields
-        if (!createData.name || !createData.system_prompt) {
-          return new Response(
-            JSON.stringify({ success: false, error: 'Name and system_prompt are required' }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-          )
-        }
-
         const { data: newAgent, error: createError } = await supabaseClient
           .from('assistants')
           .insert({
+            ...createData,
             user_id: user.id,
-            name: createData.name,
-            system_prompt: createData.system_prompt,
-            first_message: createData.first_message || 'Hello! How can I help you today?',
-            voice_provider: 'deepgram',
-            voice_id: createData.voice_id || 'aura-asteria-en',
-            model: createData.model || 'nova-2',
-            temperature: createData.temperature || 0.8,
-            max_tokens: createData.max_tokens || 500
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
           })
           .select()
           .single()
 
         if (createError) {
-          console.error('❌ Error creating agent:', createError)
-          return new Response(
-            JSON.stringify({ success: false, error: createError.message }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-          )
+          console.log('❌ Create error:', createError)
+          throw createError
         }
 
-        console.log('✅ Agent created:', newAgent.name, 'for user:', user.id)
-
+        console.log('✅ Agent created successfully:', newAgent.id)
         return new Response(
           JSON.stringify({ success: true, agent: newAgent }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 201 }
+          {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            status: 201,
+          }
         )
 
       case 'PUT':
-        const requestBody = await req.text()
-        let updateData: AgentUpdateRequest & { id?: string }
+        console.log('✏️ Updating agent for user:', user.id)
+        const updateData = await req.json()
+        console.log('📝 Update data:', updateData)
         
-        try {
-          updateData = JSON.parse(requestBody)
-        } catch (error) {
-          return new Response(
-            JSON.stringify({ success: false, error: 'Invalid JSON in request body' }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-          )
+        // Extract agent ID from request body instead of URL params
+        const agentId = updateData.id || updateData.agent_id
+        if (!agentId) {
+          throw new Error('Agent ID is required for update')
         }
 
-        if (!updateData.id) {
-          return new Response(
-            JSON.stringify({ success: false, error: 'Agent ID required for update' }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-          )
-        }
-
-        const agentId = updateData.id
-        delete updateData.id // Don't allow ID updates
-
+        console.log('🎯 Updating agent:', agentId)
+        
         const { data: updatedAgent, error: updateError } = await supabaseClient
           .from('assistants')
           .update({
-            ...updateData,
+            name: updateData.name,
+            system_prompt: updateData.system_prompt,
+            first_message: updateData.first_message,
+            voice_provider: updateData.voice_provider || 'deepgram',
+            voice_id: updateData.voice_id,
+            model: updateData.model,
+            temperature: updateData.temperature,
+            max_tokens: updateData.max_tokens,
             updated_at: new Date().toISOString()
           })
           .eq('id', agentId)
@@ -162,147 +132,81 @@ serve(async (req) => {
           .single()
 
         if (updateError) {
-          console.error('❌ Error updating agent:', updateError)
-          return new Response(
-            JSON.stringify({ success: false, error: updateError.message }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-          )
+          console.log('❌ Update error:', updateError)
+          throw updateError
         }
 
-        console.log('✅ Agent updated:', updatedAgent.name)
+        if (!updatedAgent) {
+          throw new Error('Agent not found or not authorized')
+        }
 
+        console.log('✅ Agent updated successfully:', updatedAgent.id)
         return new Response(
           JSON.stringify({ success: true, agent: updatedAgent }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            status: 200,
+          }
         )
 
       case 'DELETE':
-        const deleteBody = await req.text()
-        let deleteData: { id: string }
+        console.log('🗑️ Deleting agent for user:', user.id)
+        const deleteData = await req.json()
+        const deleteAgentId = deleteData.id || deleteData.agent_id
         
-        try {
-          deleteData = JSON.parse(deleteBody)
-        } catch (error) {
-          return new Response(
-            JSON.stringify({ success: false, error: 'Invalid JSON in request body' }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-          )
+        if (!deleteAgentId) {
+          throw new Error('Agent ID is required for deletion')
         }
 
-        if (!deleteData.id) {
-          return new Response(
-            JSON.stringify({ success: false, error: 'Agent ID required for deletion' }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-          )
-        }
+        console.log('🗑️ Attempting to delete agent:', deleteAgentId, 'for user:', user.id)
 
-        console.log('🗑️ Attempting to delete agent:', deleteData.id, 'for user:', user.id)
-
-        // First, check if the agent has any associated calls
-        const { data: associatedCalls, error: callsCheckError } = await supabaseClient
+        // Check if agent has active calls first
+        const { count: activeCallsCount } = await supabaseClient
           .from('calls')
-          .select('id, status, created_at')
-          .eq('assistant_id', deleteData.id)
-          .eq('user_id', user.id)
+          .select('*', { count: 'exact', head: true })
+          .eq('assistant_id', deleteAgentId)
+          .in('status', ['active', 'ringing', 'in-progress'])
 
-        if (callsCheckError) {
-          console.error('❌ Error checking associated calls:', callsCheckError)
-          return new Response(
-            JSON.stringify({ success: false, error: 'Failed to check associated calls' }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-          )
+        if (activeCallsCount && activeCallsCount > 0) {
+          console.log('❌ Cannot delete agent with', activeCallsCount, 'active calls')
+          throw new Error(`Cannot delete agent with ${activeCallsCount} active calls`)
         }
 
-        // Check for active calls (calls that are not completed or failed)
-        const activeCalls = associatedCalls?.filter(call => 
-          !['completed', 'failed', 'busy', 'no-answer'].includes(call.status || '')
-        ) || []
-
-        if (activeCalls.length > 0) {
-          console.log(`❌ Cannot delete agent with ${activeCalls.length} active calls`)
-          return new Response(
-            JSON.stringify({ 
-              success: false, 
-              error: 'Cannot delete agent with active calls',
-              details: {
-                activeCallsCount: activeCalls.length,
-                activeCallIds: activeCalls.map(call => call.id),
-                message: 'Please wait for all calls to complete before deleting this agent'
-              }
-            }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 409 }
-          )
-        }
-
-        // If there are completed calls, we can either:
-        // Option 1: Delete associated calls first (cascade delete)
-        // Option 2: Set assistant_id to null for existing calls
-        // We'll go with Option 2 to preserve call history
-
-        if (associatedCalls && associatedCalls.length > 0) {
-          console.log(`📝 Found ${associatedCalls.length} completed calls, updating assistant_id to null`)
-          
-          const { error: updateCallsError } = await supabaseClient
-            .from('calls')
-            .update({ assistant_id: null })
-            .eq('assistant_id', deleteData.id)
-            .eq('user_id', user.id)
-
-          if (updateCallsError) {
-            console.error('❌ Error updating associated calls:', updateCallsError)
-            return new Response(
-              JSON.stringify({ success: false, error: 'Failed to update associated calls' }),
-              { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-            )
-          }
-
-          console.log('✅ Updated associated calls to remove assistant reference')
-        }
-
-        // Now delete the agent
         const { error: deleteError } = await supabaseClient
           .from('assistants')
           .delete()
-          .eq('id', deleteData.id)
+          .eq('id', deleteAgentId)
           .eq('user_id', user.id)
 
         if (deleteError) {
-          console.error('❌ Error deleting agent:', deleteError)
-          return new Response(
-            JSON.stringify({ success: false, error: deleteError.message }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-          )
+          console.log('❌ Delete error:', deleteError)
+          throw deleteError
         }
 
-        console.log('✅ Agent deleted successfully:', deleteData.id)
-
+        console.log('✅ Agent deleted successfully:', deleteAgentId)
         return new Response(
-          JSON.stringify({ 
-            success: true, 
-            message: 'Agent deleted successfully',
-            details: {
-              agentId: deleteData.id,
-              associatedCallsUpdated: associatedCalls?.length || 0
-            }
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ success: true }),
+          {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            status: 200,
+          }
         )
 
       default:
-        return new Response(
-          JSON.stringify({ success: false, error: 'Method not allowed' }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 405 }
-        )
+        return new Response('Method not allowed', { status: 405, headers: corsHeaders })
     }
 
   } catch (error) {
-    console.error('❌ Agent management error:', error)
+    console.error('❌ Agent API error:', error)
     return new Response(
       JSON.stringify({
         success: false,
-        error: `Internal server error: ${error.message}`
+        error: error.message
       }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+      {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 500,
+      }
     )
   }
 })
