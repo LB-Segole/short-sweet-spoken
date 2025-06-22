@@ -36,7 +36,6 @@ export const useVoiceWebSocket = ({
   const messageLogRef = useRef<VoiceMessage[]>([]);
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 3;
-  const heartbeatInterval = useRef<number | null>(null);
   const connectionTimeout = useRef<number | null>(null);
   const connectionLockRef = useRef(false);
   const keepAliveInterval = useRef<number | null>(null);
