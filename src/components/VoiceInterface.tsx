@@ -3,7 +3,7 @@ import React, { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Mic, MicOff, Phone, PhoneOff, Volume2, AlertCircle, Activity } from 'lucide-react';
+import { Mic, MicOff, Phone, PhoneOff, Volume2, AlertCircle, Activity, Bug } from 'lucide-react';
 import { useVoiceWebSocket } from '../hooks/useVoiceWebSocket';
 import { toast } from 'sonner';
 
@@ -22,6 +22,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
 }) => {
   const [logs, setLogs] = useState<string[]>([]);
   const [lastResponse, setLastResponse] = useState<string>('');
+  const [debugMode, setDebugMode] = useState(false);
 
   const addLog = useCallback((message: string) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -31,7 +32,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
   const handleConnectionChange = useCallback((connected: boolean) => {
     if (connected) {
       toast.success('Voice connection established');
-      addLog('✅ Voice connection established');
+      addLog('✅ Voice connection established - ready for conversation');
     } else {
       toast.info('Voice connection closed');
       addLog('❌ Voice connection closed');
@@ -45,14 +46,23 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
   }, [addLog]);
 
   const handleMessage = useCallback((message: any) => {
-    if (message.type === 'text_response' && message.text) {
-      setLastResponse(message.text);
-      addLog(`🤖 AI: ${message.text}`);
-    } else if (message.type === 'greeting_sent' && message.text) {
-      setLastResponse(message.text);
-      addLog(`👋 Greeting: ${message.text}`);
+    if (message.type === 'text_response' && message.data?.text) {
+      setLastResponse(message.data.text);
+      addLog(`🤖 AI: ${message.data.text}`);
+    } else if (message.type === 'ai_response' && message.data?.text) {
+      setLastResponse(message.data.text);
+      addLog(`🤖 AI Response: ${message.data.text}`);
+    } else if (message.type === 'greeting_sent' && message.data?.text) {
+      setLastResponse(message.data.text);
+      addLog(`👋 Greeting: ${message.data.text}`);
+    } else if (message.type === 'transcript' && message.data?.text) {
+      addLog(`📝 You said: ${message.data.text}`);
+    } else if (message.type === 'connection_established') {
+      addLog(`🔗 Connection established with assistant: ${message.data?.assistant?.name || 'Default'}`);
+    } else if (debugMode && message.type === 'log') {
+      addLog(`🔧 Debug: ${message.data?.message}`);
     }
-  }, [addLog]);
+  }, [addLog, debugMode]);
 
   const {
     isConnected,
@@ -75,19 +85,36 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
     try {
       addLog('🔄 Requesting microphone access...');
       
-      // Request microphone permission
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(track => track.stop());
+      // Enhanced microphone permission check
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 16000 // Match Deepgram preferred rate
+        } 
+      });
       
-      addLog('🎤 Microphone access granted');
+      // Test the stream briefly
+      const tracks = stream.getTracks();
+      addLog(`🎤 Microphone access granted - ${tracks.length} audio track(s) detected`);
+      tracks.forEach(track => {
+        addLog(`🎧 Audio track: ${track.label} (${track.kind})`);
+        track.stop();
+      });
+      
       addLog('🔄 Connecting to voice services...');
-      
       await connect();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      toast.error('Microphone access denied');
-      addLog(`❌ Microphone access denied: ${errorMessage}`);
-      handleError(`Microphone access denied: ${errorMessage}`);
+      if (errorMessage.includes('Permission denied')) {
+        toast.error('Microphone access denied - please allow microphone access and try again');
+        addLog(`❌ Microphone permission denied: ${errorMessage}`);
+      } else {
+        toast.error('Failed to access microphone');
+        addLog(`❌ Microphone error: ${errorMessage}`);
+      }
+      handleError(`Microphone access failed: ${errorMessage}`);
     }
   };
 
@@ -127,7 +154,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
     switch (connectionState) {
       case 'connecting': return 'Connecting to voice services...';
       case 'connected': 
-        if (isRecording) return 'Listening for voice input';
+        if (isRecording) return 'Listening for voice input - speak now!';
         return 'Connected - ready for voice interaction';
       case 'error': return 'Connection error - please try again';
       default: return 'Ready to connect';
@@ -145,9 +172,19 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
               <Activity className="h-4 w-4 text-blue-500 animate-pulse" />
             )}
           </span>
-          <Badge variant={getConnectionBadgeVariant()}>
-            {connectionState.charAt(0).toUpperCase() + connectionState.slice(1)}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setDebugMode(!debugMode)}
+              className="h-6 w-6 p-0"
+            >
+              <Bug className={`h-3 w-3 ${debugMode ? 'text-blue-500' : 'text-gray-400'}`} />
+            </Button>
+            <Badge variant={getConnectionBadgeVariant()}>
+              {connectionState.charAt(0).toUpperCase() + connectionState.slice(1)}
+            </Badge>
+          </div>
         </CardTitle>
       </CardHeader>
       
@@ -159,7 +196,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
             <div className="flex items-center gap-2 mt-2">
               <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-400'}`}></div>
               <span className="text-xs text-gray-600">
-                {isRecording ? 'Recording...' : 'Ready'}
+                {isRecording ? 'Recording audio continuously...' : 'Microphone ready'}
               </span>
             </div>
           )}
@@ -178,7 +215,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
           {!isConnected ? (
             <Button onClick={handleConnect} className="flex-1">
               <Phone className="h-4 w-4 mr-2" />
-              Connect
+              Connect & Test Voice
             </Button>
           ) : (
             <>
@@ -207,7 +244,10 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
 
         {/* Live Logs */}
         <div className="space-y-2">
-          <h4 className="text-sm font-medium">Live Logs:</h4>
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-medium">Live Logs:</h4>
+            {debugMode && <span className="text-xs text-blue-600">Debug mode enabled</span>}
+          </div>
           <div className="bg-gray-50 p-3 rounded-md max-h-48 overflow-y-auto">
             {logs.length === 0 ? (
               <div className="text-gray-500 text-sm">No logs yet...</div>
@@ -223,18 +263,37 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
           </div>
         </div>
 
-        {/* Instructions */}
+        {/* Enhanced Instructions */}
         {!isConnected && (
           <div className="flex items-start gap-2 p-3 bg-green-50 rounded-md">
             <AlertCircle className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
             <div className="text-sm text-green-800">
-              <div className="font-medium">Voice Interface:</div>
+              <div className="font-medium">Voice Interface Test:</div>
               <ol className="list-decimal list-inside mt-1 space-y-1">
-                <li>Click "Connect" to initialize voice services</li>
+                <li>Click "Connect & Test Voice" to initialize</li>
                 <li>Allow microphone access when prompted</li>
-                <li>Test the connection with greeting or message buttons</li>
-                <li>Real-time voice processing will be enabled</li>
+                <li>Wait for "Listening for voice input" status</li>
+                <li>Speak clearly: "Hello, how are you?"</li>
+                <li>Watch logs for STT → AI → TTS flow</li>
+                <li>Verify AI responds with voice</li>
               </ol>
+            </div>
+          </div>
+        )}
+
+        {/* Connection Troubleshooting */}
+        {connectionState === 'error' && (
+          <div className="flex items-start gap-2 p-3 bg-red-50 rounded-md">
+            <AlertCircle className="h-4 w-4 text-red-600 mt-0.5 flex-shrink-0" />
+            <div className="text-sm text-red-800">
+              <div className="font-medium">Connection Failed - Check:</div>
+              <ul className="list-disc list-inside mt-1 space-y-1">
+                <li>Microphone permissions are granted</li>
+                <li>Network connection is stable</li>
+                <li>OpenAI API key is configured</li>
+                <li>Deepgram API key is available</li>
+                <li>Check browser console for detailed errors</li>
+              </ul>
             </div>
           </div>
         )}

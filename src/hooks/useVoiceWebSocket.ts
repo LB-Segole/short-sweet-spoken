@@ -1,4 +1,3 @@
-
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { AudioRecorder, AudioQueue, AudioEncoder } from '@/utils/audioUtils';
@@ -40,6 +39,7 @@ export const useVoiceWebSocket = ({
   const heartbeatInterval = useRef<number | null>(null);
   const connectionTimeout = useRef<number | null>(null);
   const connectionLockRef = useRef(false);
+  const keepAliveInterval = useRef<number | null>(null);
 
   const log = useCallback((message: string, data?: any) => {
     const timestamp = new Date().toISOString();
@@ -60,7 +60,7 @@ export const useVoiceWebSocket = ({
     try {
       log('🔄 Initializing audio system...');
       if (!audioContextRef.current) {
-        audioContextRef.current = new AudioContext({ sampleRate: 24000 });
+        audioContextRef.current = new AudioContext({ sampleRate: 16000 }); // Match Deepgram expected rate
         if (audioContextRef.current.state === 'suspended') {
           await audioContextRef.current.resume();
           log('✅ Audio context resumed');
@@ -90,6 +90,7 @@ export const useVoiceWebSocket = ({
     return maxAmp >= 0.001 && maxAmp <= 1.0;
   };
 
+  // Enhanced audio streaming with better buffering for Deepgram
   const handleAudioData = useCallback((audioData: Float32Array) => {
     if (wsRef.current?.readyState !== WebSocket.OPEN) return;
     try {
@@ -97,12 +98,22 @@ export const useVoiceWebSocket = ({
         log('⚠️ Invalid audio data detected, skipping chunk');
         return;
       }
-      const base64Audio = AudioEncoder.encodeAudioForWebSocket(audioData);
+      
+      // Convert to 16-bit PCM for Deepgram (better compatibility)
+      const pcm16Buffer = new Int16Array(audioData.length);
+      for (let i = 0; i < audioData.length; i++) {
+        pcm16Buffer[i] = Math.max(-32768, Math.min(32767, audioData[i] * 32768));
+      }
+      
+      const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcm16Buffer.buffer)));
+      
       if (!base64Audio || base64Audio.length < 10) return;
+      
       const maxAmplitude = Math.max(...Array.from(audioData).map(Math.abs));
       const message = { event: 'media', media: { payload: base64Audio } };
       wsRef.current.send(JSON.stringify(message));
-      if (import.meta.env.DEV && Math.random() < 0.001) {
+      
+      if (import.meta.env.DEV && Math.random() < 0.01) { // Log 1% of chunks
         log('📤 Audio chunk sent', {
           originalSize: audioData.length,
           encodedSize: base64Audio.length,
@@ -124,7 +135,7 @@ export const useVoiceWebSocket = ({
       }
       await audioRecorderRef.current.start();
       setIsRecording(true);
-      log('✅ Recording started');
+      log('✅ Recording started - continuous audio streaming active');
     } catch (error) {
       log('❌ Recording start error', error);
       onError?.(`Recording failed: ${error}`);
@@ -141,14 +152,16 @@ export const useVoiceWebSocket = ({
     }
   }, [log]);
 
-  const setupHeartbeat = useCallback(() => {
-    if (heartbeatInterval.current) clearInterval(heartbeatInterval.current);
-    heartbeatInterval.current = window.setInterval(() => {
+  // Enhanced keepalive with WebSocket ping/pong
+  const setupKeepAlive = useCallback(() => {
+    if (keepAliveInterval.current) clearInterval(keepAliveInterval.current);
+    keepAliveInterval.current = window.setInterval(() => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ event: 'ping', timestamp: Date.now() }));
-        log('💓 Heartbeat');
+        // Send JSON keepalive as recommended by Deepgram docs
+        wsRef.current.send(JSON.stringify({ type: 'KeepAlive', timestamp: Date.now() }));
+        log('💓 KeepAlive sent to prevent timeout');
       }
-    }, 30000);
+    }, 3000); // Every 3 seconds as per Deepgram recommendations
   }, [log]);
 
   const connect = useCallback(async () => {
@@ -201,9 +214,11 @@ export const useVoiceWebSocket = ({
       log('🌐 WebSocket URL configured', wsUrl);
 
       wsRef.current = new WebSocket(wsUrl);
+      
+      // Enhanced connection timeout with detailed logging
       connectionTimeout.current = window.setTimeout(() => {
         if (wsRef.current?.readyState !== WebSocket.OPEN) {
-          log('⏰ Connection timeout');
+          log('⏰ Connection timeout after 15 seconds');
           wsRef.current?.close();
           setConnectionState('error');
           onError?.('Connection timeout - failed to connect in 15 seconds');
@@ -212,12 +227,14 @@ export const useVoiceWebSocket = ({
 
       wsRef.current.onopen = () => {
         if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
-        log('✅ Voice WebSocket connected'); 
+        log('✅ Voice WebSocket connected successfully'); 
         setIsConnected(true); 
         setConnectionState('connected'); 
         onConnectionChange?.(true);
         reconnectAttempts.current = 0;
-        setupHeartbeat();
+        
+        // Setup keepalive immediately after connection
+        setupKeepAlive();
 
         wsRef.current?.send(JSON.stringify({ 
           event: 'connected', 
@@ -228,7 +245,12 @@ export const useVoiceWebSocket = ({
           timestamp: Date.now() 
         }));
         log('📤 Connection handshake sent');
-        setTimeout(startRecording, 500);
+        
+        // Start recording after a brief delay to ensure connection is stable
+        setTimeout(() => {
+          startRecording();
+          log('🎤 Continuous audio streaming initiated');
+        }, 500);
         connectionLockRef.current = false;
       };
 
@@ -236,16 +258,19 @@ export const useVoiceWebSocket = ({
         let data: any;
         try {
           data = JSON.parse(evt.data);
-        } catch { return; }
+        } catch { 
+          log('⚠️ Non-JSON message received');
+          return; 
+        }
         
         const eventType = data.type || data.event;
         const allowed = ['connection_established','audio_response','text_response','greeting_sent','transcript','ai_response','error','pong'];
         if (!allowed.includes(eventType)) {
-          log('❌ Invalid message type', data); 
+          log('❌ Invalid message type received', data); 
           return;
         }
         
-        log('📨 Received message', { type: eventType });
+        log('📨 Received message', { type: eventType, hasData: !!data.data });
         const message: VoiceMessage = { type: eventType, data, timestamp: Date.now() };
         onMessage?.(message);
 
@@ -255,24 +280,33 @@ export const useVoiceWebSocket = ({
               try {
                 const audioBuf = AudioEncoder.decodeAudioFromWebSocket(data.audio);
                 await audioQueueRef.current.addToQueue(audioBuf);
-                log('✅ Audio queued for playback');
+                log('✅ Audio queued for playback', { audioLength: audioBuf.length });
               } catch (err) {
                 log('❌ Audio processing error', err);
               }
             }
             break;
           case 'error':
+            log('❌ Server error received', data.message);
             onError?.(data.message || 'Unknown WebSocket error');
+            break;
+          case 'transcript':
+            log('📝 Transcript received', { text: data.text?.substring(0, 50) });
             break;
         }
       };
 
       wsRef.current.onerror = err => {
         if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
-        log('❌ WebSocket error', err);
+        log('❌ WebSocket error occurred', { 
+          error: err, 
+          readyState: wsRef.current?.readyState,
+          url: wsRef.current?.url
+        });
         setConnectionState('error');
         if (reconnectAttempts.current < maxReconnectAttempts) {
           reconnectAttempts.current++;
+          log(`🔄 Attempting reconnection ${reconnectAttempts.current}/${maxReconnectAttempts}`);
           setTimeout(connect, 2000 * reconnectAttempts.current);
         } else {
           onError?.('Connection failed after multiple retry attempts');
@@ -282,15 +316,30 @@ export const useVoiceWebSocket = ({
 
       wsRef.current.onclose = evt => {
         if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
-        if (heartbeatInterval.current) clearInterval(heartbeatInterval.current);
-        log('🔌 WebSocket closed', { code: evt.code, reason: evt.reason });
+        if (keepAliveInterval.current) clearInterval(keepAliveInterval.current);
+        
+        // Enhanced close event logging with specific error codes
+        const closeReason = evt.code === 1006 ? 'Abnormal closure (network/server issue)' :
+                           evt.code === 1011 ? 'Server error' :
+                           evt.code === 1000 ? 'Normal closure' :
+                           `Unknown (${evt.code})`;
+        
+        log('🔌 WebSocket closed', { 
+          code: evt.code, 
+          reason: evt.reason || closeReason,
+          wasClean: evt.wasClean
+        });
+        
         setIsConnected(false); 
         setConnectionState('disconnected'); 
         onConnectionChange?.(false);
         stopRecording();
         audioQueueRef.current?.clear();
+        
+        // Only attempt reconnection for unexpected closures
         if (evt.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
           reconnectAttempts.current++;
+          log(`🔄 Reconnecting due to unexpected closure (${evt.code})`);
           setTimeout(connect, 1000 * reconnectAttempts.current);
         }
         connectionLockRef.current = false;
@@ -302,13 +351,13 @@ export const useVoiceWebSocket = ({
       onError?.(`Connection failed: ${error}`);
       connectionLockRef.current = false;
     }
-  }, [userId, callId, assistantId, initializeAudio, startRecording, setupHeartbeat, onConnectionChange, onMessage, onError]);
+  }, [userId, callId, assistantId, initializeAudio, startRecording, setupKeepAlive, onConnectionChange, onMessage, onError]);
 
   const disconnect = useCallback(async () => {
     log('🔌 Disconnecting voice WebSocket');
     reconnectAttempts.current = maxReconnectAttempts;
     if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
-    if (heartbeatInterval.current) clearInterval(heartbeatInterval.current);
+    if (keepAliveInterval.current) clearInterval(keepAliveInterval.current);
     stopRecording();
     wsRef.current?.close(1000, 'User disconnected');
     wsRef.current = null;
