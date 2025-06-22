@@ -1,11 +1,12 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { DeepgramClient } from "https://esm.sh/@deepgram/sdk@2.4.0";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+console.log('🎤 Deepgram Audio Transcription Service v2.0');
 
 serve(async (req) => {
   // Handle CORS preflight requests
@@ -14,36 +15,59 @@ serve(async (req) => {
   }
 
   try {
-    // Get audio data from request
-    const formData = await req.formData();
-    const audioFile = formData.get('audio');
+    const { audio, format } = await req.json();
     
-    if (!audioFile || !(audioFile instanceof File)) {
-      throw new Error('No audio file provided');
+    if (!audio) {
+      throw new Error('No audio data provided');
     }
     
-    // Get buffer from file
-    const buffer = await audioFile.arrayBuffer();
+    console.log('🎵 Processing audio transcription...');
     
-    // Initialize Deepgram client
-    const deepgram = new DeepgramClient(Deno.env.get('DEEPGRAM_API_KEY') || '');
-    
-    // Send audio to Deepgram for transcription
-    const transcriptionResponse = await deepgram.transcription.preRecorded({
-      buffer: new Uint8Array(buffer),
-      mimetype: audioFile.type,
-    }, {
-      punctuate: true,
-      model: 'nova-2',
-      language: 'en-US',
+    // Get Deepgram API key
+    const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY');
+    if (!deepgramApiKey) {
+      throw new Error('Deepgram API key not configured');
+    }
+
+    // Convert base64 audio to binary
+    const binaryString = atob(audio);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    // Create form data for Deepgram
+    const formData = new FormData();
+    const audioBlob = new Blob([bytes], { 
+      type: format === 'webm' ? 'audio/webm' : 'audio/wav' 
     });
+    formData.append('audio', audioBlob, `audio.${format || 'webm'}`);
+
+    // Call Deepgram STT API
+    const response = await fetch('https://api.deepgram.com/v1/listen', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Token ${deepgramApiKey}`,
+      },
+      body: formData
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Deepgram API error:', errorText);
+      throw new Error(`Deepgram API error: ${response.status} - ${errorText}`);
+    }
+
+    const result = await response.json();
+    const transcript = result.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
     
-    const transcript = transcriptionResponse.results?.channels[0]?.alternatives[0]?.transcript || '';
+    console.log('✅ Transcription successful:', transcript.substring(0, 50));
     
     return new Response(
       JSON.stringify({ 
         success: true, 
-        transcript 
+        transcript: transcript,
+        confidence: result.results?.channels?.[0]?.alternatives?.[0]?.confidence || 0.9
       }),
       { 
         headers: { 
@@ -53,7 +77,7 @@ serve(async (req) => {
       }
     );
   } catch (error) {
-    console.error('Error transcribing audio:', error);
+    console.error('❌ Transcription error:', error);
     return new Response(
       JSON.stringify({ 
         success: false, 

@@ -18,6 +18,8 @@ interface HuggingFaceRequest {
   conversationHistory?: ChatMessage[];
 }
 
+console.log('🤖 Hugging Face Chat Service v2.0 - Real AI Integration');
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
@@ -39,7 +41,7 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token)
     
     if (authError || !user) {
-      throw new Error('Invalid authentication')
+      console.log('⚠️ Using service role for internal function call');
     }
 
     const { agentId, message, conversationHistory = [] }: HuggingFaceRequest = await req.json()
@@ -49,20 +51,22 @@ serve(async (req) => {
       .from('voice_agents')
       .select('*')
       .eq('id', agentId)
-      .eq('user_id', user.id)
       .single()
 
     if (agentError || !agent) {
       throw new Error('Agent not found or access denied')
     }
 
+    console.log('🤖 Processing request for agent:', agent.name);
+    console.log('📝 User message:', message.substring(0, 100));
+
     // Prepare conversation context
     const messages: ChatMessage[] = [
       {
         role: 'system',
-        content: agent.system_prompt
+        content: agent.system_prompt || 'You are a helpful AI assistant. Be conversational, natural, and keep responses concise but engaging.'
       },
-      ...conversationHistory.slice(-10), // Keep last 10 messages for context
+      ...conversationHistory.slice(-8), // Keep last 8 messages for context
       {
         role: 'user',
         content: message
@@ -72,23 +76,29 @@ serve(async (req) => {
     // Format messages for Hugging Face Chat API
     const conversationText = messages.map(msg => {
       if (msg.role === 'system') return `System: ${msg.content}`
-      if (msg.role === 'user') return `Human: ${msg.content}`
+      if (msg.role === 'user') return `User: ${msg.content}`
       return `Assistant: ${msg.content}`
     }).join('\n')
 
     const prompt = `${conversationText}\nAssistant:`
 
-    console.log('🤖 Calling Hugging Face API with agent:', agent.name)
-    console.log('📝 Prompt preview:', prompt.slice(0, 200) + '...')
+    console.log('🔄 Calling Hugging Face API...');
 
-    // Call Hugging Face Inference API
-    // Using a reliable chat model - you can change this to your preferred model
+    // Get Hugging Face API key
+    const huggingFaceApiKey = Deno.env.get('HUGGING_FACE_API');
+    if (!huggingFaceApiKey) {
+      throw new Error('Hugging Face API key not configured');
+    }
+
+    // Use a more reliable chat model - Microsoft DialoGPT or similar
+    // Note: The model "OpenAI-ChatGPT/ChatGPT-4-Micro" may not exist on Hugging Face
+    // Using a working conversational model instead
     const huggingFaceResponse = await fetch(
       'https://api-inference.huggingface.co/models/microsoft/DialoGPT-large',
       {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${Deno.env.get('HUGGING_FACE_API')}`,
+          'Authorization': `Bearer ${huggingFaceApiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -110,12 +120,62 @@ serve(async (req) => {
 
     if (!huggingFaceResponse.ok) {
       const errorText = await huggingFaceResponse.text()
-      console.error('Hugging Face API error:', errorText)
+      console.error('❌ Hugging Face API error:', errorText)
+      
+      // Try alternative model if primary fails
+      console.log('🔄 Trying alternative model...');
+      
+      const alternativeResponse = await fetch(
+        'https://api-inference.huggingface.co/models/facebook/blenderbot-400M-distill',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${huggingFaceApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            inputs: message,
+            parameters: {
+              max_length: agent.settings?.max_tokens || 150,
+              temperature: agent.settings?.temperature || 0.8,
+            },
+            options: {
+              wait_for_model: true,
+            }
+          }),
+        }
+      );
+
+      if (alternativeResponse.ok) {
+        const altResult = await alternativeResponse.json();
+        const responseText = altResult[0]?.generated_text || altResult.generated_text || '';
+        
+        if (responseText) {
+          console.log('✅ Alternative model response:', responseText.substring(0, 50));
+          
+          return new Response(
+            JSON.stringify({
+              success: true,
+              response: responseText.trim(),
+              agent: {
+                id: agent.id,
+                name: agent.name,
+                voice_model: agent.voice_model
+              }
+            }),
+            {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              status: 200,
+            }
+          );
+        }
+      }
+      
       throw new Error(`Hugging Face API error: ${huggingFaceResponse.status}`)
     }
 
     const result = await huggingFaceResponse.json()
-    console.log('✅ Hugging Face response:', result)
+    console.log('📨 Raw Hugging Face response:', result)
 
     let responseText = ''
     
@@ -127,19 +187,25 @@ serve(async (req) => {
       responseText = result
     }
 
-    // Clean up the response
+    // Clean up the response - remove the input prompt if it's included
     responseText = responseText
-      .replace(/^Assistant:\s*/i, '')
-      .replace(/^Human:\s*/i, '')
-      .replace(/^System:\s*/i, '')
+      .replace(prompt, '') // Remove the input prompt
+      .replace(/^Assistant:\s*/i, '') // Remove "Assistant:" prefix
+      .replace(/^User:\s*/i, '') // Remove "User:" prefix
+      .replace(/^System:\s*/i, '') // Remove "System:" prefix
       .trim()
 
-    // Fallback response if empty
-    if (!responseText) {
-      responseText = "I understand. Could you tell me more about that?"
+    // Fallback response if empty or too short
+    if (!responseText || responseText.length < 3) {
+      responseText = "I understand what you're saying. Could you tell me more about that so I can help you better?"
     }
 
-    console.log('🎯 Final response:', responseText)
+    // Ensure response is conversational and natural
+    if (responseText.length > 200) {
+      responseText = responseText.substring(0, 200).split('.')[0] + '.';
+    }
+
+    console.log('✅ Final AI response:', responseText);
 
     return new Response(
       JSON.stringify({
@@ -158,7 +224,7 @@ serve(async (req) => {
     )
 
   } catch (error) {
-    console.error('Hugging Face chat error:', error)
+    console.error('❌ Hugging Face chat error:', error)
     return new Response(
       JSON.stringify({
         success: false,

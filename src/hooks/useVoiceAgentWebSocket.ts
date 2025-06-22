@@ -1,15 +1,12 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
 import { VoiceAgent } from '@/types/voiceAgent';
-import { AudioRecorder, AudioQueue, AudioEncoder } from '@/utils/audioUtils';
 
 interface VoiceAgentWebSocketProps {
   agent: VoiceAgent;
-  onTranscript?: (text: string) => void;
-  onAgentResponse?: (text: string) => void;
-  onError?: (error: string) => void;
-  onStatusChange?: (status: string) => void;
+  onTranscript: (text: string) => void;
+  onAgentResponse: (text: string) => void;
+  onError: (error: string) => void;
 }
 
 export const useVoiceAgentWebSocket = ({
@@ -17,220 +14,234 @@ export const useVoiceAgentWebSocket = ({
   onTranscript,
   onAgentResponse,
   onError,
-  onStatusChange,
 }: VoiceAgentWebSocketProps) => {
   const [isConnected, setIsConnected] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [status, setStatus] = useState<string>('disconnected');
+  const [status, setStatus] = useState('Disconnected');
   
   const wsRef = useRef<WebSocket | null>(null);
-  const audioRecorderRef = useRef<AudioRecorder | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const audioQueueRef = useRef<AudioQueue | null>(null);
-  
-  const updateStatus = useCallback((newStatus: string) => {
-    setStatus(newStatus);
-    onStatusChange?.(newStatus);
-  }, [onStatusChange]);
-
-  const initializeAudio = useCallback(async () => {
-    try {
-      if (!audioContextRef.current) {
-        audioContextRef.current = new AudioContext({ sampleRate: 24000 });
-        if (audioContextRef.current.state === 'suspended') {
-          await audioContextRef.current.resume();
-        }
-      }
-      if (!audioQueueRef.current && audioContextRef.current) {
-        audioQueueRef.current = new AudioQueue(audioContextRef.current);
-      }
-      return true;
-    } catch (error) {
-      console.error('Audio initialization error:', error);
-      onError?.(`Audio init failed: ${error}`);
-      return false;
-    }
-  }, [onError]);
-
-  const handleAudioData = useCallback((audioData: Float32Array) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      try {
-        const base64Audio = AudioEncoder.encodeAudioForDeepgram(audioData);
-        const message = {
-          type: 'input_audio_buffer.append',
-          audio: base64Audio
-        };
-        wsRef.current.send(JSON.stringify(message));
-      } catch (error) {
-        console.error('Audio send error:', error);
-        onError?.(`Audio send failed: ${error}`);
-      }
-    }
-  }, [onError]);
-
-  const startRecording = useCallback(async () => {
-    try {
-      if (!audioRecorderRef.current) {
-        audioRecorderRef.current = new AudioRecorder(handleAudioData);
-      }
-      await audioRecorderRef.current.start();
-      setIsRecording(true);
-      updateStatus('recording');
-    } catch (error) {
-      console.error('Recording start error:', error);
-      onError?.(`Recording failed: ${error}`);
-    }
-  }, [handleAudioData, onError, updateStatus]);
-
-  const stopRecording = useCallback(() => {
-    if (audioRecorderRef.current) {
-      audioRecorderRef.current.stop();
-      audioRecorderRef.current = null;
-      setIsRecording(false);
-      updateStatus('connected');
-    }
-  }, [updateStatus]);
-
-  const handleAudioResponse = useCallback(async (base64Audio: string) => {
-    if (!audioContextRef.current || !audioQueueRef.current) return;
-
-    try {
-      const audioBuffer = await AudioEncoder.decodeAudioFromWebSocket(base64Audio, audioContextRef.current);
-      await audioQueueRef.current.addToQueue(audioBuffer);
-    } catch (error) {
-      console.error('Audio playback error:', error);
-      onError?.(`Audio playback failed: ${error}`);
-    }
-  }, [onError]);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const connect = useCallback(async () => {
     try {
-      updateStatus('connecting');
+      setStatus('Connecting...');
       
-      // Get session for authentication
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        throw new Error('No active session');
-      }
-
-      // Initialize audio system
-      const audioInitialized = await initializeAudio();
-      if (!audioInitialized) {
-        throw new Error('Failed to initialize audio system');
-      }
-
-      // Connect to Deepgram Voice Agent WebSocket
-      const wsUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent?agentId=${agent.id}`;
+      // Initialize WebSocket connection to our voice agent endpoint
+      const wsUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent`;
       wsRef.current = new WebSocket(wsUrl);
 
       wsRef.current.onopen = () => {
-        console.log('Voice Agent WebSocket connected');
+        console.log('🎙️ Voice Agent WebSocket connected');
         setIsConnected(true);
-        updateStatus('connected');
+        setStatus('Connected');
         
-        // Send agent configuration
-        const configMessage = {
-          type: 'session.update',
-          session: {
-            modalities: ['text', 'audio'],
-            instructions: agent.system_prompt,
-            voice: agent.voice_model,
-            input_audio_format: 'pcm16',
-            output_audio_format: 'pcm16',
-            turn_detection: agent.settings.turn_detection,
-            temperature: agent.settings.temperature,
-            max_response_output_tokens: agent.settings.max_tokens,
-            tools: agent.tools,
-          }
-        };
-        wsRef.current?.send(JSON.stringify(configMessage));
+        // Send agent initialization
+        wsRef.current?.send(JSON.stringify({
+          type: 'auth',
+          userId: 'demo-user',
+          agentId: agent.id
+        }));
       };
 
       wsRef.current.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          console.log('📨 Received:', data.type, data);
           
           switch (data.type) {
-            case 'conversation.item.input_audio_transcription.completed':
-              if (data.transcript) {
-                onTranscript?.(data.transcript);
+            case 'agent_loaded':
+              setStatus('Agent Ready');
+              break;
+              
+            case 'transcript':
+              if (data.data?.text) {
+                console.log('📝 Transcript:', data.data.text);
+                onTranscript(data.data.text);
               }
               break;
               
-            case 'response.audio.delta':
-              if (data.delta) {
-                handleAudioResponse(data.delta);
+            case 'ai_response':
+              if (data.data?.text) {
+                console.log('🤖 AI Response:', data.data.text);
+                onAgentResponse(data.data.text);
               }
               break;
               
-            case 'response.audio_transcript.delta':
-              if (data.delta) {
-                onAgentResponse?.(data.delta);
+            case 'audio_response':
+              if (data.data?.audio_base64) {
+                console.log('🔊 Playing AI audio response');
+                playAudioResponse(data.data.audio_base64);
               }
               break;
               
-            case 'session.created':
-              console.log('Deepgram session created');
+            case 'error':
+              console.error('❌ WebSocket error:', data.data?.error);
+              onError(data.data?.error || 'Unknown error');
               break;
-              
-            case 'session.updated':
-              console.log('Deepgram session updated');
-              break;
-              
-            default:
-              console.log('Unhandled message type:', data.type);
           }
         } catch (error) {
-          console.error('Message parsing error:', error);
-          onError?.(`Message parse failed: ${error}`);
+          console.error('❌ Error parsing message:', error);
         }
       };
 
-      wsRef.current.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        onError?.(`WebSocket error: ${error}`);
-        updateStatus('error');
+      wsRef.current.onclose = (event) => {
+        console.log('🔌 WebSocket closed:', event.code, event.reason);
+        setIsConnected(false);
+        setStatus('Disconnected');
+        setIsRecording(false);
       };
 
-      wsRef.current.onclose = (event) => {
-        console.log('WebSocket closed:', event.code, event.reason);
-        setIsConnected(false);
-        updateStatus('disconnected');
-        stopRecording();
+      wsRef.current.onerror = (error) => {
+        console.error('❌ WebSocket error:', error);
+        setStatus('Error');
+        onError('WebSocket connection error');
       };
 
     } catch (error) {
-      console.error('Connection error:', error);
-      onError?.(`Connection failed: ${error}`);
-      updateStatus('error');
+      console.error('❌ Connection error:', error);
+      setStatus('Error');
+      onError(`Connection failed: ${error}`);
     }
-  }, [agent, initializeAudio, onTranscript, onAgentResponse, onError, updateStatus, handleAudioResponse, stopRecording]);
+  }, [agent.id, onTranscript, onAgentResponse, onError]);
 
   const disconnect = useCallback(() => {
+    console.log('🔄 Disconnecting...');
+    
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+    }
+    
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
     }
-    stopRecording();
+    
     setIsConnected(false);
-    updateStatus('disconnected');
-  }, [stopRecording, updateStatus]);
+    setIsRecording(false);
+    setStatus('Disconnected');
+  }, [isRecording]);
+
+  const startRecording = useCallback(async () => {
+    if (!isConnected) {
+      onError('Not connected to voice agent');
+      return;
+    }
+
+    try {
+      console.log('🎤 Starting recording...');
+      
+      // Get microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+      
+      streamRef.current = stream;
+      
+      // Create MediaRecorder for audio capture
+      mediaRecorderRef.current = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      });
+      
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+          // Convert audio to base64 and send
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64Audio = reader.result?.toString().split(',')[1];
+            if (base64Audio) {
+              wsRef.current?.send(JSON.stringify({
+                type: 'audio_data',
+                audio: base64Audio
+              }));
+            }
+          };
+          reader.readAsDataURL(event.data);
+        }
+      };
+      
+      mediaRecorderRef.current.start(100); // Send data every 100ms
+      setIsRecording(true);
+      setStatus('Recording...');
+      
+      // Start conversation
+      wsRef.current?.send(JSON.stringify({
+        type: 'start_conversation'
+      }));
+      
+    } catch (error) {
+      console.error('❌ Recording error:', error);
+      onError(`Recording failed: ${error}`);
+    }
+  }, [isConnected, onError]);
+
+  const stopRecording = useCallback(() => {
+    console.log('🛑 Stopping recording...');
+    
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+    }
+    
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+    }
+    
+    setIsRecording(false);
+    setStatus('Connected');
+  }, [isRecording]);
 
   const sendTextMessage = useCallback((text: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      const message = {
-        type: 'conversation.item.create',
-        item: {
-          type: 'message',
-          role: 'user',
-          content: [{ type: 'input_text', text }]
-        }
-      };
-      wsRef.current.send(JSON.stringify(message));
-      wsRef.current.send(JSON.stringify({ type: 'response.create' }));
+      console.log('💬 Sending text:', text);
+      wsRef.current.send(JSON.stringify({
+        type: 'text_input',
+        text: text
+      }));
+    } else {
+      onError('Not connected to send message');
+    }
+  }, [onError]);
+
+  const playAudioResponse = useCallback(async (base64Audio: string) => {
+    try {
+      // Initialize audio context if needed
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContext();
+      }
+      
+      // Decode base64 audio
+      const binaryString = atob(base64Audio);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      
+      // Decode and play audio
+      const audioBuffer = await audioContextRef.current.decodeAudioData(bytes.buffer);
+      const source = audioContextRef.current.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContextRef.current.destination);
+      source.start();
+      
+      console.log('✅ Audio played successfully');
+    } catch (error) {
+      console.error('❌ Audio playback error:', error);
     }
   }, []);
 
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       disconnect();
