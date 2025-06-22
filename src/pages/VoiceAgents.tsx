@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Plus } from 'lucide-react';
@@ -8,6 +7,7 @@ import { VoiceAgentForm } from '@/components/VoiceAgents/VoiceAgentForm';
 import { VoiceAgentCard } from '@/components/VoiceAgents/VoiceAgentCard';
 import { VoiceTestInterface } from '@/components/VoiceAgents/VoiceTestInterface';
 import { VoiceAgent, VoiceAgentFormData } from '@/types/voiceAgent';
+import { BrowserChatTest } from '@/components/BrowserChatTest';
 
 const VoiceAgents = () => {
   const navigate = useNavigate();
@@ -15,6 +15,7 @@ const VoiceAgents = () => {
   const [showForm, setShowForm] = useState(false);
   const [editingAgent, setEditingAgent] = useState<VoiceAgent | undefined>(undefined);
   const [testingAgent, setTestingAgent] = useState<VoiceAgent | null>(null);
+  const [chattingAgent, setChattingAgent] = useState<VoiceAgent | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleCreateAgent = async (formData: VoiceAgentFormData) => {
@@ -57,6 +58,10 @@ const VoiceAgents = () => {
 
   const handleStartTest = (agent: VoiceAgent) => {
     setTestingAgent(agent);
+  };
+
+  const handleStartChat = (agent: VoiceAgent) => {
+    setChattingAgent(agent);
   };
 
   const handleMakeCall = (agent: VoiceAgent) => {
@@ -129,6 +134,7 @@ const VoiceAgents = () => {
                 onDelete={handleDelete}
                 onToggleStatus={toggleAgentStatus}
                 onStartTest={handleStartTest}
+                onStartChat={handleStartChat}
                 onMakeCall={handleMakeCall}
               />
             ))}
@@ -152,6 +158,14 @@ const VoiceAgents = () => {
         <VoiceTestInterface
           agent={testingAgent}
           onClose={() => setTestingAgent(null)}
+        />
+      )}
+
+      {/* Browser Chat Test Interface */}
+      {chattingAgent && (
+        <BrowserChatTest
+          agent={chattingAgent}
+          onClose={() => setChattingAgent(null)}
         />
       )}
     </div>

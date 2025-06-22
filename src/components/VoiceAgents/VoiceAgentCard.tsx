@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { VoiceAgent } from '@/types/voiceAgent';
-import { Edit, Trash2, Phone, Play, Pause } from 'lucide-react';
+import { Edit, Trash2, Phone, Play, Pause, MessageCircle, Mic } from 'lucide-react';
 
 interface VoiceAgentCardProps {
   agent: VoiceAgent;
@@ -12,6 +12,7 @@ interface VoiceAgentCardProps {
   onDelete: (id: string) => void;
   onToggleStatus: (id: string, isActive: boolean) => void;
   onStartTest: (agent: VoiceAgent) => void;
+  onStartChat: (agent: VoiceAgent) => void;
   onMakeCall: (agent: VoiceAgent) => void;
 }
 
@@ -21,6 +22,7 @@ export const VoiceAgentCard: React.FC<VoiceAgentCardProps> = ({
   onDelete,
   onToggleStatus,
   onStartTest,
+  onStartChat,
   onMakeCall,
 }) => {
   return (
@@ -79,11 +81,21 @@ export const VoiceAgentCard: React.FC<VoiceAgentCardProps> = ({
           <Button
             variant="outline"
             size="sm"
+            onClick={() => onStartChat(agent)}
+            disabled={!agent.is_active}
+          >
+            <MessageCircle className="h-4 w-4 mr-1" />
+            Browser Chat
+          </Button>
+          
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => onStartTest(agent)}
             disabled={!agent.is_active}
           >
-            <Play className="h-4 w-4 mr-1" />
-            Test Voice
+            <Mic className="h-4 w-4 mr-1" />
+            Voice Test
           </Button>
           
           <Button

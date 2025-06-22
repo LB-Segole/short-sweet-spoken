@@ -1,10 +1,11 @@
-
 import { supabase } from '@/lib/supabase';
+import { aiChatService } from './aiChatService';
 
 interface AIResponseContext {
   callId: string;
   confidence?: number;
   previousMessages?: Array<{ role: string; content: string }>;
+  agentId?: string;
 }
 
 interface AIResponse {
@@ -22,7 +23,29 @@ export const generateAIResponse = async (
   try {
     console.log('Generating AI response for:', transcript);
     
-    // Simple rule-based AI response
+    // If we have an agentId, use Hugging Face AI service
+    if (context.agentId) {
+      const response = await aiChatService.sendMessage(
+        context.agentId,
+        transcript,
+        context.callId
+      );
+
+      if (response.success && response.response) {
+        // Analyze the response for call control intents
+        const lowerResponse = response.response.toLowerCase();
+        
+        return {
+          text: response.response,
+          shouldEndCall: lowerResponse.includes('goodbye') || lowerResponse.includes('thank you for your time'),
+          shouldTransfer: lowerResponse.includes('transfer') || lowerResponse.includes('human representative'),
+          intent: 'ai_generated',
+          confidence: 0.9
+        };
+      }
+    }
+    
+    // Fallback to rule-based AI response
     const response = await processTranscript(transcript);
     
     // Log the interaction
