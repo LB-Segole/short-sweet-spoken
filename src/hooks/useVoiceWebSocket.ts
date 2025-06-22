@@ -1,4 +1,3 @@
-
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { AudioRecorder, AudioQueue, AudioEncoder } from '@/utils/audioUtils';
@@ -16,6 +15,15 @@ interface UseVoiceWebSocketProps {
   onConnectionChange?: (connected: boolean) => void;
   onMessage?: (message: VoiceMessage) => void;
   onError?: (error: string) => void;
+}
+
+interface ConnectionMessage {
+  type: string;
+  userId: string;
+  callId: string;
+  assistantId: string;
+  timestamp: number;
+  auth?: string;
 }
 
 export const useVoiceWebSocket = ({
@@ -227,7 +235,7 @@ export const useVoiceWebSocket = ({
         reconnectAttempts.current = 0;
         
         // Send connection message with auth if available
-        const connectionMessage = {
+        const connectionMessage: ConnectionMessage = {
           type: 'connected',
           userId,
           callId: callId || 'browser-test',
