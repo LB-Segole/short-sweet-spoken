@@ -1,11 +1,10 @@
-
 // deno-lint-ignore-file
 // This file is intended for Deno Deploy Edge Functions. Deno.env.get and remote imports are valid in this context.
 // If your editor or linter flags errors for Deno or remote imports, you can safely ignore them for Supabase Edge Functions.
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 DeepGram Voice WebSocket initialized v4.0 - Fixed TTS buffering and STT endpointing');
+console.log('🚀 DeepGram Voice WebSocket initialized v5.0 - Enhanced Real-Time Conversation');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -20,6 +19,8 @@ interface ConversationResponse {
   shouldEndCall: boolean;
   intent: string;
   confidence: number;
+  sentiment: string;
+  emotion: string;
 }
 
 interface ConversationContext {
@@ -124,7 +125,7 @@ async function getSummary(conversationBuffer: Array<{ role: string; content: str
   }
 }
 
-// --- Modified generateConversationResponse ---
+// --- Enhanced generateConversationResponse with better real-time processing ---
 const generateConversationResponse = async (
   userInput: string,
   context: any,
@@ -132,17 +133,24 @@ const generateConversationResponse = async (
   assistantCustomPrompt?: string
 ): Promise<any> => {
   try {
+    log('🧠 Generating real-time AI response for:', userInput.substring(0, 50) + '...');
+    
     // Use custom prompt if available
-    const systemPrompt = assistantCustomPrompt || context.agentPrompt || 'You are a helpful AI assistant.';
+    const systemPrompt = assistantCustomPrompt || context.agentPrompt || 'You are a helpful AI assistant in a phone conversation. Keep responses conversational, natural, and under 2-3 sentences. Respond as if you are speaking directly to the person.';
+    
     const messages: Array<{ role: string; content: string }> = [
       { role: 'system', content: systemPrompt }
     ];
+    
     if (context.previousMessages && Array.isArray(context.previousMessages)) {
-      messages.push(...context.previousMessages);
+      // Only keep last 10 messages for context to avoid token limits
+      messages.push(...context.previousMessages.slice(-10));
     }
     messages.push({ role: 'user', content: userInput });
 
-    // Call OpenAI for response
+    log('💭 Sending to OpenAI with context length:', messages.length);
+
+    // Call OpenAI for response with optimized settings for real-time conversation
     const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -152,38 +160,66 @@ const generateConversationResponse = async (
       body: JSON.stringify({
         model: 'gpt-4o',
         messages,
-        max_tokens: 300,
-        temperature: 0.7,
+        max_tokens: 150, // Shorter for faster response
+        temperature: 0.8, // Slightly more conversational
+        presence_penalty: 0.1,
+        frequency_penalty: 0.1,
       })
     });
-    if (!openaiResponse.ok) throw new Error(await openaiResponse.text());
+
+    if (!openaiResponse.ok) {
+      const errorText = await openaiResponse.text();
+      log('❌ OpenAI API Error:', errorText);
+      throw new Error(`OpenAI API error: ${openaiResponse.status} ${errorText}`);
+    }
+
     const aiData = await openaiResponse.json();
     const aiText = aiData.choices?.[0]?.message?.content?.trim() || '';
+    
+    log('✅ Generated AI response:', aiText.substring(0, 100) + '...');
 
-    // Sentiment analysis
-    const sentiment = await getSentiment(userInput, openaiApiKey);
-    // Emotion detection
-    const emotion = await getEmotion(userInput, openaiApiKey);
+    // Enhanced sentiment and emotion analysis
+    const [sentiment, emotion] = await Promise.all([
+      getSentiment(userInput, openaiApiKey),
+      getEmotion(userInput, openaiApiKey)
+    ]);
 
-    // Intent detection
+    // Enhanced intent detection for real-time conversation
     const input = userInput.toLowerCase().trim();
     let shouldTransfer = false;
     let shouldEndCall = false;
-    let intent = 'general_inquiry';
+    let intent = 'general_conversation';
     let confidence = 0.7;
-    if (input.includes('human') || input.includes('person') || input.includes('representative')) {
-      shouldTransfer = true; intent = 'transfer_request'; confidence = 0.95;
-    } else if (input.includes('not interested') || input.includes('no thank') || input.includes('busy')) {
-      shouldEndCall = true; intent = 'not_interested'; confidence = 0.85;
-    } else if (input.includes('price') || input.includes('cost') || input.includes('expensive')) {
-      shouldTransfer = true; intent = 'pricing_inquiry'; confidence = 0.8;
-    } else if (input.includes('hello') || input.includes('hi') || input.includes('hey')) {
-      intent = 'greeting'; confidence = 0.9;
-    } else if (input.includes('business') || input.includes('service') || input.includes('help')) {
-      intent = 'business_inquiry'; confidence = 0.8;
+
+    // More comprehensive intent detection
+    if (input.includes('human') || input.includes('person') || input.includes('representative') || input.includes('transfer')) {
+      shouldTransfer = true; 
+      intent = 'transfer_request'; 
+      confidence = 0.95;
+    } else if (input.includes('goodbye') || input.includes('bye') || input.includes('hang up') || input.includes('end call')) {
+      shouldEndCall = true; 
+      intent = 'end_conversation'; 
+      confidence = 0.9;
+    } else if (input.includes('not interested') || input.includes('no thank') || input.includes('busy') || input.includes('stop calling')) {
+      shouldEndCall = true; 
+      intent = 'not_interested'; 
+      confidence = 0.85;
+    } else if (input.includes('price') || input.includes('cost') || input.includes('expensive') || input.includes('money')) {
+      intent = 'pricing_inquiry'; 
+      confidence = 0.8;
+    } else if (input.includes('hello') || input.includes('hi') || input.includes('hey') || input.includes('yes')) {
+      intent = 'positive_engagement'; 
+      confidence = 0.9;
+    } else if (input.includes('business') || input.includes('service') || input.includes('help') || input.includes('information')) {
+      intent = 'business_inquiry'; 
+      confidence = 0.8;
+    } else if (input.includes('what') || input.includes('how') || input.includes('why') || input.includes('tell me')) {
+      intent = 'question'; 
+      confidence = 0.75;
     }
+
     return {
-      text: aiText || 'I apologize, I didn\'t catch that. Could you repeat?',
+      text: aiText || 'I understand. Could you tell me more about that?',
       shouldTransfer,
       shouldEndCall,
       intent,
@@ -192,32 +228,32 @@ const generateConversationResponse = async (
       emotion
     };
   } catch (error) {
-    console.error('Advanced conversation handling failed, falling back to rule-based:', error);
-    // Fallback: use previous rule-based logic
+    log('❌ AI conversation error:', error);
+    // Enhanced fallback with more natural responses
     const input = userInput.toLowerCase().trim();
-    let responsePrefix = '';
-    const agentPersonality = context.agentPersonality || 'professional';
-    if (agentPersonality === 'friendly') responsePrefix = 'That sounds wonderful! ';
-    else if (agentPersonality === 'professional') responsePrefix = 'I understand. ';
-    else if (agentPersonality === 'casual') responsePrefix = 'Got it! ';
-    let sentiment = 'unknown';
-    if (input.includes('hello') || input.includes('hi') || input.includes('hey')) {
-      return { text: `Hello! Thank you for connecting. ${context.agentPrompt?.includes('business') ? 'I\'m here to help with your business needs.' : 'How can I assist you today?'}`, shouldTransfer: false, shouldEndCall: false, intent: 'greeting', confidence: 0.9, sentiment: 'unknown', emotion: 'unknown' };
+    let fallbackResponse = '';
+    
+    if (input.includes('hello') || input.includes('hi')) {
+      fallbackResponse = 'Hello! Thank you for taking the time to speak with me. How are you doing today?';
+    } else if (input.includes('what') || input.includes('who')) {
+      fallbackResponse = 'That\'s a great question. Let me help you with that. Could you tell me a bit more about what you\'re looking for?';
+    } else if (input.includes('yes')) {
+      fallbackResponse = 'Wonderful! I\'m glad to hear that. What would you like to know more about?';
+    } else if (input.includes('no')) {
+      fallbackResponse = 'I understand. Is there anything else I can help you with today?';
+    } else {
+      fallbackResponse = 'I hear you. That sounds interesting. Could you tell me more about that so I can better assist you?';
     }
-    if (input.includes('business') || input.includes('service') || input.includes('help')) {
-      return { text: `${responsePrefix}I'd be happy to help you with that. Can you tell me more about what specific assistance you're looking for?`, shouldTransfer: false, shouldEndCall: false, intent: 'business_inquiry', confidence: 0.8, sentiment: 'unknown', emotion: 'unknown' };
-    }
-    if (input.includes('price') || input.includes('cost') || input.includes('expensive')) {
-      return { text: `${responsePrefix}I understand you're interested in pricing information. Let me connect you with someone who can provide detailed pricing based on your specific needs.`, shouldTransfer: true, shouldEndCall: false, intent: 'pricing_inquiry', confidence: 0.8, sentiment: 'unknown', emotion: 'unknown' };
-    }
-    if (input.includes('human') || input.includes('person') || input.includes('representative')) {
-      return { text: `${responsePrefix}Of course! Let me connect you with one of our human representatives who can provide more detailed assistance.`, shouldTransfer: true, shouldEndCall: false, intent: 'transfer_request', confidence: 0.9, sentiment: 'unknown', emotion: 'unknown' };
-    }
-    if (input.includes('not interested') || input.includes('no thank') || input.includes('busy')) {
-      return { text: `${responsePrefix}I understand you're not interested right now. Thank you for your time, and please feel free to reach out if your needs change. Have a great day!`, shouldTransfer: false, shouldEndCall: true, intent: 'not_interested', confidence: 0.8, sentiment: 'unknown', emotion: 'unknown' };
-    }
-    const contextualResponse = context.agentPrompt?.includes('sales') ? `I'd love to learn more about how we can help your business grow. What challenges are you currently facing?` : `That's interesting! Can you tell me more about that so I can better assist you?`;
-    return { text: `${responsePrefix}${contextualResponse}`, shouldTransfer: false, shouldEndCall: false, intent: 'general_inquiry', confidence: 0.6, sentiment: 'unknown', emotion: 'unknown' };
+    
+    return {
+      text: fallbackResponse,
+      shouldTransfer: false,
+      shouldEndCall: false,
+      intent: 'fallback_response',
+      confidence: 0.6,
+      sentiment: 'unknown',
+      emotion: 'unknown'
+    };
   }
 };
 
@@ -260,6 +296,7 @@ serve(async (req) => {
     let conversationBuffer: Array<{ role: string; content: string }> = []
     let ttsInitialized = false
     let firstMessageSent = false
+    let processingTranscript = false // Prevent duplicate processing
 
     const log = (msg: string, data?: any) => 
       console.log(`[${new Date().toISOString()}] [Call: ${callId}] ${msg}`, data || '')
@@ -275,7 +312,7 @@ serve(async (req) => {
           .single()
         if (assistantData) {
           assistant = assistantData
-          log('✅ Assistant loaded', { name: assistant.name, personality: assistant.system_prompt })
+          log('✅ Assistant loaded', { name: assistant.name, system_prompt: assistant.system_prompt })
         }
       } catch (err) {
         log('⚠️ Error fetching assistant, using default', err)
@@ -284,56 +321,66 @@ serve(async (req) => {
 
     if (!assistant) {
       assistant = {
-        name: 'DeepGram Assistant',
-        first_message: 'Hello! This is your AI assistant powered by DeepGram. How can I help you today?',
-        system_prompt: 'You are a helpful AI assistant. Be friendly, professional, and concise.'
+        name: 'AI Assistant',
+        first_message: 'Hello! Thank you for taking my call. This is your AI assistant. How can I help you today?',
+        system_prompt: 'You are a helpful AI assistant in a phone conversation. Be natural, conversational, and keep responses concise. Respond as if speaking directly to the person.'
       }
     }
 
-    // Initialize DeepGram STT with FIXED endpointing
+    // Enhanced STT with better real-time processing
     const initializeSTT = () => {
       try {
-        // FIXED: Added utterance_end_ms and proper endpointing parameters
-        const sttUrl = 'wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&endpointing=300&utterance_end_ms=1000&vad_events=true'
+        // Enhanced STT URL with better endpointing and real-time parameters
+        const sttUrl = 'wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&endpointing=200&utterance_end_ms=800&vad_events=true&punctuate=true&diarize=false'
         deepgramSTT = new WebSocket(sttUrl, ['token', deepgramApiKey])
 
         deepgramSTT.onopen = () => {
-          log('✅ DeepGram STT connected with enhanced endpointing')
+          log('✅ DeepGram STT connected with enhanced real-time processing')
         }
 
         deepgramSTT.onmessage = async (event) => {
           try {
             const data = JSON.parse(event.data)
             
-            // FIXED: Handle both Results and UtteranceEnd events
+            // Handle transcription results
             if (data.type === 'Results' && data.channel?.alternatives?.[0]?.transcript) {
-              const transcript = data.channel.alternatives[0].transcript
+              const transcript = data.channel.alternatives[0].transcript.trim()
               const isFinal = data.is_final || false
+              const confidence = data.channel.alternatives[0].confidence || 1.0
               
-              if (transcript.trim()) {
-                log('📝 STT transcript:', { transcript, isFinal })
+              if (transcript && transcript.length > 2) { // Filter out very short utterances
+                log('📝 STT transcript:', { transcript, isFinal, confidence: confidence.toFixed(2) })
                 
                 socket.send(JSON.stringify({
                   type: 'transcript',
                   text: transcript,
-                  confidence: data.channel.alternatives[0].confidence || 1.0,
+                  confidence,
                   isFinal,
                   timestamp: Date.now()
                 }))
 
-                // FIXED: Process conversation on final transcripts
-                if (isFinal) {
-                  log('🎯 Processing final transcript:', transcript)
-                  await processConversation(transcript)
+                // Process final transcripts for AI response
+                if (isFinal && !processingTranscript && transcript.length > 5) {
+                  processingTranscript = true
+                  log('🎯 Processing final transcript for AI response:', transcript)
+                  setTimeout(async () => {
+                    await processConversation(transcript)
+                    processingTranscript = false
+                  }, 100) // Small delay to ensure clean processing
                 }
               }
             }
             
-            // FIXED: Handle UtteranceEnd for better turn detection
+            // Handle utterance end events for better turn detection
             if (data.type === 'UtteranceEnd') {
-              log('🔚 Utterance ended - processing conversation turn')
-              // Additional processing if needed
+              log('🔚 Utterance ended - user finished speaking')
             }
+
+            // Handle VAD events
+            if (data.type === 'SpeechStarted') {
+              log('🎤 User started speaking')
+            }
+            
           } catch (error) {
             log('❌ Error processing STT message:', error)
           }
@@ -356,36 +403,35 @@ serve(async (req) => {
       }
     }
 
-    // Initialize DeepGram TTS with FIXED buffering
+    // Enhanced TTS with better audio quality
     const initializeTTS = () => {
       try {
-        // FIXED: Using linear16 for better audio quality and compatibility
+        // Using linear16 with WAV container for better audio quality
         const ttsUrl = 'wss://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=linear16&sample_rate=8000&container=wav'
         deepgramTTS = new WebSocket(ttsUrl, ['token', deepgramApiKey])
 
         deepgramTTS.onopen = () => {
-          log('✅ DeepGram TTS connected with linear16/WAV format')
+          log('✅ DeepGram TTS connected with enhanced audio quality')
           ttsInitialized = true
           
-          // FIXED: Send buffer flush/clear before first message
+          // Clear any existing buffers and send first message
           if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN) {
             deepgramTTS.send(JSON.stringify({ type: 'Flush' }))
-            log('🧹 TTS buffer flushed')
+            log('🧹 TTS buffer flushed for clean start')
             
-            // FIXED: Add brief delay before sending first message
+            // Send first message after brief delay
             setTimeout(() => {
               if (assistant.first_message && !firstMessageSent) {
                 sendTTSMessage(assistant.first_message)
                 firstMessageSent = true
               }
-            }, 200) // 200ms delay for buffer clearing
+            }, 200)
           }
         }
 
         deepgramTTS.onmessage = (event) => {
           if (event.data instanceof ArrayBuffer) {
             try {
-              // FIXED: Handle WAV format audio properly
               const audioArray = new Uint8Array(event.data)
               const base64Audio = btoa(String.fromCharCode(...audioArray))
               
@@ -398,7 +444,9 @@ serve(async (req) => {
                   }
                 }
                 socket.send(JSON.stringify(mediaMessage))
-                log('🔊 WAV audio sent to SignalWire')
+                if (Math.random() < 0.1) { // Log occasionally
+                  log('🔊 Audio sent to SignalWire (quality: WAV/linear16)')
+                }
               }
             } catch (error) {
               log('❌ Error processing TTS audio:', error)
@@ -425,16 +473,15 @@ serve(async (req) => {
       }
     }
 
-    // FIXED: Enhanced TTS message sending with proper buffering
+    // Enhanced TTS message sending with better buffering
     const sendTTSMessage = (text: string) => {
       if (!text || !text.trim()) return
       
       if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN && ttsInitialized) {
         try {
-          // FIXED: Clear any previous buffers before sending new message
+          // Clear previous buffers for clean audio
           deepgramTTS.send(JSON.stringify({ type: 'Clear' }))
           
-          // Small delay to ensure buffer is cleared
           setTimeout(() => {
             if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN) {
               const message = {
@@ -442,65 +489,44 @@ serve(async (req) => {
                 text: text.trim()
               }
               deepgramTTS.send(JSON.stringify(message))
-              log('📤 TTS message sent with buffer clear:', text.substring(0, 50) + '...')
+              log('📤 TTS message sent:', text.substring(0, 60) + (text.length > 60 ? '...' : ''))
             }
           }, 50)
         } catch (error) {
           log('❌ Error sending TTS message:', error)
         }
       } else {
-        log('⚠️ TTS not ready, queuing message:', text.substring(0, 50) + '...')
-        // Queue message for when TTS reconnects
+        log('⚠️ TTS not ready, message queued:', text.substring(0, 50) + '...')
         setTimeout(() => sendTTSMessage(text), 1000)
       }
     }
 
+    // Enhanced conversation processing with better real-time handling
     const processConversation = async (transcript: string) => {
       try {
-        log('🧠 Processing conversation:', { input: transcript })
+        log('🧠 Processing real-time conversation:', transcript)
         const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
         if (!openaiApiKey) throw new Error('OPENAI_API_KEY not configured');
 
         // Add user message to conversation buffer
         conversationBuffer.push({ role: 'user', content: transcript })
 
-        // Generate AI response using the conversation service (with custom prompt)
+        // Generate AI response with real-time optimization
         const response = await generateConversationResponse(transcript, {
           callId,
           agentPrompt: assistant.system_prompt,
-          agentPersonality: assistant.voice_provider === 'friendly' ? 'friendly' : 'professional',
+          agentPersonality: 'conversational',
           previousMessages: conversationBuffer
-        }, openaiApiKey, assistant.custom_prompt || assistant.instructions)
+        }, openaiApiKey, assistant.instructions || assistant.system_prompt)
 
-        log('🤖 AI Response generated:', response)
+        log('🤖 Real-time AI response generated:', response.text.substring(0, 80) + '...')
 
         // Add AI response to conversation buffer
         conversationBuffer.push({ role: 'assistant', content: response.text })
 
-        // --- Real-Time Analytics: Log to Supabase ---
-        try {
-          await supabaseClient.from('conversation_logs').insert({
-            call_id: callId,
-            speaker: 'user',
-            message: transcript,
-            sentiment: response.sentiment,
-            emotion: response.emotion,
-            intent: response.intent,
-            timestamp: new Date().toISOString(),
-            metadata: { confidence: response.confidence }
-          });
-          await supabaseClient.from('conversation_logs').insert({
-            call_id: callId,
-            speaker: 'assistant',
-            message: response.text,
-            sentiment: 'n/a',
-            emotion: 'n/a',
-            intent: response.intent,
-            timestamp: new Date().toISOString(),
-            metadata: { confidence: response.confidence }
-          });
-        } catch (e) {
-          log('⚠️ Analytics logging failed:', e)
+        // Keep conversation buffer manageable
+        if (conversationBuffer.length > 20) {
+          conversationBuffer = conversationBuffer.slice(-16)
         }
 
         // Send response back to client
@@ -516,36 +542,47 @@ serve(async (req) => {
           timestamp: Date.now()
         }))
 
-        // FIXED: Convert response to speech with proper buffer handling
+        // Convert AI response to speech immediately for real-time conversation
         sendTTSMessage(response.text)
-
-        // --- Conversation Summaries: Every 10 turns or at call end ---
-        if (conversationBuffer.length % 10 === 0 || response.shouldEndCall) {
-          try {
-            const summary = await getSummary(conversationBuffer, openaiApiKey)
-            if (summary) {
-              await supabaseClient.from('calls').update({ call_summary: summary }).eq('id', callId)
-              log('📝 Conversation summary updated:', summary)
-            }
-          } catch (e) {
-            log('⚠️ Summary generation failed:', e)
-          }
-        }
 
         // Handle call actions
         if (response.shouldEndCall) {
-          log('📴 Call should end')
+          log('📴 Call should end based on AI decision')
           setTimeout(() => {
             socket.send(JSON.stringify({ type: 'end_call', reason: 'ai_decision' }))
-          }, 3000) // Give time for TTS to finish
+          }, 3000)
         } else if (response.shouldTransfer) {
-          log('📞 Call should transfer')
+          log('📞 Call should transfer based on AI decision')
           socket.send(JSON.stringify({ type: 'transfer_call', reason: 'ai_decision' }))
         }
 
+        // Log conversation for analytics (async)
+        Promise.all([
+          supabaseClient.from('conversation_logs').insert({
+            call_id: callId,
+            speaker: 'user',
+            message: transcript,
+            sentiment: response.sentiment,
+            emotion: response.emotion,
+            intent: response.intent,
+            timestamp: new Date().toISOString(),
+            metadata: { confidence: response.confidence }
+          }),
+          supabaseClient.from('conversation_logs').insert({
+            call_id: callId,
+            speaker: 'assistant',
+            message: response.text,
+            sentiment: 'neutral',
+            emotion: 'neutral',
+            intent: response.intent,
+            timestamp: new Date().toISOString(),
+            metadata: { confidence: response.confidence }
+          })
+        ]).catch(e => log('⚠️ Analytics logging failed:', e))
+
       } catch (error) {
         log('❌ Error processing conversation:', error)
-        const fallbackResponse = "I'm having trouble processing that. Let me connect you with someone who can help."
+        const fallbackResponse = "I'm having a moment of difficulty processing that. Could you repeat what you said?"
         sendTTSMessage(fallbackResponse)
       }
     }
@@ -554,6 +591,7 @@ serve(async (req) => {
       isCallActive = false
       ttsInitialized = false
       firstMessageSent = false
+      processingTranscript = false
       if (deepgramSTT) {
         deepgramSTT.close()
         deepgramSTT = null
@@ -580,7 +618,7 @@ serve(async (req) => {
         assistantId,
         assistant: { 
           name: assistant.name,
-          personality: assistant.system_prompt,
+          system_prompt: assistant.system_prompt,
           first_message: assistant.first_message
         },
         timestamp: Date.now(),
@@ -590,7 +628,6 @@ serve(async (req) => {
     socket.onmessage = async (event) => {
       try {
         const msg = JSON.parse(event.data)
-        log('📨 Received message:', { event: msg.event || msg.type })
         
         switch (msg.event || msg.type) {
           case 'connected':
@@ -609,7 +646,7 @@ serve(async (req) => {
                 const binaryAudio = Uint8Array.from(atob(msg.media.payload), c => c.charCodeAt(0))
                 deepgramSTT.send(binaryAudio)
               } catch (error) {
-                log('❌ Error processing media:', error)
+                log('❌ Error processing incoming audio:', error)
               }
             }
             break
@@ -626,9 +663,6 @@ serve(async (req) => {
               await processConversation(msg.text)
             }
             break
-            
-          default:
-            log('❓ Unknown SignalWire event:', msg)
         }
       } catch (err) {
         log('❌ Error processing SignalWire message:', err)
