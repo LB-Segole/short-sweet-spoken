@@ -7,7 +7,7 @@ import { VoiceAgentForm } from '@/components/VoiceAgents/VoiceAgentForm';
 import { VoiceAgentCard } from '@/components/VoiceAgents/VoiceAgentCard';
 import { VoiceTestInterface } from '@/components/VoiceAgents/VoiceTestInterface';
 import { VoiceAgent, VoiceAgentFormData } from '@/types/voiceAgent';
-import { BrowserChatTest } from '@/components/BrowserChatTest';
+import { BrowserChatTest } from '@/components/VoiceAgents/BrowserChatTest';
 
 const VoiceAgents = () => {
   const navigate = useNavigate();
