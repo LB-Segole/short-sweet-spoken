@@ -4,7 +4,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 DeepGram Voice WebSocket initialized v5.0 - Enhanced Real-Time Conversation');
+console.log('🚀 DeepGram Voice WebSocket initialized v6.0 - Enhanced Real-Time Conversation with Fixed Turn Detection');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -296,7 +296,13 @@ serve(async (req) => {
     let conversationBuffer: Array<{ role: string; content: string }> = []
     let ttsInitialized = false
     let firstMessageSent = false
-    let processingTranscript = false // Prevent duplicate processing
+    let processingTranscript = false
+    
+    // NEW: Enhanced transcript buffering
+    let interimTranscriptBuffer = ''
+    let lastUtteranceTime = Date.now()
+    let speechDetected = false
+    let keepAliveInterval: number | null = null
 
     const log = (msg: string, data?: any) => 
       console.log(`[${new Date().toISOString()}] [Call: ${callId}] ${msg}`, data || '')
@@ -327,58 +333,95 @@ serve(async (req) => {
       }
     }
 
-    // Enhanced STT with better real-time processing
+    // FIXED: Enhanced STT with proper endpointing and interim results
     const initializeSTT = () => {
       try {
-        // Enhanced STT URL with better endpointing and real-time parameters
-        const sttUrl = 'wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&endpointing=200&utterance_end_ms=800&vad_events=true&punctuate=true&diarize=false'
+        // ENHANCED: Better STT parameters with proper endpointing
+        const sttUrl = 'wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&endpointing=300&utterance_end_ms=1000&vad_events=true&punctuate=true&diarize=false&filler_words=false'
         deepgramSTT = new WebSocket(sttUrl, ['token', deepgramApiKey])
 
         deepgramSTT.onopen = () => {
-          log('✅ DeepGram STT connected with enhanced real-time processing')
+          log('✅ DeepGram STT connected with enhanced endpointing')
         }
 
         deepgramSTT.onmessage = async (event) => {
           try {
             const data = JSON.parse(event.data)
             
-            // Handle transcription results
-            if (data.type === 'Results' && data.channel?.alternatives?.[0]?.transcript) {
+            // ENHANCED: Detailed logging for all STT events
+            if (data.type === 'Results' && data.channel?.alternatives?.[0]) {
               const transcript = data.channel.alternatives[0].transcript.trim()
               const isFinal = data.is_final || false
+              const speechFinal = data.speech_final || false
               const confidence = data.channel.alternatives[0].confidence || 1.0
               
-              if (transcript && transcript.length > 2) { // Filter out very short utterances
-                log('📝 STT transcript:', { transcript, isFinal, confidence: confidence.toFixed(2) })
+              log('📝 STT Event Details:', { 
+                type: data.type, 
+                transcript, 
+                isFinal, 
+                speechFinal, 
+                confidence: confidence.toFixed(2),
+                hasTranscript: !!transcript 
+              })
+              
+              if (transcript && transcript.length > 0) {
+                speechDetected = true
+                lastUtteranceTime = Date.now()
                 
+                // FIXED: Proper interim transcript buffering
+                if (!isFinal && !speechFinal) {
+                  interimTranscriptBuffer = transcript
+                  log('🔄 Interim transcript buffered:', transcript)
+                } else if (speechFinal || isFinal) {
+                  // Use final transcript or buffered interim if no final available
+                  const finalTranscript = transcript || interimTranscriptBuffer
+                  if (finalTranscript && finalTranscript.length > 3 && !processingTranscript) {
+                    log('🎯 Processing FINAL transcript:', finalTranscript)
+                    processingTranscript = true
+                    interimTranscriptBuffer = '' // Clear buffer
+                    
+                    setTimeout(async () => {
+                      await processConversation(finalTranscript)
+                      processingTranscript = false
+                    }, 100)
+                  }
+                }
+
+                // Forward to client
                 socket.send(JSON.stringify({
                   type: 'transcript',
                   text: transcript,
                   confidence,
                   isFinal,
+                  speechFinal,
                   timestamp: Date.now()
                 }))
-
-                // Process final transcripts for AI response
-                if (isFinal && !processingTranscript && transcript.length > 5) {
-                  processingTranscript = true
-                  log('🎯 Processing final transcript for AI response:', transcript)
-                  setTimeout(async () => {
-                    await processConversation(transcript)
-                    processingTranscript = false
-                  }, 100) // Small delay to ensure clean processing
-                }
               }
             }
             
-            // Handle utterance end events for better turn detection
+            // ENHANCED: Handle utterance end events
             if (data.type === 'UtteranceEnd') {
-              log('🔚 Utterance ended - user finished speaking')
+              log('🔚 UtteranceEnd detected')
+              
+              // FIXED: Process buffered transcript if no speech_final arrived
+              if (speechDetected && interimTranscriptBuffer && !processingTranscript) {
+                log('🎯 Processing UtteranceEnd transcript:', interimTranscriptBuffer)
+                processingTranscript = true
+                const transcript = interimTranscriptBuffer
+                interimTranscriptBuffer = ''
+                
+                setTimeout(async () => {
+                  await processConversation(transcript)
+                  processingTranscript = false
+                }, 100)
+              }
+              speechDetected = false
             }
 
             // Handle VAD events
             if (data.type === 'SpeechStarted') {
-              log('🎤 User started speaking')
+              log('🎤 Speech started')
+              speechDetected = true
             }
             
           } catch (error) {
@@ -403,29 +446,30 @@ serve(async (req) => {
       }
     }
 
-    // Enhanced TTS with better audio quality
+    // FIXED: Enhanced TTS with proper container and flushing
     const initializeTTS = () => {
       try {
-        // Using linear16 with WAV container for better audio quality
-        const ttsUrl = 'wss://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=linear16&sample_rate=8000&container=wav'
+        // FIXED: Use container=none as recommended, with linear16 for quality
+        const ttsUrl = 'wss://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=linear16&sample_rate=8000&container=none'
         deepgramTTS = new WebSocket(ttsUrl, ['token', deepgramApiKey])
 
         deepgramTTS.onopen = () => {
-          log('✅ DeepGram TTS connected with enhanced audio quality')
+          log('✅ DeepGram TTS connected with container=none')
           ttsInitialized = true
           
-          // Clear any existing buffers and send first message
+          // FIXED: Proper buffer flushing sequence
           if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN) {
+            // Send flush command first
             deepgramTTS.send(JSON.stringify({ type: 'Flush' }))
-            log('🧹 TTS buffer flushed for clean start')
+            log('🧹 TTS buffer flushed')
             
-            // Send first message after brief delay
+            // FIXED: Wait 300ms after flush before sending first message
             setTimeout(() => {
               if (assistant.first_message && !firstMessageSent) {
                 sendTTSMessage(assistant.first_message)
                 firstMessageSent = true
               }
-            }, 200)
+            }, 300)
           }
         }
 
@@ -444,8 +488,8 @@ serve(async (req) => {
                   }
                 }
                 socket.send(JSON.stringify(mediaMessage))
-                if (Math.random() < 0.1) { // Log occasionally
-                  log('🔊 Audio sent to SignalWire (quality: WAV/linear16)')
+                if (Math.random() < 0.05) { // Log occasionally
+                  log('🔊 Audio sent to SignalWire (container=none)')
                 }
               }
             } catch (error) {
@@ -473,13 +517,16 @@ serve(async (req) => {
       }
     }
 
-    // Enhanced TTS message sending with better buffering
+    // ENHANCED: Better TTS message sending with proper sequencing
     const sendTTSMessage = (text: string) => {
-      if (!text || !text.trim()) return
+      if (!text || !text.trim()) {
+        log('⚠️ Empty text, skipping TTS')
+        return
+      }
       
       if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN && ttsInitialized) {
         try {
-          // Clear previous buffers for clean audio
+          // Clear any previous content
           deepgramTTS.send(JSON.stringify({ type: 'Clear' }))
           
           setTimeout(() => {
@@ -501,17 +548,20 @@ serve(async (req) => {
       }
     }
 
-    // Enhanced conversation processing with better real-time handling
+    // ENHANCED: Better conversation processing with validation
     const processConversation = async (transcript: string) => {
       try {
-        log('🧠 Processing real-time conversation:', transcript)
+        log('🧠 Processing conversation:', transcript)
         const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
-        if (!openaiApiKey) throw new Error('OPENAI_API_KEY not configured');
+        if (!openaiApiKey) {
+          log('❌ OPENAI_API_KEY not configured')
+          return
+        }
 
         // Add user message to conversation buffer
         conversationBuffer.push({ role: 'user', content: transcript })
 
-        // Generate AI response with real-time optimization
+        // Generate AI response
         const response = await generateConversationResponse(transcript, {
           callId,
           agentPrompt: assistant.system_prompt,
@@ -519,7 +569,13 @@ serve(async (req) => {
           previousMessages: conversationBuffer
         }, openaiApiKey, assistant.instructions || assistant.system_prompt)
 
-        log('🤖 Real-time AI response generated:', response.text.substring(0, 80) + '...')
+        log('🤖 AI response generated:', response.text.substring(0, 80) + '...')
+
+        // VALIDATION: Ensure response has content
+        if (!response.text || response.text.trim().length === 0) {
+          log('❌ Empty AI response, using fallback')
+          response.text = "I understand. Could you tell me more about that?"
+        }
 
         // Add AI response to conversation buffer
         conversationBuffer.push({ role: 'assistant', content: response.text })
@@ -542,7 +598,7 @@ serve(async (req) => {
           timestamp: Date.now()
         }))
 
-        // Convert AI response to speech immediately for real-time conversation
+        // CRITICAL: Send to TTS for voice response
         sendTTSMessage(response.text)
 
         // Handle call actions
@@ -587,11 +643,36 @@ serve(async (req) => {
       }
     }
 
+    // NEW: WebSocket keepalive mechanism
+    const startKeepAlive = () => {
+      keepAliveInterval = setInterval(() => {
+        try {
+          if (deepgramSTT?.readyState === WebSocket.OPEN) {
+            deepgramSTT.send(JSON.stringify({ type: 'KeepAlive' }))
+          }
+          if (deepgramTTS?.readyState === WebSocket.OPEN) {
+            deepgramTTS.send(JSON.stringify({ type: 'KeepAlive' }))
+          }
+          log('💓 KeepAlive sent to Deepgram WebSockets')
+        } catch (error) {
+          log('❌ KeepAlive error:', error)
+        }
+      }, 3000) // Every 3 seconds
+    }
+
     const cleanup = () => {
       isCallActive = false
       ttsInitialized = false
       firstMessageSent = false
       processingTranscript = false
+      speechDetected = false
+      interimTranscriptBuffer = ''
+      
+      if (keepAliveInterval) {
+        clearInterval(keepAliveInterval)
+        keepAliveInterval = null
+      }
+      
       if (deepgramSTT) {
         deepgramSTT.close()
         deepgramSTT = null
@@ -611,6 +692,9 @@ serve(async (req) => {
       // Initialize DeepGram connections
       initializeSTT()
       initializeTTS()
+      
+      // Start keepalive
+      startKeepAlive()
       
       socket.send(JSON.stringify({
         type: 'connection_established',
