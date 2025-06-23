@@ -1,8 +1,7 @@
-
 import { serve } from 'https://deno.land/std@0.192.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🎙️ Deepgram Voice Agent WebSocket v12.0 - Fixed Start Handler')
+console.log('🎙️ Deepgram Voice Agent WebSocket v13.0 - Clean WebSocket Upgrade')
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -11,13 +10,10 @@ const corsHeaders = {
 }
 
 serve(async (req) => {
-  console.log('🚀 Function invoked:', {
-    method: req.method,
-    url: req.url,
-    upgrade: req.headers.get('upgrade'),
-    connection: req.headers.get('connection'),
-    timestamp: new Date().toISOString()
-  })
+  const upgradeHeader = req.headers.get('upgrade') || ''
+  const method = req.method
+  
+  console.log(`⌛ Received: ${method} upgrade=${upgradeHeader}`)
 
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -26,17 +22,20 @@ serve(async (req) => {
   }
 
   // Check for WebSocket upgrade
-  const upgradeHeader = req.headers.get('upgrade')
-  if (!upgradeHeader || upgradeHeader.toLowerCase() !== 'websocket') {
+  if (upgradeHeader.toLowerCase() !== 'websocket') {
     console.log('❌ Not a WebSocket request, returning 426')
-    return new Response('Expected WebSocket connection', {
-      status: 426,
-      headers: { 
-        'Upgrade': 'websocket',
-        'Connection': 'Upgrade',
-        'Sec-WebSocket-Version': '13'
-      },
-    })
+    return new Response(
+      JSON.stringify({ error: "Use WebSocket" }),
+      {
+        status: 426,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Upgrade': 'websocket',
+          'Connection': 'Upgrade',
+          'Sec-WebSocket-Version': '13'
+        },
+      }
+    )
   }
 
   // Check required environment variables
@@ -48,14 +47,12 @@ serve(async (req) => {
     openaiKeyPresent: !!openaiApiKey,
   })
   
-  if (!deepgramApiKey) {
-    console.error('❌ Missing DEEPGRAM_API_KEY')
-    return new Response('DEEPGRAM_API_KEY not configured', { status: 500, headers: corsHeaders })
-  }
-  
-  if (!openaiApiKey) {
-    console.error('❌ Missing OPENAI_API_KEY')
-    return new Response('OPENAI_API_KEY not configured', { status: 500, headers: corsHeaders })
+  if (!deepgramApiKey || !openaiApiKey) {
+    console.error('❌ Missing required API keys')
+    return new Response(
+      JSON.stringify({ error: 'Required API keys not configured' }),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    )
   }
 
   try {
@@ -75,10 +72,6 @@ serve(async (req) => {
     let assistantId = 'demo'
     let userId = 'demo-user'
     let firstMessageSent = false
-    let keepAliveInterval: number | null = null
-    let connectionEstablished = false
-    let processingRequest = false
-    let lastActivityTime = Date.now()
     let pingInterval: number | null = null
     let connectionId = crypto.randomUUID()
     let lastPongTime = Date.now()
@@ -86,86 +79,29 @@ serve(async (req) => {
     // Enhanced logging function
     const log = (msg: string, data?: any) => {
       const timestamp = new Date().toISOString()
-      const logMsg = `[${timestamp}] [${connectionId}] ${msg}`
-      console.log(logMsg, data ? JSON.stringify(data) : '')
+      console.log(`[${timestamp}] [${connectionId}] ${msg}`, data ? JSON.stringify(data) : '')
     }
 
-    // Start ping-pong keepalive
-    const startPingPong = () => {
-      if (pingInterval) return
-      
-      log('💓 Starting ping-pong keepalive system')
-      
-      pingInterval = setInterval(() => {
-        if (!isConnectionAlive || socket.readyState !== WebSocket.OPEN) {
-          log('💔 Connection not alive, stopping ping')
-          if (pingInterval) {
-            clearInterval(pingInterval)
-            pingInterval = null
-          }
-          return
-        }
-
-        try {
-          const now = Date.now()
-          
-          // Check if we haven't received a pong in too long
-          if (now - lastPongTime > 45000) {
-            log('⚠️ No pong received for 45s, connection may be dead')
-            isConnectionAlive = false
-            socket.close(1008, 'Keepalive timeout')
-            return
-          }
-
-          // Send ping
-          socket.send(JSON.stringify({
-            type: 'ping',
-            timestamp: now
-          }))
-          log('💓 Sent ping')
-          
-        } catch (error) {
-          log('❌ Error sending ping:', error)
-          isConnectionAlive = false
-        }
-      }, 20000) // Ping every 20 seconds
-    }
-
-    // Stop ping-pong
-    const stopPingPong = () => {
-      if (pingInterval) {
-        clearInterval(pingInterval)
-        pingInterval = null
-        log('💓 Ping-pong stopped')
-      }
-    }
-
-    // Safe message sending with connection checks and error handling
+    // Safe message sending
     const sendToClient = (message: any) => {
-      if (!isConnectionAlive) {
+      if (!isConnectionAlive || socket.readyState !== WebSocket.OPEN) {
         log('⚠️ Skipping message send - connection not alive')
         return false
       }
       
-      if (socket.readyState === WebSocket.OPEN) {
-        try {
-          const messageStr = JSON.stringify(message)
-          socket.send(messageStr)
-          log('📤 Sent to client:', { type: message.type, size: messageStr.length })
-          lastActivityTime = Date.now()
-          return true
-        } catch (error) {
-          log('❌ Error sending to client:', error)
-          isConnectionAlive = false
-          return false
-        }
-      } else {
-        log('⚠️ Cannot send - socket not open', { readyState: socket.readyState })
+      try {
+        const messageStr = JSON.stringify(message)
+        socket.send(messageStr)
+        log('📤 Sent to client:', { type: message.type, size: messageStr.length })
+        return true
+      } catch (error) {
+        log('❌ Error sending to client:', error)
+        isConnectionAlive = false
         return false
       }
     }
 
-    // Initialize Deepgram STT connection with enhanced error handling
+    // Initialize Deepgram STT connection
     const connectSTT = async () => {
       if (!isConnectionAlive) return
       
@@ -208,11 +144,9 @@ serve(async (req) => {
                   timestamp: Date.now()
                 })
 
-                if ((speechFinal || isFinal) && !processingRequest) {
-                  processingRequest = true
+                if (speechFinal || isFinal) {
                   setTimeout(async () => {
                     await processTranscript(transcript)
-                    processingRequest = false
                   }, 100)
                 }
               }
@@ -398,7 +332,7 @@ serve(async (req) => {
       }
     }
 
-    // Send text to TTS with enhanced error handling
+    // Send text to TTS
     const sendTTSMessage = async (text: string) => {
       if (!isConnectionAlive || !deepgramTTS) return
       
@@ -406,7 +340,6 @@ serve(async (req) => {
         if (deepgramTTS.readyState === WebSocket.OPEN) {
           log('🔊 Converting text to speech:', text.substring(0, 100))
           
-          // Clear any pending audio
           deepgramTTS.send(JSON.stringify({ type: 'Clear' }))
           
           setTimeout(() => {
@@ -483,58 +416,55 @@ serve(async (req) => {
       }
     }
 
-    // Start keepalive ping system
-    const startKeepAlive = () => {
-      if (keepAliveInterval) return
+    // Start ping-pong keepalive
+    const startPingPong = () => {
+      if (pingInterval) return
       
-      keepAliveInterval = setInterval(() => {
-        if (isConnectionAlive && socket.readyState === WebSocket.OPEN) {
-          try {
-            const now = Date.now()
-            const timeSinceActivity = now - lastActivityTime
-            
-            // Send ping if connection is idle for more than 25 seconds
-            if (timeSinceActivity > 25000) {
-              socket.send(JSON.stringify({ 
-                type: 'ping', 
-                timestamp: now,
-                status: 'keepalive'
-              }))
-              log('💓 Sent keepalive ping')
-              lastActivityTime = now
-            }
-            
-            // Check for deep sleep connections (no activity for 5 minutes)
-            if (timeSinceActivity > 300000) {
-              log('⚠️ Connection appears inactive, cleaning up')
-              cleanup()
-            }
-          } catch (error) {
-            log('❌ Keepalive ping failed:', error)
-            isConnectionAlive = false
-            cleanup()
+      log('💓 Starting ping-pong keepalive system')
+      
+      pingInterval = setInterval(() => {
+        if (!isConnectionAlive || socket.readyState !== WebSocket.OPEN) {
+          log('💔 Connection not alive, stopping ping')
+          if (pingInterval) {
+            clearInterval(pingInterval)
+            pingInterval = null
           }
-        } else {
-          log('💔 Keepalive stopped - connection not alive')
-          clearInterval(keepAliveInterval!)
-          keepAliveInterval = null
+          return
         }
-      }, 30000) // Check every 30 seconds
+
+        try {
+          const now = Date.now()
+          
+          if (now - lastPongTime > 45000) {
+            log('⚠️ No pong received for 45s, connection may be dead')
+            isConnectionAlive = false
+            socket.close(1008, 'Keepalive timeout')
+            return
+          }
+
+          socket.send(JSON.stringify({
+            type: 'ping',
+            timestamp: now
+          }))
+          log('💓 Sent ping')
+          
+        } catch (error) {
+          log('❌ Error sending ping:', error)
+          isConnectionAlive = false
+        }
+      }, 20000)
     }
 
     // Enhanced cleanup function
     const cleanup = () => {
       log('🧹 Starting cleanup process...')
       isConnectionAlive = false
-      processingRequest = false
       
-      if (keepAliveInterval) {
-        clearInterval(keepAliveInterval)
-        keepAliveInterval = null
-        log('✅ Keepalive interval cleared')
+      if (pingInterval) {
+        clearInterval(pingInterval)
+        pingInterval = null
+        log('✅ Ping interval cleared')
       }
-
-      stopPingPong()
       
       if (deepgramSTT && deepgramSTT.readyState === WebSocket.OPEN) {
         try {
@@ -557,14 +487,15 @@ serve(async (req) => {
       log('✅ Cleanup completed')
     }
 
-    // Client WebSocket event handlers with enhanced error handling
+    // WebSocket event handlers
     socket.onopen = async () => {
       try {
-        log('🔌 WebSocket connection opened successfully!')
+        log('🔌 Socket opened')
         isConnectionAlive = true
-        connectionEstablished = true
-        lastActivityTime = Date.now()
         lastPongTime = Date.now()
+        
+        // Start ping-pong keepalive
+        startPingPong()
         
         sendToClient({
           type: 'connection_ready',
@@ -573,20 +504,10 @@ serve(async (req) => {
           timestamp: Date.now()
         })
         
-        // Start keepalive systems
-        startKeepAlive()
-        setTimeout(() => {
-          if (isConnectionAlive) {
-            startPingPong()
-          }
-        }, 1000)
-        
-        log('💓 Keepalive systems started')
         log('✅ WebSocket fully initialized and ready')
         
       } catch (error) {
         log('❌ Error in onopen handler:', error)
-        // Don't close the socket here, let it continue
       }
     }
 
@@ -594,8 +515,7 @@ serve(async (req) => {
       if (!isConnectionAlive) return
       
       try {
-        lastActivityTime = Date.now()
-        lastPongTime = Date.now() // Update activity time
+        lastPongTime = Date.now()
         
         const message = JSON.parse(event.data)
         log('📨 Received from client:', { event: message.event || message.type, size: event.data.length })
@@ -618,47 +538,44 @@ serve(async (req) => {
           return
         }
 
-        // ✅ UNIFIED "START" EVENT HANDLER - Replace all existing ones
-        if (message.event === 'start') {
-          log("✅ Received 'start' event", message.message)
+        // Handle message events
+        switch (message.event) {
+          case 'start':
+            log("✅ Received 'start' event", message.message)
 
-          // Step 1: Acknowledge to client
-          socket.send(JSON.stringify({
-            type: "ack",
-            message: `Session started: ${message.message}`,
-            timestamp: Date.now()
-          }))
+            // Step 1: Acknowledge to client
+            socket.send(JSON.stringify({
+              type: "ack",
+              message: `Session started: ${message.message}`,
+              timestamp: Date.now()
+            }))
 
-          // Step 2: Load assistant config
-          await loadAssistant(assistantId)
+            // Step 2: Load assistant config
+            await loadAssistant(assistantId)
 
-          // Step 3: Connect to Deepgram STT and TTS
-          await connectSTT()
-          await connectTTS()
+            // Step 3: Connect to Deepgram STT and TTS
+            await connectSTT()
+            await connectTTS()
 
-          // Step 4: Send ready signal
-          sendToClient({
-            type: 'ready',
-            status: 'Assistant is ready for voice input',
-            assistant: assistant?.name,
-            timestamp: Date.now()
-          })
+            // Step 4: Send ready signal
+            sendToClient({
+              type: 'ready',
+              status: 'Assistant is ready for voice input',
+              assistant: assistant?.name,
+              timestamp: Date.now()
+            })
 
-          // Step 5: Send first message if available
-          if (assistant?.first_message && !firstMessageSent) {
-            setTimeout(async () => {
-              if (isConnectionAlive) {
-                await sendTTSMessage(assistant.first_message)
-                firstMessageSent = true
-              }
-            }, 1000)
-          }
+            // Step 5: Send first message if available
+            if (assistant?.first_message && !firstMessageSent) {
+              setTimeout(async () => {
+                if (isConnectionAlive) {
+                  await sendTTSMessage(assistant.first_message)
+                  firstMessageSent = true
+                }
+              }, 1000)
+            }
+            break
 
-          return
-        }
-
-        // Handle other message types
-        switch (message.event || message.type) {
           case 'connected':
             assistantId = message.assistantId || 'demo'
             userId = message.userId || 'demo-user'
@@ -686,7 +603,6 @@ serve(async (req) => {
               try {
                 const audioBuffer = Uint8Array.from(atob(message.media.payload), c => c.charCodeAt(0))
                 deepgramSTT.send(audioBuffer)
-                // Only log occasionally to avoid spam
                 if (Math.random() < 0.01) {
                   log('🎵 Audio forwarded to STT', { size: audioBuffer.length })
                 }
@@ -698,13 +614,18 @@ serve(async (req) => {
             }
             break
 
+          case 'speak':
+            if (message.text) {
+              log('🔊 Speak event received:', message.text.substring(0, 50))
+              await sendTTSMessage(message.text)
+            }
+            break
+
           case 'text_input':
-            if (message.text && !processingRequest) {
+            if (message.text) {
               log('📝 Processing text input:', message.text.substring(0, 50))
-              processingRequest = true
               setTimeout(async () => {
                 await processTranscript(message.text)
-                processingRequest = false
               }, 100)
             }
             break
@@ -722,7 +643,7 @@ serve(async (req) => {
             break
 
           default:
-            log('❓ Unknown message event:', message.event || message.type)
+            console.warn(`❓ Unknown event: ${message.event}`)
         }
 
       } catch (error) {
@@ -737,11 +658,10 @@ serve(async (req) => {
 
     socket.onclose = (event) => {
       try {
-        log('🔌 Client WebSocket closed:', { 
+        log('🔌 Socket closed:', { 
           code: event.code, 
           reason: event.reason,
-          wasClean: event.wasClean,
-          connectionEstablished 
+          wasClean: event.wasClean
         })
         
         cleanup()
@@ -753,28 +673,11 @@ serve(async (req) => {
 
     socket.onerror = (error) => {
       try {
-        log('❌ Client WebSocket error:', error)
-        // Don't close the connection here, let the browser handle it
+        log('❌ Socket error:', error)
         
       } catch (handlerError) {
         log('❌ Error in onerror handler:', handlerError)
       }
-    }
-
-    // Use EdgeRuntime.waitUntil to keep the function alive
-    if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
-      EdgeRuntime.waitUntil(
-        new Promise((resolve) => {
-          // Keep the function alive as long as the WebSocket is open
-          const checkInterval = setInterval(() => {
-            if (!isConnectionAlive || socket.readyState === WebSocket.CLOSED) {
-              clearInterval(checkInterval)
-              resolve(undefined)
-            }
-          }, 5000)
-        })
-      )
-      log('🚀 EdgeRuntime.waitUntil configured for persistence')
     }
 
     log('🎯 WebSocket setup complete, returning response')
@@ -782,9 +685,12 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('❌ Critical WebSocket upgrade error:', error)
-    return new Response('WebSocket upgrade failed: ' + error.message, { 
-      status: 500,
-      headers: corsHeaders 
-    })
+    return new Response(
+      JSON.stringify({ error: 'WebSocket upgrade failed: ' + error.message }),
+      { 
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      }
+    )
   }
 })
