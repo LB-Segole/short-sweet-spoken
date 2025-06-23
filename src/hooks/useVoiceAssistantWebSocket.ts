@@ -1,3 +1,4 @@
+
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Assistant } from '@/types/assistant';
 
@@ -189,6 +190,27 @@ export const useVoiceAssistantWebSocket = ({
               }
               break;
 
+            case 'transcript':
+              if (data.text) {
+                console.log('📝 Transcript received:', data.text);
+                onTranscript(data.text);
+              }
+              break;
+              
+            case 'assistant_response':
+              if (data.text) {
+                console.log('🤖 Assistant response received:', data.text);
+                onAssistantResponse(data.text);
+              }
+              break;
+              
+            case 'audio_response':
+              if (data.audio) {
+                console.log('🔊 Audio response received');
+                playAudioResponse(data.audio);
+              }
+              break;
+
             case 'test_response':
               console.log('🧪 Test response received:', data.message);
               break;
@@ -262,7 +284,7 @@ export const useVoiceAssistantWebSocket = ({
       setStatus('Connection Failed');
       onError(`Failed to setup connection: ${error}`);
     }
-  }, [assistant.id, onError, startPingPong, stopPingPong]);
+  }, [assistant.id, onError, onTranscript, onAssistantResponse, startPingPong, stopPingPong]);
 
   const disconnect = useCallback(() => {
     console.log('🔄 Manual disconnect initiated');
@@ -327,22 +349,98 @@ export const useVoiceAssistantWebSocket = ({
 
   const startRecording = useCallback(async () => {
     console.log('🎤 Start recording requested');
-    // Placeholder for recording logic
-  }, []);
+    if (!isConnected) {
+      onError('Not connected to voice assistant');
+      return;
+    }
+    
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+      
+      streamRef.current = stream;
+      setIsRecording(true);
+      setStatus('Recording...');
+      
+    } catch (error) {
+      console.error('❌ Error starting recording:', error);
+      onError(`Failed to start recording: ${error}`);
+    }
+  }, [isConnected, onError]);
 
   const stopRecording = useCallback(() => {
     console.log('🛑 Stop recording requested');
-    // Placeholder for stop recording logic
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    setIsRecording(false);
+    setStatus('Ready');
   }, []);
 
   const processAudioChunk = useCallback(async (audioBlob: Blob) => {
-    console.log('🎵 Processing audio chunk');
-    // Placeholder for audio processing
-  }, []);
+    console.log('🎵 Processing audio chunk:', audioBlob.size, 'bytes');
+    
+    try {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64Audio = reader.result?.toString().split(',')[1];
+        if (base64Audio && wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({
+            type: 'audio_chunk',
+            audio: base64Audio,
+            timestamp: Date.now()
+          }));
+        }
+      };
+      reader.readAsDataURL(audioBlob);
+    } catch (error) {
+      console.error('❌ Error processing audio chunk:', error);
+      onError('Failed to process audio');
+    }
+  }, [onError]);
 
   const playAudioResponse = useCallback(async (base64Audio: string) => {
     console.log('🔊 Playing audio response');
-    // Placeholder for audio playback
+    
+    try {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContext();
+      }
+      
+      if (audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+      }
+      
+      const binaryString = atob(base64Audio);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      
+      const audioBuffer = await audioContextRef.current.decodeAudioData(bytes.buffer);
+      const source = audioContextRef.current.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContextRef.current.destination);
+      
+      source.onended = () => {
+        console.log('✅ Audio playback finished');
+        setStatus('Ready');
+      };
+      
+      source.start();
+      
+    } catch (error) {
+      console.error('❌ Audio playback error:', error);
+      setStatus('Ready');
+    }
   }, []);
 
   const sendTextMessage = useCallback((text: string) => {
@@ -375,6 +473,8 @@ export const useVoiceAssistantWebSocket = ({
     startRecording,
     stopRecording,
     sendTextMessage,
-    sendTestMessage, // Added for testing
+    sendTestMessage,
+    processAudioChunk,
+    playAudioResponse,
   };
 };
