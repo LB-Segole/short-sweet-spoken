@@ -1,7 +1,7 @@
 import { serve } from 'https://deno.land/std@0.192.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🎙️ Deepgram Voice Agent WebSocket v16.0 - Fixed Environment & Upgrade Issues')
+console.log('🎙️ Deepgram Voice Agent WebSocket v17.0 - Enhanced Error Handling & Diagnostics')
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -21,23 +21,31 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders })
   }
 
-  // Check required environment variables FIRST, before any WebSocket upgrade
+  // Enhanced environment check with detailed diagnostics
   const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')
   const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
   
-  console.log('🔑 Environment check:', {
+  console.log('🔑 Environment diagnostics:', {
     deepgramKeyPresent: !!deepgramApiKey,
+    deepgramKeyLength: deepgramApiKey ? deepgramApiKey.length : 0,
     openaiKeyPresent: !!openaiApiKey,
+    openaiKeyLength: openaiApiKey ? openaiApiKey.length : 0,
+    hasSupabaseUrl: !!Deno.env.get('SUPABASE_URL'),
+    hasSupabaseKey: !!Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
   })
   
   if (!deepgramApiKey || !openaiApiKey) {
-    console.error('❌ Missing required API keys')
+    const missingKeys = []
+    if (!deepgramApiKey) missingKeys.push('DEEPGRAM_API_KEY')
+    if (!openaiApiKey) missingKeys.push('OPENAI_API_KEY')
+    
+    console.error('❌ Missing required API keys:', missingKeys)
     return new Response(
       JSON.stringify({ 
         error: 'Required API keys not configured',
         details: {
-          deepgram: !deepgramApiKey ? 'missing' : 'present',
-          openai: !openaiApiKey ? 'missing' : 'present'
+          missing: missingKeys,
+          help: 'Please add the missing API keys to your Supabase Edge Function secrets'
         }
       }),
       { 
@@ -51,7 +59,11 @@ serve(async (req) => {
   if (upgradeHeader.toLowerCase() !== 'websocket') {
     console.log('❌ Not a WebSocket request, returning 426')
     return new Response(
-      JSON.stringify({ error: "Expected WebSocket connection" }),
+      JSON.stringify({ 
+        error: "Expected WebSocket connection",
+        details: "This endpoint requires a WebSocket upgrade",
+        status: "ready"
+      }),
       {
         status: 426,
         headers: { 
@@ -84,6 +96,7 @@ serve(async (req) => {
     let pingInterval: number | null = null
     let connectionId = crypto.randomUUID()
     let lastPongTime = Date.now()
+    let connectionEstablished = false
 
     // Enhanced logging function
     const log = (msg: string, data?: any) => {
@@ -91,10 +104,10 @@ serve(async (req) => {
       console.log(`[${timestamp}] [${connectionId}] ${msg}`, data ? JSON.stringify(data) : '')
     }
 
-    // Safe message sending
+    // Safe message sending with enhanced error handling
     const sendToClient = (message: any) => {
       if (!isConnectionAlive || socket.readyState !== WebSocket.OPEN) {
-        log('⚠️ Skipping message send - connection not alive')
+        log('⚠️ Skipping message send - connection not alive', { readyState: socket.readyState })
         return false
       }
       
@@ -106,6 +119,58 @@ serve(async (req) => {
       } catch (error) {
         log('❌ Error sending to client:', error)
         isConnectionAlive = false
+        return false
+      }
+    }
+
+    // Test Deepgram connectivity
+    const testDeepgramConnection = async () => {
+      try {
+        log('🧪 Testing Deepgram API connectivity...')
+        
+        const response = await fetch('https://api.deepgram.com/v1/projects', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Token ${deepgramApiKey}`,
+            'Content-Type': 'application/json'
+          }
+        })
+        
+        if (response.ok) {
+          log('✅ Deepgram API connection successful')
+          return true
+        } else {
+          log('❌ Deepgram API test failed:', { status: response.status, statusText: response.statusText })
+          return false
+        }
+      } catch (error) {
+        log('❌ Deepgram API test error:', error)
+        return false
+      }
+    }
+
+    // Test OpenAI connectivity
+    const testOpenAIConnection = async () => {
+      try {
+        log('🧪 Testing OpenAI API connectivity...')
+        
+        const response = await fetch('https://api.openai.com/v1/models', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${openaiApiKey}`,
+            'Content-Type': 'application/json'
+          }
+        })
+        
+        if (response.ok) {
+          log('✅ OpenAI API connection successful')
+          return true
+        } else {
+          log('❌ OpenAI API test failed:', { status: response.status, statusText: response.statusText })
+          return false
+        }
+      } catch (error) {
+        log('❌ OpenAI API test error:', error)
         return false
       }
     }
@@ -501,6 +566,7 @@ serve(async (req) => {
       try {
         log('🔌 Socket opened')
         isConnectionAlive = true
+        connectionEstablished = true
         lastPongTime = Date.now()
         
         // Start ping-pong keepalive
@@ -512,6 +578,21 @@ serve(async (req) => {
           status: 'WebSocket connection established - ready for commands',
           timestamp: Date.now()
         })
+        
+        // Test API connectivity
+        log('🧪 Running connectivity tests...')
+        const [deepgramOk, openaiOk] = await Promise.all([
+          testDeepgramConnection(),
+          testOpenAIConnection()
+        ])
+        
+        if (!deepgramOk || !openaiOk) {
+          sendToClient({
+            type: 'error',
+            error: `API connectivity issues: Deepgram=${deepgramOk}, OpenAI=${openaiOk}`,
+            timestamp: Date.now()
+          })
+        }
         
         log('✅ WebSocket fully initialized and ready')
         
@@ -666,7 +747,10 @@ serve(async (req) => {
   } catch (error) {
     console.error('❌ Critical WebSocket upgrade error:', error)
     return new Response(
-      JSON.stringify({ error: 'WebSocket upgrade failed: ' + error.message }),
+      JSON.stringify({ 
+        error: 'WebSocket upgrade failed: ' + error.message,
+        help: 'Please check Supabase Edge Function logs for more details'
+      }),
       { 
         status: 500,
         headers: { 'Content-Type': 'application/json', ...corsHeaders }

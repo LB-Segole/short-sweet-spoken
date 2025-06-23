@@ -33,6 +33,52 @@ export const useVoiceAssistantWebSocket = ({
 
   console.log('🎙️ useVoiceAssistantWebSocket initialized for assistant:', assistant.name);
 
+  // Test Edge Function availability
+  const testEdgeFunction = useCallback(async (): Promise<boolean> => {
+    try {
+      console.log('🧪 Testing Edge Function availability...');
+      const testUrl = `https://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent`;
+      
+      const response = await fetch(testUrl, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      console.log('🧪 Edge Function test response:', response.status, response.statusText);
+      
+      if (response.status === 426) {
+        // Expected - function is working but wants WebSocket
+        console.log('✅ Edge Function is available and requesting WebSocket upgrade');
+        return true;
+      } else if (response.status === 500) {
+        const errorText = await response.text();
+        console.log('❌ Edge Function error:', errorText);
+        
+        try {
+          const errorData = JSON.parse(errorText);
+          if (errorData.error === 'Required API keys not configured') {
+            onError('Missing API keys: Please configure DEEPGRAM_API_KEY and OPENAI_API_KEY in Supabase Edge Function secrets');
+            return false;
+          }
+        } catch (e) {
+          // Error text isn't JSON
+        }
+        
+        onError(`Edge Function error (${response.status}): ${errorText}`);
+        return false;
+      } else {
+        console.log('⚠️ Unexpected response, but function seems available');
+        return true;
+      }
+    } catch (error) {
+      console.error('❌ Edge Function test failed:', error);
+      onError(`Edge Function not available: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return false;
+    }
+  }, [onError]);
+
   // Start ping-pong keepalive
   const startPingPong = useCallback(() => {
     if (pingIntervalRef.current) return;
@@ -89,6 +135,16 @@ export const useVoiceAssistantWebSocket = ({
     }
 
     try {
+      // First test if Edge Function is available
+      console.log('🔍 Checking Edge Function availability...');
+      setStatus('Checking Edge Function...');
+      
+      const functionAvailable = await testEdgeFunction();
+      if (!functionAvailable) {
+        setStatus('Edge Function Error');
+        return;
+      }
+
       isManualDisconnect.current = false;
       connectionEstablished.current = false;
       
@@ -110,7 +166,7 @@ export const useVoiceAssistantWebSocket = ({
       const wsUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent`;
       console.log('🌐 Connecting to:', wsUrl);
       
-      // Create WebSocket connection
+      // Create WebSocket connection with proper headers
       wsRef.current = new WebSocket(wsUrl);
 
       // Set connection timeout
@@ -119,7 +175,7 @@ export const useVoiceAssistantWebSocket = ({
         if (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING) {
           wsRef.current.close();
           setStatus('Connection Timeout');
-          onError('Connection timeout - please try again');
+          onError('Connection timeout - Edge Function may be starting up. Please try again.');
         }
       }, 15000);
 
@@ -261,11 +317,22 @@ export const useVoiceAssistantWebSocket = ({
           return;
         }
         
-        // Handle reconnection based on close code
-        if (event.code === 1006 && !connectionEstablished.current) {
-          console.log('❌ Connection failed before establishment (1006)');
-          setStatus('Connection Failed');
-          onError('Failed to establish WebSocket connection. Please check the Edge Function logs.');
+        // Provide specific error messages based on close code
+        if (event.code === 1006) {
+          if (!connectionEstablished.current) {
+            console.log('❌ Connection failed before establishment (1006)');
+            setStatus('Connection Failed');
+            onError('Connection failed. This usually means:\n• Missing API keys in Supabase secrets\n• Edge Function not deployed\n• Network/firewall issues\n\nPlease check your Supabase Edge Function configuration.');
+          } else {
+            console.log('❌ Connection lost unexpectedly (1006)');
+            setStatus('Connection Lost');
+          }
+        } else if (event.code === 1011) {
+          setStatus('Server Error');
+          onError('Server error - check Edge Function logs for details');
+        } else if (event.code === 1008) {
+          setStatus('Policy Violation');
+          onError('Connection closed due to policy violation or keepalive timeout');
         } else if (event.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
           reconnectAttempts.current++;
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 10000);
@@ -286,15 +353,15 @@ export const useVoiceAssistantWebSocket = ({
       wsRef.current.onerror = (error) => {
         console.error('❌ WebSocket error event:', error);
         setStatus('Connection Error');
-        onError('WebSocket connection error - please check the Edge Function status');
+        onError('WebSocket connection error. Please check:\n• Your internet connection\n• Supabase Edge Function deployment\n• API keys configuration');
       };
 
     } catch (error) {
       console.error('❌ Connection setup error:', error);
       setStatus('Connection Failed');
-      onError(`Failed to setup connection: ${error}`);
+      onError(`Failed to setup connection: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  }, [assistant.id, onError, onTranscript, onAssistantResponse, startPingPong, stopPingPong]);
+  }, [assistant.id, onError, onTranscript, onAssistantResponse, startPingPong, stopPingPong, testEdgeFunction]);
 
   const disconnect = useCallback(() => {
     console.log('🔄 Manual disconnect initiated');
