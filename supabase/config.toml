@@ -30,6 +30,10 @@ image_transformation = { enabled = true }
 enabled = true
 port = 54326
 
+[edge_runtime]
+# Keep worker alive for WebSocket handshakes
+lifetime = "per-worker"
+
 [functions.call-webhook]
 verify_jwt = false
 
@@ -49,4 +53,7 @@ verify_jwt = false
 verify_jwt = true
 
 [functions.realtime-voice-websocket]
+verify_jwt = false
+
+[functions.deepgram-voice-agent]
 verify_jwt = false

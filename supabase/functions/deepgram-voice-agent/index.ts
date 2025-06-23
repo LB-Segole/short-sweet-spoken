@@ -1,29 +1,38 @@
 
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { serve } from 'https://deno.land/std@0.192.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, upgrade, connection, sec-websocket-key, sec-websocket-version, sec-websocket-protocol',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, UPGRADE',
-}
-
-console.log('🎙️ Deepgram Voice Agent WebSocket v6.0 - Enhanced WebSocket Support')
+console.log('🎙️ Deepgram Voice Agent WebSocket v7.0 - Optimized WebSocket Support')
 
 serve(async (req) => {
   console.log('🚀 deepgram-voice-agent function invoked', {
     method: req.method,
     url: req.url,
-    headers: Object.fromEntries(req.headers.entries()),
+    upgradeHeader: req.headers.get('upgrade'),
+    connectionHeader: req.headers.get('connection'),
   })
 
-  // Handle CORS preflight
-  if (req.method === 'OPTIONS') {
-    console.log('✅ Handling CORS preflight request')
-    return new Response(null, { headers: corsHeaders })
+  // Check for WebSocket upgrade first
+  const upgradeHeader = req.headers.get('upgrade')
+  const connectionHeader = req.headers.get('connection')
+  
+  console.log('🔍 WebSocket headers check:', {
+    upgrade: upgradeHeader,
+    connection: connectionHeader,
+  })
+
+  if (!upgradeHeader || upgradeHeader.toLowerCase() !== 'websocket') {
+    console.log('❌ Not a WebSocket upgrade request')
+    return new Response('Expected WebSocket connection', {
+      status: 426,
+      headers: { 
+        'Upgrade': 'websocket', 
+        'Connection': 'Upgrade' 
+      },
+    })
   }
 
-  // Check required environment variables first
+  // Check required environment variables
   const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')
   const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
   
@@ -34,39 +43,12 @@ serve(async (req) => {
   
   if (!deepgramApiKey) {
     console.error('❌ Missing DEEPGRAM_API_KEY')
-    return new Response(
-      JSON.stringify({ error: 'DEEPGRAM_API_KEY not configured' }), 
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    return new Response('DEEPGRAM_API_KEY not configured', { status: 500 })
   }
   
   if (!openaiApiKey) {
     console.error('❌ Missing OPENAI_API_KEY')
-    return new Response(
-      JSON.stringify({ error: 'OPENAI_API_KEY not configured' }), 
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
-  }
-
-  // Verify WebSocket upgrade headers
-  const upgradeHeader = req.headers.get('upgrade')
-  const connectionHeader = req.headers.get('connection')
-  
-  console.log('🔍 WebSocket headers check:', {
-    upgrade: upgradeHeader,
-    connection: connectionHeader,
-  })
-
-  if (!upgradeHeader || upgradeHeader.toLowerCase() !== 'websocket') {
-    console.log('❌ Not a valid WebSocket upgrade request')
-    return new Response('Expected WebSocket connection', {
-      status: 426,
-      headers: { 
-        ...corsHeaders, 
-        'Upgrade': 'websocket', 
-        'Connection': 'Upgrade' 
-      },
-    })
+    return new Response('OPENAI_API_KEY not configured', { status: 500 })
   }
 
   try {
@@ -105,11 +87,7 @@ serve(async (req) => {
         
         const sttUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&endpointing=300&utterance_end_ms=1000&vad_events=true&punctuate=true`
         
-        deepgramSTT = new WebSocket(sttUrl, [], {
-          headers: {
-            'Authorization': `Token ${deepgramApiKey}`
-          }
-        })
+        deepgramSTT = new WebSocket(sttUrl, ['token', deepgramApiKey])
 
         deepgramSTT.onopen = () => {
           log('✅ Deepgram STT connected successfully')
@@ -193,11 +171,7 @@ serve(async (req) => {
         const voiceModel = assistant?.voice_id || 'aura-asteria-en'
         const ttsUrl = `wss://api.deepgram.com/v1/speak?model=${voiceModel}&encoding=linear16&sample_rate=24000&container=none`
         
-        deepgramTTS = new WebSocket(ttsUrl, [], {
-          headers: {
-            'Authorization': `Token ${deepgramApiKey}`
-          }
-        })
+        deepgramTTS = new WebSocket(ttsUrl, ['token', deepgramApiKey])
 
         deepgramTTS.onopen = () => {
           log('✅ Deepgram TTS connected successfully')
@@ -491,16 +465,6 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('❌ Critical WebSocket upgrade error:', error)
-    return new Response(
-      JSON.stringify({ 
-        error: 'WebSocket upgrade failed', 
-        details: error.message,
-        timestamp: Date.now()
-      }),
-      { 
-        status: 500, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      }
-    )
+    return new Response('WebSocket upgrade failed', { status: 500 })
   }
 })

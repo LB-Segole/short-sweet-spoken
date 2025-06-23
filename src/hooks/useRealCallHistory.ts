@@ -58,8 +58,31 @@ export const useRealCallHistory = (page: number = 1, limit: number = 10) => {
       
       if (error) throw error;
       
+      // Transform the data to match our interface
+      const transformedCalls: RealCallRecord[] = (calls || []).map(call => ({
+        id: call.id || '',
+        phone_number: call.phone_number || '',
+        status: call.status as RealCallRecord['status'] || 'failed',
+        duration: call.duration || 0,
+        call_cost: call.call_cost || 0,
+        created_at: call.created_at || '',
+        completed_at: call.completed_at || undefined,
+        recording_url: call.recording_url || undefined,
+        transcript: call.transcript || undefined,
+        campaign_id: call.campaign_id || undefined,
+        contact_id: call.contact_id || undefined,
+        signalwire_call_id: call.signalwire_call_id || undefined,
+        call_summary: call.call_summary || undefined,
+        campaigns: call.campaigns && Array.isArray(call.campaigns) && call.campaigns[0] 
+          ? { name: call.campaigns[0].name || '' }
+          : undefined,
+        contacts: call.contacts && Array.isArray(call.contacts) && call.contacts[0]
+          ? { name: call.contacts[0].name || '' }
+          : undefined,
+      }));
+      
       return {
-        calls: calls as RealCallRecord[],
+        calls: transformedCalls,
         total: count || 0,
         totalPages: Math.ceil((count || 0) / limit)
       };
