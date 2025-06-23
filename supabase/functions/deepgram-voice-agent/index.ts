@@ -1,8 +1,7 @@
-
 import { serve } from 'https://deno.land/std@0.192.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🎙️ Deepgram Voice Agent WebSocket v10.0 - Enhanced Stability')
+console.log('🎙️ Deepgram Voice Agent WebSocket v11.0 - Ultra Stable Connection')
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -11,28 +10,25 @@ const corsHeaders = {
 }
 
 serve(async (req) => {
-  console.log('🚀 deepgram-voice-agent function invoked', {
+  console.log('🚀 Function invoked:', {
     method: req.method,
     url: req.url,
-    upgradeHeader: req.headers.get('upgrade'),
-    connectionHeader: req.headers.get('connection'),
-    userAgent: req.headers.get('user-agent'),
-    origin: req.headers.get('origin'),
+    upgrade: req.headers.get('upgrade'),
+    connection: req.headers.get('connection'),
+    timestamp: new Date().toISOString()
   })
 
-  // Handle CORS preflight requests ONLY
+  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
-    console.log('✅ Handling CORS preflight request')
+    console.log('✅ Handling CORS preflight')
     return new Response(null, { headers: corsHeaders })
   }
 
   // Check for WebSocket upgrade
   const upgradeHeader = req.headers.get('upgrade')
-  const connectionHeader = req.headers.get('connection')
-  
   if (!upgradeHeader || upgradeHeader.toLowerCase() !== 'websocket') {
-    console.log('❌ Not a WebSocket upgrade request', { upgradeHeader, connectionHeader })
-    return new Response('Expected WebSocket connection - use wss:// protocol', {
+    console.log('❌ Not a WebSocket request, returning 426')
+    return new Response('Expected WebSocket connection', {
       status: 426,
       headers: { 
         'Upgrade': 'websocket',
@@ -65,11 +61,9 @@ serve(async (req) => {
     console.log('🔄 Attempting WebSocket upgrade...')
     
     // Perform WebSocket upgrade
-    const { socket, response } = Deno.upgradeWebSocket(req, {
-      protocol: req.headers.get('sec-websocket-protocol') || undefined,
-    })
+    const { socket, response } = Deno.upgradeWebSocket(req)
     
-    console.log('✅ WebSocket upgrade successful - connection established')
+    console.log('✅ WebSocket upgrade successful!')
 
     // Connection state management
     let isConnectionAlive = true
@@ -84,12 +78,65 @@ serve(async (req) => {
     let connectionEstablished = false
     let processingRequest = false
     let lastActivityTime = Date.now()
+    let pingInterval: number | null = null
+    let connectionId = crypto.randomUUID()
+    let lastPongTime = Date.now()
 
     // Enhanced logging function
     const log = (msg: string, data?: any) => {
       const timestamp = new Date().toISOString()
-      const logMsg = `[${timestamp}] [${assistantId}] ${msg}`
+      const logMsg = `[${timestamp}] [${connectionId}] ${msg}`
       console.log(logMsg, data ? JSON.stringify(data) : '')
+    }
+
+    // Start ping-pong keepalive
+    const startPingPong = () => {
+      if (pingInterval) return
+      
+      log('💓 Starting ping-pong keepalive system')
+      
+      pingInterval = setInterval(() => {
+        if (!isConnectionAlive || socket.readyState !== WebSocket.OPEN) {
+          log('💔 Connection not alive, stopping ping')
+          if (pingInterval) {
+            clearInterval(pingInterval)
+            pingInterval = null
+          }
+          return
+        }
+
+        try {
+          const now = Date.now()
+          
+          // Check if we haven't received a pong in too long
+          if (now - lastPongTime > 45000) {
+            log('⚠️ No pong received for 45s, connection may be dead')
+            isConnectionAlive = false
+            socket.close(1008, 'Keepalive timeout')
+            return
+          }
+
+          // Send ping
+          socket.send(JSON.stringify({
+            type: 'ping',
+            timestamp: now
+          }))
+          log('💓 Sent ping')
+          
+        } catch (error) {
+          log('❌ Error sending ping:', error)
+          isConnectionAlive = false
+        }
+      }, 20000) // Ping every 20 seconds
+    }
+
+    // Stop ping-pong
+    const stopPingPong = () => {
+      if (pingInterval) {
+        clearInterval(pingInterval)
+        pingInterval = null
+        log('💓 Ping-pong stopped')
+      }
     }
 
     // Safe message sending with connection checks and error handling
@@ -485,6 +532,8 @@ serve(async (req) => {
         keepAliveInterval = null
         log('✅ Keepalive interval cleared')
       }
+
+      stopPingPong()
       
       if (deepgramSTT && deepgramSTT.readyState === WebSocket.OPEN) {
         try {
@@ -509,20 +558,35 @@ serve(async (req) => {
 
     // Client WebSocket event handlers with enhanced error handling
     socket.onopen = async () => {
-      log('🔌 Client WebSocket connection opened successfully')
-      isConnectionAlive = true
-      connectionEstablished = true
-      lastActivityTime = Date.now()
-      
-      sendToClient({
-        type: 'connection_ready',
-        status: 'WebSocket connection established - ready for commands',
-        timestamp: Date.now()
-      })
-      
-      // Start keepalive system
-      startKeepAlive()
-      log('💓 Keepalive system started')
+      try {
+        log('🔌 WebSocket connection opened successfully!')
+        isConnectionAlive = true
+        connectionEstablished = true
+        lastActivityTime = Date.now()
+        lastPongTime = Date.now()
+        
+        sendToClient({
+          type: 'connection_ready',
+          connectionId,
+          status: 'WebSocket connection established - ready for commands',
+          timestamp: Date.now()
+        })
+        
+        // Start keepalive systems
+        startKeepAlive()
+        setTimeout(() => {
+          if (isConnectionAlive) {
+            startPingPong()
+          }
+        }, 1000)
+        
+        log('💓 Keepalive systems started')
+        log('✅ WebSocket fully initialized and ready')
+        
+      } catch (error) {
+        log('❌ Error in onopen handler:', error)
+        // Don't close the socket here, let it continue
+      }
     }
 
     socket.onmessage = async (event) => {
@@ -530,12 +594,26 @@ serve(async (req) => {
       
       try {
         lastActivityTime = Date.now()
+        lastPongTime = Date.now() // Update activity time
+        
         const message = JSON.parse(event.data)
         log('📨 Received from client:', { event: message.event || message.type, size: event.data.length })
 
         // Handle pong responses
         if (message.type === 'pong') {
           log('💓 Received pong from client')
+          return
+        }
+
+        // Handle ping from client
+        if (message.type === 'ping') {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({
+              type: 'pong',
+              timestamp: Date.now()
+            }))
+            log('💓 Sent pong response')
+          }
           return
         }
 
@@ -590,11 +668,16 @@ serve(async (req) => {
             }
             break
 
-          case 'ping':
-            sendToClient({
-              type: 'pong',
-              timestamp: Date.now()
-            })
+          case 'test':
+            log('🧪 Test message received')
+            if (socket.readyState === WebSocket.OPEN) {
+              socket.send(JSON.stringify({
+                type: 'test_response',
+                message: 'Backend received your test message',
+                timestamp: Date.now()
+              }))
+              log('📤 Sent test response')
+            }
             break
 
           default:
@@ -612,22 +695,48 @@ serve(async (req) => {
     }
 
     socket.onclose = (event) => {
-      log('🔌 Client WebSocket closed:', { 
-        code: event.code, 
-        reason: event.reason,
-        wasClean: event.wasClean,
-        connectionEstablished 
-      })
-      
-      cleanup()
+      try {
+        log('🔌 Client WebSocket closed:', { 
+          code: event.code, 
+          reason: event.reason,
+          wasClean: event.wasClean,
+          connectionEstablished 
+        })
+        
+        cleanup()
+        
+      } catch (error) {
+        log('❌ Error in onclose handler:', error)
+      }
     }
 
     socket.onerror = (error) => {
-      log('❌ Client WebSocket error:', error)
-      cleanup()
+      try {
+        log('❌ Client WebSocket error:', error)
+        // Don't close the connection here, let the browser handle it
+        
+      } catch (handlerError) {
+        log('❌ Error in onerror handler:', handlerError)
+      }
     }
 
-    // Return the WebSocket response immediately to complete the upgrade
+    // Use EdgeRuntime.waitUntil to keep the function alive
+    if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
+      EdgeRuntime.waitUntil(
+        new Promise((resolve) => {
+          // Keep the function alive as long as the WebSocket is open
+          const checkInterval = setInterval(() => {
+            if (!isConnectionAlive || socket.readyState === WebSocket.CLOSED) {
+              clearInterval(checkInterval)
+              resolve(undefined)
+            }
+          }, 5000)
+        })
+      )
+      log('🚀 EdgeRuntime.waitUntil configured for persistence')
+    }
+
+    log('🎯 WebSocket setup complete, returning response')
     return response
 
   } catch (error) {
