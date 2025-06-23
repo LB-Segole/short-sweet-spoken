@@ -1,7 +1,7 @@
 import { serve } from 'https://deno.land/std@0.192.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🎙️ Deepgram Voice Agent WebSocket v13.0 - Clean WebSocket Upgrade')
+console.log('🎙️ Deepgram Voice Agent WebSocket v14.0 - Fixed WebSocket Upgrade')
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -32,7 +32,8 @@ serve(async (req) => {
           'Content-Type': 'application/json',
           'Upgrade': 'websocket',
           'Connection': 'Upgrade',
-          'Sec-WebSocket-Version': '13'
+          'Sec-WebSocket-Version': '13',
+          ...corsHeaders
         },
       }
     )
@@ -537,44 +538,46 @@ serve(async (req) => {
           return
         }
 
-        // Handle message events
+        // Handle start event - consolidated into one handler
+        if (message.event === 'start') {
+          log("✅ Received 'start' event", message.message)
+
+          // Step 1: Acknowledge to client
+          socket.send(JSON.stringify({
+            type: "ack",
+            message: `Session started: ${message.message}`,
+            timestamp: Date.now()
+          }))
+
+          // Step 2: Load assistant config
+          await loadAssistant(assistantId)
+
+          // Step 3: Connect to Deepgram STT and TTS
+          await connectSTT()
+          await connectTTS()
+
+          // Step 4: Send ready signal
+          sendToClient({
+            type: 'ready',
+            status: 'Assistant is ready for voice input',
+            assistant: assistant?.name,
+            timestamp: Date.now()
+          })
+
+          // Step 5: Send first message if available
+          if (assistant?.first_message && !firstMessageSent) {
+            setTimeout(async () => {
+              if (isConnectionAlive) {
+                await sendTTSMessage(assistant.first_message)
+                firstMessageSent = true
+              }
+            }, 1000)
+          }
+          return
+        }
+
+        // Handle other message events
         switch (message.event) {
-          case 'start':
-            log("✅ Received 'start' event", message.message)
-
-            // Step 1: Acknowledge to client
-            socket.send(JSON.stringify({
-              type: "ack",
-              message: `Session started: ${message.message}`,
-              timestamp: Date.now()
-            }))
-
-            // Step 2: Load assistant config
-            await loadAssistant(assistantId)
-
-            // Step 3: Connect to Deepgram STT and TTS
-            await connectSTT()
-            await connectTTS()
-
-            // Step 4: Send ready signal
-            sendToClient({
-              type: 'ready',
-              status: 'Assistant is ready for voice input',
-              assistant: assistant?.name,
-              timestamp: Date.now()
-            })
-
-            // Step 5: Send first message if available
-            if (assistant?.first_message && !firstMessageSent) {
-              setTimeout(async () => {
-                if (isConnectionAlive) {
-                  await sendTTSMessage(assistant.first_message)
-                  firstMessageSent = true
-                }
-              }, 1000)
-            }
-            break
-
           case 'connected':
             assistantId = message.assistantId || 'demo'
             userId = message.userId || 'demo-user'
@@ -690,18 +693,6 @@ serve(async (req) => {
         status: 500,
         headers: { 'Content-Type': 'application/json', ...corsHeaders }
       }
-    )
-  }
-})
-
-    console.log('🎯 WebSocket setup complete, returning response')
-    return response
-
-  } catch (error) {
-    console.error('❌ Critical WebSocket upgrade error:', error)
-    return new Response(
-      JSON.stringify({ error: 'WebSocket upgrade failed: ' + error.message }),
-      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
     )
   }
 })
