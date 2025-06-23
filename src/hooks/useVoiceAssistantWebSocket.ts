@@ -40,8 +40,8 @@ export const useVoiceAssistantWebSocket = ({
         wsRef.current = null;
       }
       
-      // Use the deepgram-voice-agent function with assistant ID
-      const wsUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent`;
+      // Build WebSocket URL with assistant ID
+      const wsUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent?assistantId=${assistant.id}&userId=browser-user`;
       console.log('🌐 Connecting to:', wsUrl);
       
       wsRef.current = new WebSocket(wsUrl);
@@ -52,7 +52,7 @@ export const useVoiceAssistantWebSocket = ({
         setStatus('Connected');
         reconnectAttempts.current = 0;
         
-        // Send assistant initialization
+        // Send authentication message
         const authMessage = {
           type: 'auth',
           userId: 'browser-user',
@@ -75,7 +75,7 @@ export const useVoiceAssistantWebSocket = ({
               
             case 'connection_established':
               console.log('🔗 Connection established');
-              setStatus('Connected');
+              setStatus('Ready to chat');
               break;
               
             case 'transcript':
@@ -343,6 +343,16 @@ export const useVoiceAssistantWebSocket = ({
     }
   }, []);
 
+  const sendTextMessage = useCallback((text: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      console.log('📤 Sending text message:', text);
+      wsRef.current.send(JSON.stringify({
+        type: 'text_message',
+        text: text
+      }));
+    }
+  }, []);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -359,5 +369,6 @@ export const useVoiceAssistantWebSocket = ({
     disconnect,
     startRecording,
     stopRecording,
+    sendTextMessage,
   };
 };
