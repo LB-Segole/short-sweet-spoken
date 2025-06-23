@@ -641,6 +641,16 @@ serve(async (req) => {
         }
 
         switch (message.event || message.type) {
+          case 'start':
+            log("✅ Received 'start' event", message.message);
+            socket.send(JSON.stringify({
+              type: "ack",
+              message: `Hello, session started for: ${message.message}`,
+              timestamp: Date.now()
+             }));
+            // Optional: kick off transcription or audio streaming here
+            break;
+            
           case 'connected':
             assistantId = message.assistantId || 'demo'
             userId = message.userId || 'demo-user'
