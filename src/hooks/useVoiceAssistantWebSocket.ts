@@ -24,22 +24,28 @@ export const useVoiceAssistantWebSocket = ({
   const streamRef = useRef<MediaStream | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttempts = useRef(0);
-  const maxReconnectAttempts = 3;
+  const maxReconnectAttempts = 5;
   const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const keepAliveIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const connectionLockRef = useRef(false);
+  const isManualDisconnect = useRef(false);
 
   console.log('🎙️ useVoiceAssistantWebSocket initialized for assistant:', assistant.name);
 
   const connect = useCallback(async () => {
-    // Prevent multiple simultaneous connection attempts
-    if (connectionLockRef.current || (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING)) {
+    if (connectionLockRef.current) {
       console.log('⚠️ Connection attempt blocked - already connecting');
+      return;
+    }
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING) {
+      console.log('⚠️ Connection attempt blocked - already in connecting state');
       return;
     }
 
     try {
       connectionLockRef.current = true;
+      isManualDisconnect.current = false;
       console.log('🔄 Attempting to connect to voice assistant...');
       setStatus('Connecting...');
       
@@ -52,25 +58,26 @@ export const useVoiceAssistantWebSocket = ({
       // Clear any existing timeouts
       if (connectionTimeoutRef.current) {
         clearTimeout(connectionTimeoutRef.current);
+        connectionTimeoutRef.current = null;
       }
       
-      // Build WebSocket URL - CRITICAL: Use wss:// directly, NOT HTTP
+      // Build WebSocket URL
       const wsUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent`;
       console.log('🌐 Connecting to WebSocket:', wsUrl);
       
-      // Create WebSocket connection directly - no HTTP testing needed
+      // Create WebSocket connection with explicit protocols
       wsRef.current = new WebSocket(wsUrl);
 
-      // Set shorter connection timeout for faster feedback
+      // Set connection timeout
       connectionTimeoutRef.current = setTimeout(() => {
         if (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING) {
-          console.log('⏰ Connection timeout after 10 seconds');
+          console.log('⏰ Connection timeout after 15 seconds');
           wsRef.current.close();
           connectionLockRef.current = false;
           setStatus('Connection timeout');
-          onError('Connection timeout - the server may be unavailable. Please try again.');
+          onError('Connection timeout - please try again');
         }
-      }, 10000);
+      }, 15000);
 
       wsRef.current.onopen = () => {
         console.log('✅ Voice Assistant WebSocket connected successfully');
@@ -94,10 +101,12 @@ export const useVoiceAssistantWebSocket = ({
           timestamp: Date.now()
         };
         console.log('📤 Sending connection message:', connectMessage);
-        wsRef.current?.send(JSON.stringify(connectMessage));
-
-        // Start keepalive
-        startKeepAlive();
+        
+        // Ensure WebSocket is still open before sending
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify(connectMessage));
+          startKeepAlive();
+        }
       };
 
       wsRef.current.onmessage = (event) => {
@@ -159,7 +168,7 @@ export const useVoiceAssistantWebSocket = ({
       };
 
       wsRef.current.onclose = (event) => {
-        console.log('🔌 WebSocket closed:', event.code, event.reason);
+        console.log('🔌 WebSocket closed:', event.code, event.reason, 'wasClean:', event.wasClean);
         
         // Clear connection timeout and lock
         if (connectionTimeoutRef.current) {
@@ -174,23 +183,31 @@ export const useVoiceAssistantWebSocket = ({
         setIsConnected(false);
         setIsRecording(false);
         
+        // Don't reconnect if it was a manual disconnect
+        if (isManualDisconnect.current) {
+          setStatus('Disconnected');
+          return;
+        }
+        
         // Handle different close codes
-        if (event.code === 1006) {
-          console.error('❌ WebSocket closed abnormally (1006) - connection failed');
-          setStatus('Connection failed');
+        if (event.code === 1006 || event.code === 1011 || event.code === 1012) {
+          console.error('❌ WebSocket closed abnormally:', event.code);
+          setStatus('Connection lost');
           
           if (reconnectAttempts.current < maxReconnectAttempts) {
             reconnectAttempts.current++;
-            const delay = Math.min(2000 * reconnectAttempts.current, 8000);
+            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 10000);
             console.log(`🔄 Attempting reconnection ${reconnectAttempts.current}/${maxReconnectAttempts} in ${delay}ms`);
             setStatus(`Reconnecting... (${reconnectAttempts.current}/${maxReconnectAttempts})`);
             
             reconnectTimeoutRef.current = setTimeout(() => {
-              connect();
+              if (!isManualDisconnect.current) {
+                connect();
+              }
             }, delay);
           } else {
             setStatus('Connection failed');
-            onError('Unable to connect to voice assistant. Please check your network connection and try again.');
+            onError('Unable to connect to voice assistant. Please refresh and try again.');
           }
         } else if (event.code !== 1000) {
           setStatus('Disconnected unexpectedly');
@@ -201,7 +218,9 @@ export const useVoiceAssistantWebSocket = ({
             setStatus(`Reconnecting... (${reconnectAttempts.current}/${maxReconnectAttempts})`);
             
             reconnectTimeoutRef.current = setTimeout(() => {
-              connect();
+              if (!isManualDisconnect.current) {
+                connect();
+              }
             }, delay);
           } else {
             setStatus('Connection failed');
@@ -239,10 +258,17 @@ export const useVoiceAssistantWebSocket = ({
     
     keepAliveIntervalRef.current = setInterval(() => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
-        console.log('💓 Sent keepalive ping');
+        try {
+          wsRef.current.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+          console.log('💓 Sent keepalive ping');
+        } catch (error) {
+          console.error('❌ Failed to send keepalive ping:', error);
+        }
+      } else {
+        console.log('💔 Keepalive stopped - connection not open');
+        stopKeepAlive();
       }
-    }, 15000) as unknown as NodeJS.Timeout;
+    }, 30000) as unknown as NodeJS.Timeout; // Ping every 30 seconds
   }, []);
 
   const stopKeepAlive = useCallback(() => {
@@ -255,6 +281,9 @@ export const useVoiceAssistantWebSocket = ({
 
   const disconnect = useCallback(() => {
     console.log('🔄 Disconnecting from voice assistant...');
+    
+    // Set manual disconnect flag
+    isManualDisconnect.current = true;
     
     // Clear all timeouts
     if (reconnectTimeoutRef.current) {

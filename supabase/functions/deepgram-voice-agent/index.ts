@@ -1,7 +1,8 @@
+
 import { serve } from 'https://deno.land/std@0.192.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🎙️ Deepgram Voice Agent WebSocket v9.0 - Production Stable')
+console.log('🎙️ Deepgram Voice Agent WebSocket v10.0 - Enhanced Stability')
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -25,13 +26,12 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders })
   }
 
-  // Check for WebSocket upgrade - CRITICAL: No CORS headers on WebSocket responses
+  // Check for WebSocket upgrade
   const upgradeHeader = req.headers.get('upgrade')
   const connectionHeader = req.headers.get('connection')
   
   if (!upgradeHeader || upgradeHeader.toLowerCase() !== 'websocket') {
     console.log('❌ Not a WebSocket upgrade request', { upgradeHeader, connectionHeader })
-    // Return 426 with proper upgrade headers but NO CORS headers
     return new Response('Expected WebSocket connection - use wss:// protocol', {
       status: 426,
       headers: { 
@@ -82,6 +82,8 @@ serve(async (req) => {
     let firstMessageSent = false
     let keepAliveInterval: number | null = null
     let connectionEstablished = false
+    let processingRequest = false
+    let lastActivityTime = Date.now()
 
     // Enhanced logging function
     const log = (msg: string, data?: any) => {
@@ -90,7 +92,7 @@ serve(async (req) => {
       console.log(logMsg, data ? JSON.stringify(data) : '')
     }
 
-    // Safe message sending with connection checks
+    // Safe message sending with connection checks and error handling
     const sendToClient = (message: any) => {
       if (!isConnectionAlive) {
         log('⚠️ Skipping message send - connection not alive')
@@ -102,6 +104,7 @@ serve(async (req) => {
           const messageStr = JSON.stringify(message)
           socket.send(messageStr)
           log('📤 Sent to client:', { type: message.type, size: messageStr.length })
+          lastActivityTime = Date.now()
           return true
         } catch (error) {
           log('❌ Error sending to client:', error)
@@ -157,8 +160,12 @@ serve(async (req) => {
                   timestamp: Date.now()
                 })
 
-                if (speechFinal || isFinal) {
-                  await processTranscript(transcript)
+                if ((speechFinal || isFinal) && !processingRequest) {
+                  processingRequest = true
+                  setTimeout(async () => {
+                    await processTranscript(transcript)
+                    processingRequest = false
+                  }, 100)
                 }
               }
             }
@@ -435,28 +442,43 @@ serve(async (req) => {
       keepAliveInterval = setInterval(() => {
         if (isConnectionAlive && socket.readyState === WebSocket.OPEN) {
           try {
-            socket.send(JSON.stringify({ 
-              type: 'ping', 
-              timestamp: Date.now(),
-              status: 'keepalive'
-            }))
-            log('💓 Sent keepalive ping')
+            const now = Date.now()
+            const timeSinceActivity = now - lastActivityTime
+            
+            // Send ping if connection is idle for more than 25 seconds
+            if (timeSinceActivity > 25000) {
+              socket.send(JSON.stringify({ 
+                type: 'ping', 
+                timestamp: now,
+                status: 'keepalive'
+              }))
+              log('💓 Sent keepalive ping')
+              lastActivityTime = now
+            }
+            
+            // Check for deep sleep connections (no activity for 5 minutes)
+            if (timeSinceActivity > 300000) {
+              log('⚠️ Connection appears inactive, cleaning up')
+              cleanup()
+            }
           } catch (error) {
             log('❌ Keepalive ping failed:', error)
             isConnectionAlive = false
+            cleanup()
           }
         } else {
           log('💔 Keepalive stopped - connection not alive')
           clearInterval(keepAliveInterval!)
           keepAliveInterval = null
         }
-      }, 15000) // Ping every 15 seconds
+      }, 30000) // Check every 30 seconds
     }
 
-    // Cleanup function
+    // Enhanced cleanup function
     const cleanup = () => {
       log('🧹 Starting cleanup process...')
       isConnectionAlive = false
+      processingRequest = false
       
       if (keepAliveInterval) {
         clearInterval(keepAliveInterval)
@@ -465,23 +487,32 @@ serve(async (req) => {
       }
       
       if (deepgramSTT && deepgramSTT.readyState === WebSocket.OPEN) {
-        deepgramSTT.close()
-        log('✅ Deepgram STT connection closed')
+        try {
+          deepgramSTT.close()
+          log('✅ Deepgram STT connection closed')
+        } catch (error) {
+          log('⚠️ Error closing STT connection:', error)
+        }
       }
       
       if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN) {
-        deepgramTTS.close()
-        log('✅ Deepgram TTS connection closed')
+        try {
+          deepgramTTS.close()
+          log('✅ Deepgram TTS connection closed')
+        } catch (error) {
+          log('⚠️ Error closing TTS connection:', error)
+        }
       }
       
       log('✅ Cleanup completed')
     }
 
-    // Client WebSocket event handlers
+    // Client WebSocket event handlers with enhanced error handling
     socket.onopen = async () => {
       log('🔌 Client WebSocket connection opened successfully')
       isConnectionAlive = true
       connectionEstablished = true
+      lastActivityTime = Date.now()
       
       sendToClient({
         type: 'connection_ready',
@@ -498,6 +529,7 @@ serve(async (req) => {
       if (!isConnectionAlive) return
       
       try {
+        lastActivityTime = Date.now()
         const message = JSON.parse(event.data)
         log('📨 Received from client:', { event: message.event || message.type, size: event.data.length })
 
@@ -535,7 +567,10 @@ serve(async (req) => {
               try {
                 const audioBuffer = Uint8Array.from(atob(message.media.payload), c => c.charCodeAt(0))
                 deepgramSTT.send(audioBuffer)
-                log('🎵 Audio forwarded to STT', { size: audioBuffer.length })
+                // Only log occasionally to avoid spam
+                if (Math.random() < 0.01) {
+                  log('🎵 Audio forwarded to STT', { size: audioBuffer.length })
+                }
               } catch (error) {
                 log('❌ Error forwarding audio to STT:', error)
               }
@@ -545,9 +580,13 @@ serve(async (req) => {
             break
 
           case 'text_input':
-            if (message.text) {
+            if (message.text && !processingRequest) {
               log('📝 Processing text input:', message.text.substring(0, 50))
-              await processTranscript(message.text)
+              processingRequest = true
+              setTimeout(async () => {
+                await processTranscript(message.text)
+                processingRequest = false
+              }, 100)
             }
             break
 
@@ -564,6 +603,11 @@ serve(async (req) => {
 
       } catch (error) {
         log('❌ Error processing client message:', error)
+        sendToClient({
+          type: 'error',
+          error: 'Failed to process message',
+          timestamp: Date.now()
+        })
       }
     }
 
