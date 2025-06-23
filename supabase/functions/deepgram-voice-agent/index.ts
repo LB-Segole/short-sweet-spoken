@@ -1,8 +1,7 @@
-
 import { serve } from 'https://deno.land/std@0.192.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🎙️ Deepgram Voice Agent WebSocket v15.0 - Fixed Connection Issues')
+console.log('🎙️ Deepgram Voice Agent WebSocket v16.0 - Fixed Environment & Upgrade Issues')
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -22,7 +21,33 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders })
   }
 
-  // Check for WebSocket upgrade
+  // Check required environment variables FIRST, before any WebSocket upgrade
+  const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')
+  const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
+  
+  console.log('🔑 Environment check:', {
+    deepgramKeyPresent: !!deepgramApiKey,
+    openaiKeyPresent: !!openaiApiKey,
+  })
+  
+  if (!deepgramApiKey || !openaiApiKey) {
+    console.error('❌ Missing required API keys')
+    return new Response(
+      JSON.stringify({ 
+        error: 'Required API keys not configured',
+        details: {
+          deepgram: !deepgramApiKey ? 'missing' : 'present',
+          openai: !openaiApiKey ? 'missing' : 'present'
+        }
+      }),
+      { 
+        status: 500, 
+        headers: { 'Content-Type': 'application/json', ...corsHeaders } 
+      }
+    )
+  }
+
+  // Check for WebSocket upgrade AFTER environment validation
   if (upgradeHeader.toLowerCase() !== 'websocket') {
     console.log('❌ Not a WebSocket request, returning 426')
     return new Response(
@@ -37,23 +62,6 @@ serve(async (req) => {
           ...corsHeaders
         },
       }
-    )
-  }
-
-  // Check required environment variables BEFORE upgrade
-  const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')
-  const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
-  
-  console.log('🔑 Environment check:', {
-    deepgramKeyPresent: !!deepgramApiKey,
-    openaiKeyPresent: !!openaiApiKey,
-  })
-  
-  if (!deepgramApiKey || !openaiApiKey) {
-    console.error('❌ Missing required API keys')
-    return new Response(
-      JSON.stringify({ error: 'Required API keys not configured' }),
-      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
     )
   }
 
@@ -539,25 +547,25 @@ serve(async (req) => {
           return
         }
 
-        // Handle start event - consolidated into one handler
+        // Handle start event
         if (message.event === 'start') {
           log("✅ Received 'start' event", message.message)
 
-          // Step 1: Acknowledge to client
+          // Acknowledge to client
           socket.send(JSON.stringify({
             type: "ack",
             message: `Session started: ${message.message}`,
             timestamp: Date.now()
           }))
 
-          // Step 2: Load assistant config
+          // Load assistant config
           await loadAssistant(assistantId)
 
-          // Step 3: Connect to Deepgram STT and TTS
+          // Connect to Deepgram STT and TTS
           await connectSTT()
           await connectTTS()
 
-          // Step 4: Send ready signal
+          // Send ready signal
           sendToClient({
             type: 'ready',
             status: 'Assistant is ready for voice input',
@@ -565,42 +573,11 @@ serve(async (req) => {
             timestamp: Date.now()
           })
 
-          // Step 5: Send first message if available
-          if (assistant?.first_message && !firstMessageSent) {
-            setTimeout(async () => {
-              if (isConnectionAlive) {
-                await sendTTSMessage(assistant.first_message)
-                firstMessageSent = true
-              }
-            }, 1000)
-          }
           return
         }
 
         // Handle other message events
         switch (message.event) {
-          case 'connected':
-            assistantId = message.assistantId || 'demo'
-            userId = message.userId || 'demo-user'
-            
-            log('🔐 Client connected with assistant:', assistantId)
-            
-            await loadAssistant(assistantId)
-            await connectSTT()
-            await connectTTS()
-            
-            setTimeout(() => {
-              if (isConnectionAlive) {
-                sendToClient({
-                  type: 'ready',
-                  status: 'Ready to chat',
-                  assistant: assistant?.name,
-                  timestamp: Date.now()
-                })
-              }
-            }, 1000)
-            break
-
           case 'media':
             if (deepgramSTT && deepgramSTT.readyState === WebSocket.OPEN && message.media?.payload) {
               try {
