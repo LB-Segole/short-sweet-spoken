@@ -605,6 +605,29 @@ serve(async (req) => {
           return
         }
 
+        // Handle "start" command from client
+        if (message.event === 'start') {
+          log("✅ Received 'start' event", message.message)
+
+          socket.send(JSON.stringify({
+            type: "ack",
+            message: `Hello, session started for: ${message.message}`,
+            timestamp: Date.now()
+          }))
+
+        // Optional: kick off STT streaming
+        connectSTT()
+        loadAssistant(assistantId)
+        return
+      }
+
+      // Handle raw audio chunks (optional)
+      if (message.event === 'audio' && deepgramSTT?.readyState === WebSocket.OPEN) {
+        deepgramSTT.send(message.audio)
+        return
+      }
+
+
         // Handle ping from client
         if (message.type === 'ping') {
           if (socket.readyState === WebSocket.OPEN) {
