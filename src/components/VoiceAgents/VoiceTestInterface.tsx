@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -6,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { VoiceAgent } from '@/types/voiceAgent';
 import { useVoiceAgentWebSocket } from '@/hooks/useVoiceAgentWebSocket';
 import { FloatingVoiceAssistant } from './FloatingVoiceAssistant';
-import { Mic, MicOff, Send, Phone, PhoneOff, Volume2, MessageSquare } from 'lucide-react';
+import { Mic, MicOff, Send, Phone, PhoneOff, Volume2, MessageSquare, AlertCircle, CheckCircle } from 'lucide-react';
 
 interface VoiceTestInterfaceProps {
   agent: VoiceAgent;
@@ -28,14 +29,36 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
   const [conversation, setConversation] = useState<ConversationMessage[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const [showFloatingAssistant, setShowFloatingAssistant] = useState(false);
+  const [microphoneStatus, setMicrophoneStatus] = useState<'unknown' | 'checking' | 'granted' | 'denied'>('unknown');
+  const [connectionStage, setConnectionStage] = useState<string>('Disconnected');
 
   console.log('🎮 VoiceTestInterface initialized for agent:', agent.name);
 
   const addLog = (message: string) => {
     const timestamp = new Date().toLocaleTimeString();
     const logEntry = `[${timestamp}] ${message}`;
-    setLogs(prev => [...prev.slice(-9), logEntry]); // Keep last 10 logs
+    setLogs(prev => [...prev.slice(-19), logEntry]); // Keep last 20 logs
     console.log('🎙️', logEntry);
+  };
+
+  const checkMicrophoneAccess = async () => {
+    setMicrophoneStatus('checking');
+    setConnectionStage('Requesting Microphone Access...');
+    addLog('Checking microphone permissions...');
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop()); // Stop the test stream
+      setMicrophoneStatus('granted');
+      addLog('✅ Microphone access granted');
+      setConnectionStage('Microphone Ready');
+      return true;
+    } catch (error) {
+      setMicrophoneStatus('denied');
+      addLog(`❌ Microphone access denied: ${error}`);
+      setConnectionStage('Microphone Access Denied');
+      return false;
+    }
   };
 
   const {
@@ -69,21 +92,78 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
     },
     onError: (error) => {
       addLog(`Error: ${error}`);
+      setConnectionStage(`Error: ${error}`);
     },
   });
 
-  const handleConnect = () => {
+  // Update connection stage based on status
+  useEffect(() => {
+    if (status !== connectionStage) {
+      setConnectionStage(status);
+    }
+  }, [status]);
+
+  const handleConnect = async () => {
     if (isConnected) {
       addLog('Disconnecting from voice agent...');
       disconnect();
+      setConnectionStage('Disconnected');
     } else {
+      addLog('Starting connection process...');
+      setConnectionStage('Initializing...');
+      
+      // Check microphone first
+      const micAccess = await checkMicrophoneAccess();
+      if (!micAccess) {
+        addLog('❌ Cannot proceed without microphone access');
+        return;
+      }
+
+      setConnectionStage('Connecting to Voice Agent...');
       addLog('Connecting to voice agent...');
-      connect();
+      
+      // Set a timeout for connection
+      const connectionTimeout = setTimeout(() => {
+        if (!isConnected) {
+          addLog('⏰ Connection timeout after 10 seconds');
+          setConnectionStage('Connection Timeout - Retrying...');
+          disconnect();
+          
+          // Auto-retry once
+          setTimeout(() => {
+            addLog('🔄 Auto-retrying connection...');
+            connect();
+          }, 2000);
+        }
+      }, 10000);
+
+      try {
+        await connect();
+        clearTimeout(connectionTimeout);
+        if (isConnected) {
+          addLog('✅ Successfully connected to voice agent');
+          setConnectionStage('Connected');
+        }
+      } catch (error) {
+        clearTimeout(connectionTimeout);
+        addLog(`❌ Connection failed: ${error}`);
+        setConnectionStage('Connection Failed');
+      }
     }
   };
 
-  const handleStartVoiceChat = () => {
+  const handleStartVoiceChat = async () => {
     console.log('🚀 Starting voice chat for agent:', agent.name);
+    
+    // Ensure microphone access first
+    if (microphoneStatus !== 'granted') {
+      const micAccess = await checkMicrophoneAccess();
+      if (!micAccess) {
+        addLog('❌ Cannot start voice chat without microphone access');
+        return;
+      }
+    }
+
     addLog(`Starting voice chat with ${agent.name}...`);
     setShowFloatingAssistant(true);
   };
@@ -110,10 +190,30 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
 
   useEffect(() => {
     addLog(`Voice test interface initialized for agent: ${agent.name}`);
+    
+    // Check microphone on mount
+    checkMicrophoneAccess();
+    
     return () => {
       disconnect();
     };
   }, [agent.name, disconnect]);
+
+  const getMicrophoneIcon = () => {
+    switch (microphoneStatus) {
+      case 'checking': return <Volume2 className="h-4 w-4 animate-pulse" />;
+      case 'granted': return <CheckCircle className="h-4 w-4 text-green-500" />;
+      case 'denied': return <AlertCircle className="h-4 w-4 text-red-500" />;
+      default: return <Mic className="h-4 w-4" />;
+    }
+  };
+
+  const getConnectionStatus = () => {
+    if (isConnected) return 'success';
+    if (connectionStage.includes('Error') || connectionStage.includes('Failed') || connectionStage.includes('Denied')) return 'destructive';
+    if (connectionStage.includes('Connecting') || connectionStage.includes('Initializing')) return 'secondary';
+    return 'outline';
+  };
 
   return (
     <>
@@ -127,8 +227,12 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
                   <span>Voice AI Test - {agent.name}</span>
                 </CardTitle>
                 <div className="flex items-center gap-2 mt-2">
-                  <Badge variant={isConnected ? 'default' : 'secondary'}>
-                    {status}
+                  <Badge variant={getConnectionStatus()}>
+                    {connectionStage}
+                  </Badge>
+                  <Badge variant="outline" className="flex items-center gap-1">
+                    {getMicrophoneIcon()}
+                    Mic: {microphoneStatus}
                   </Badge>
                   <Badge variant="outline">{agent.voice_model}</Badge>
                 </div>
@@ -140,13 +244,31 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
           </CardHeader>
           
           <CardContent className="space-y-4">
+            {/* Microphone Access Status */}
+            {microphoneStatus === 'denied' && (
+              <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertCircle className="h-5 w-5 text-red-500" />
+                  <h3 className="font-semibold text-red-700">Microphone Access Required</h3>
+                </div>
+                <p className="text-red-600 text-sm mb-3">
+                  Voice chat requires microphone access. Please enable microphone permissions in your browser settings and refresh the page.
+                </p>
+                <Button onClick={checkMicrophoneAccess} variant="outline" size="sm">
+                  <Mic className="h-4 w-4 mr-2" />
+                  Retry Microphone Access
+                </Button>
+              </div>
+            )}
+
             {/* Main Voice Chat Button */}
             <div className="flex justify-center p-8 bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl border-2 border-dashed border-blue-200">
               <div className="text-center">
                 <Button
                   onClick={handleStartVoiceChat}
                   size="lg"
-                  className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white text-xl px-12 py-6 h-auto rounded-full shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+                  disabled={microphoneStatus !== 'granted'}
+                  className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white text-xl px-12 py-6 h-auto rounded-full shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <MessageSquare className="h-8 w-8 mr-4" />
                   Start Voice Chat
@@ -155,19 +277,36 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
                   Click to launch the interactive voice assistant
                 </p>
                 <p className="text-gray-500 text-sm mt-2">
-                  You'll see a floating orb that you can speak to directly
+                  {microphoneStatus === 'granted' 
+                    ? 'You\'ll see a floating orb that you can speak to directly'
+                    : 'Microphone access required first'
+                  }
                 </p>
               </div>
             </div>
 
             {/* Debug Controls */}
             <div className="border rounded-lg p-4 bg-gray-50">
-              <h3 className="font-semibold mb-3 text-gray-700">Debug Controls</h3>
+              <h3 className="font-semibold mb-3 text-gray-700">Debug Controls & Connection Status</h3>
+              
+              {/* Connection Status Display */}
+              <div className="mb-4 p-3 bg-white rounded border">
+                <div className="text-sm">
+                  <strong>Connection Stage:</strong> {connectionStage}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  WebSocket: {isConnected ? '✅ Connected' : '❌ Disconnected'} | 
+                  Recording: {isRecording ? '🎤 Active' : '⏸️ Inactive'} | 
+                  Microphone: {microphoneStatus}
+                </div>
+              </div>
+
               <div className="flex gap-2 mb-4">
                 <Button
                   onClick={handleConnect}
                   variant={isConnected ? 'destructive' : 'default'}
                   size="sm"
+                  disabled={microphoneStatus === 'checking'}
                 >
                   {isConnected ? <PhoneOff className="h-4 w-4 mr-2" /> : <Phone className="h-4 w-4 mr-2" />}
                   {isConnected ? 'Disconnect' : 'Connect'}
@@ -176,11 +315,20 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
                 <Button
                   onClick={isRecording ? stopRecording : startRecording}
                   variant={isRecording ? 'destructive' : 'secondary'}
-                  disabled={!isConnected}
+                  disabled={!isConnected || microphoneStatus !== 'granted'}
                   size="sm"
                 >
                   {isRecording ? <MicOff className="h-4 w-4 mr-2" /> : <Mic className="h-4 w-4 mr-2" />}
                   {isRecording ? 'Stop Recording' : 'Start Recording'}
+                </Button>
+
+                <Button
+                  onClick={checkMicrophoneAccess}
+                  variant="outline"
+                  size="sm"
+                >
+                  {getMicrophoneIcon()}
+                  Test Mic
                 </Button>
               </div>
 
@@ -216,7 +364,7 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
                 <h3 className="font-semibold">Conversation</h3>
                 <div className="h-64 overflow-y-auto border rounded-lg p-4 space-y-2 bg-white">
                   {conversation.length === 0 ? (
-                    <p className="text-gray-500 text-center">No conversation yet. Start voice chat above!</p>
+                    <p className="text-gray-500 text-center">No conversation yet. Connect and start voice chat above!</p>
                   ) : (
                     conversation.map((item, index) => (
                       <div
@@ -243,10 +391,10 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
 
               {/* Live Logs */}
               <div className="space-y-2">
-                <h3 className="font-semibold">Live Logs</h3>
+                <h3 className="font-semibold">Live Debug Logs</h3>
                 <div className="h-64 overflow-y-auto border rounded-lg p-4 bg-black text-green-400 font-mono text-xs">
                   {logs.length === 0 ? (
-                    <p className="text-gray-500">Logs will appear here...</p>
+                    <p className="text-gray-500">Debug logs will appear here...</p>
                   ) : (
                     logs.map((log, index) => (
                       <div key={index} className="mb-1">

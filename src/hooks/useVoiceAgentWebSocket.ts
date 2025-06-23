@@ -1,4 +1,3 @@
-
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { VoiceAgent } from '@/types/voiceAgent';
 
@@ -24,6 +23,8 @@ export const useVoiceAgentWebSocket = ({
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const keepAliveIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 3;
 
@@ -31,140 +32,247 @@ export const useVoiceAgentWebSocket = ({
 
   const connect = useCallback(async () => {
     try {
-      console.log('🔄 Attempting to connect to voice agent...');
-      setStatus('Connecting...');
+      console.log('🔄 Starting connection process to voice agent...');
+      setStatus('Initializing Connection...');
       
       // Clean up existing connection
       if (wsRef.current) {
+        console.log('🧹 Cleaning up existing WebSocket connection');
         wsRef.current.close();
         wsRef.current = null;
       }
       
-      // Use the full WebSocket URL for the deepgram-voice-agent function
-      const wsUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent`;
-      console.log('🌐 Connecting to:', wsUrl);
+      // Clear any existing timeouts
+      if (connectionTimeoutRef.current) {
+        clearTimeout(connectionTimeoutRef.current);
+        connectionTimeoutRef.current = null;
+      }
       
+      // Build WebSocket URL for deepgram-voice-agent function
+      const wsUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent`;
+      console.log('🌐 Connecting to WebSocket URL:', wsUrl);
+      setStatus('Connecting to WebSocket...');
+      
+      // Create WebSocket connection
       wsRef.current = new WebSocket(wsUrl);
 
+      // Set connection timeout (10 seconds)
+      connectionTimeoutRef.current = setTimeout(() => {
+        console.log('⏰ Connection timeout after 10 seconds');
+        if (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING) {
+          wsRef.current.close();
+          setStatus('Connection Timeout');
+          onError('Connection timeout. Please check your internet connection and try again.');
+        }
+      }, 10000);
+
       wsRef.current.onopen = () => {
-        console.log('✅ Voice Agent WebSocket connected successfully');
+        console.log('✅ WebSocket connection opened successfully');
+        
+        // Clear connection timeout
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+        
         setIsConnected(true);
-        setStatus('Connected');
+        setStatus('Connected - Initializing Agent...');
         reconnectAttempts.current = 0;
         
-        // Send agent initialization
-        const authMessage = {
-          type: 'auth',
+        // Send connection message with agent info
+        const connectMessage = {
+          event: 'connected',
+          assistantId: agent.id,
           userId: 'browser-user',
-          agentId: agent.id
+          timestamp: Date.now()
         };
-        console.log('📤 Sending auth message:', authMessage);
-        wsRef.current?.send(JSON.stringify(authMessage));
+        console.log('📤 Sending connection message:', connectMessage);
+        wsRef.current?.send(JSON.stringify(connectMessage));
+
+        // Start keepalive ping
+        startKeepAlive();
       };
 
       wsRef.current.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          console.log('📨 WebSocket message received:', data.type, data);
+          console.log('📨 WebSocket message received:', data.type || data.event, data);
           
-          switch (data.type) {
+          switch (data.type || data.event) {
+            case 'connection_established':
+              console.log('🔗 Connection established by server');
+              setStatus('Agent Loading...');
+              break;
+              
             case 'agent_loaded':
-              console.log('🤖 Agent loaded successfully:', data.data?.agent?.name);
+            case 'assistant_loaded':
+              console.log('🤖 Agent loaded successfully:', data.assistant?.name || data.agent?.name);
               setStatus('Agent Ready');
               break;
               
-            case 'connection_established':
-              console.log('🔗 Connection established');
-              setStatus('Connected');
-              break;
-              
-            case 'transcript':
-              if (data.data?.text) {
-                console.log('📝 Transcript received:', data.data.text);
-                onTranscript(data.data.text);
-              }
-              break;
-              
-            case 'ai_response':
-              if (data.data?.text) {
-                console.log('🤖 AI Response received:', data.data.text);
-                onAgentResponse(data.data.text);
-              }
-              break;
-              
-            case 'audio_response':
-              if (data.data?.audio_base64) {
-                console.log('🔊 Playing AI audio response');
-                playAudioResponse(data.data.audio_base64);
-              }
+            case 'ready':
+              console.log('✅ System ready for conversation');
+              setStatus('Ready to Chat');
               break;
               
             case 'conversation_started':
               console.log('🎬 Conversation started');
-              setStatus('Ready to chat');
+              setStatus('Listening...');
               break;
               
+            case 'transcript':
+              if (data.text || data.data?.text) {
+                const transcriptText = data.text || data.data.text;
+                console.log('📝 Transcript received:', transcriptText);
+                onTranscript(transcriptText);
+                setStatus('Processing...');
+              }
+              break;
+              
+            case 'ai_response':
+              if (data.text || data.data?.text) {
+                const responseText = data.text || data.data.text;
+                console.log('🤖 AI Response received:', responseText);
+                onAgentResponse(responseText);
+                setStatus('Speaking...');
+              }
+              break;
+              
+            case 'audio_response':
+              if (data.audio || data.data?.audio) {
+                console.log('🔊 Playing AI audio response');
+                const audioData = data.audio || data.data.audio;
+                playAudioResponse(audioData);
+              }
+              break;
+              
+            case 'greeting_sent':
+              console.log('👋 Greeting sent by agent');
+              setStatus('Speaking...');
+              break;
+              
+            case 'processing_error':
             case 'error':
-              console.error('❌ WebSocket error from server:', data.data?.error);
-              onError(data.data?.error || 'Server error');
+              const errorMsg = data.error || data.data?.error || 'Server error';
+              console.error('❌ Server error:', errorMsg);
+              onError(errorMsg);
+              setStatus('Error');
+              break;
+              
+            case 'pong':
+              console.log('💓 Keepalive pong received');
               break;
               
             default:
-              console.log('❓ Unknown message type:', data.type);
+              console.log('❓ Unknown message type:', data.type || data.event, data);
           }
         } catch (error) {
-          console.error('❌ Error parsing WebSocket message:', error);
+          console.error('❌ Error parsing WebSocket message:', error, event.data);
           onError('Failed to parse server message');
         }
       };
 
       wsRef.current.onclose = (event) => {
         console.log('🔌 WebSocket closed:', event.code, event.reason);
+        
+        // Clear timeouts
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+        stopKeepAlive();
+        
         setIsConnected(false);
         setIsRecording(false);
         
-        if (event.code !== 1000) { // Not a normal closure
+        // Handle different close codes
+        if (event.code === 1000) {
+          // Normal closure
           setStatus('Disconnected');
-          // Attempt to reconnect
-          if (reconnectAttempts.current < maxReconnectAttempts) {
-            reconnectAttempts.current++;
-            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 10000);
-            console.log(`🔄 Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})`);
-            setStatus(`Reconnecting... (${reconnectAttempts.current}/${maxReconnectAttempts})`);
-            
-            reconnectTimeoutRef.current = setTimeout(() => {
-              connect();
-            }, delay);
-          } else {
-            setStatus('Connection failed');
-            onError('Connection lost. Please refresh to try again.');
-          }
+        } else if (event.code === 1006) {
+          // Abnormal closure
+          setStatus('Connection Lost');
+          console.log('🔄 Abnormal closure detected, attempting reconnect...');
+          attemptReconnect();
         } else {
-          setStatus('Disconnected');
+          // Other error codes
+          setStatus(`Disconnected (${event.code})`);
+          if (event.code !== 1001) { // Not going away
+            attemptReconnect();
+          }
         }
       };
 
       wsRef.current.onerror = (error) => {
         console.error('❌ WebSocket error:', error);
+        
+        // Clear connection timeout
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+        
         setStatus('Connection Error');
-        onError('WebSocket connection error');
+        onError('WebSocket connection error. Please check your internet connection.');
       };
 
     } catch (error) {
       console.error('❌ Connection error:', error);
-      setStatus('Error');
+      setStatus('Connection Failed');
       onError(`Connection failed: ${error}`);
     }
   }, [agent.id, onTranscript, onAgentResponse, onError]);
 
-  const disconnect = useCallback(() => {
-    console.log('🔄 Disconnecting from voice agent...');
+  const attemptReconnect = useCallback(() => {
+    if (reconnectAttempts.current < maxReconnectAttempts) {
+      reconnectAttempts.current++;
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 5000);
+      console.log(`🔄 Attempting reconnection ${reconnectAttempts.current}/${maxReconnectAttempts} in ${delay}ms`);
+      setStatus(`Reconnecting... (${reconnectAttempts.current}/${maxReconnectAttempts})`);
+      
+      reconnectTimeoutRef.current = setTimeout(() => {
+        connect();
+      }, delay);
+    } else {
+      setStatus('Connection Failed - Max Retries Reached');
+      onError('Connection lost after multiple attempts. Please refresh and try again.');
+    }
+  }, [connect, onError]);
+
+  const startKeepAlive = useCallback(() => {
+    if (keepAliveIntervalRef.current) return;
     
-    // Clear reconnect timeout
+    keepAliveIntervalRef.current = setInterval(() => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+        console.log('💓 Keepalive ping sent');
+      }
+    }, 30000) as unknown as NodeJS.Timeout;
+  }, []);
+
+  const stopKeepAlive = useCallback(() => {
+    if (keepAliveIntervalRef.current) {
+      clearInterval(keepAliveIntervalRef.current);
+      keepAliveIntervalRef.current = null;
+      console.log('💓 Keepalive stopped');
+    }
+  }, []);
+
+  const disconnect = useCallback(() => {
+    console.log('🔄 Initiating disconnect...');
+    
+    // Clear all timeouts
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
+    
+    if (connectionTimeoutRef.current) {
+      clearTimeout(connectionTimeoutRef.current);
+      connectionTimeoutRef.current = null;
+    }
+
+    stopKeepAlive();
     
     // Stop recording
     if (mediaRecorderRef.current && isRecording) {
@@ -196,7 +304,7 @@ export const useVoiceAgentWebSocket = ({
     setIsRecording(false);
     setStatus('Disconnected');
     reconnectAttempts.current = 0;
-  }, [isRecording]);
+  }, [isRecording, stopKeepAlive]);
 
   const startRecording = useCallback(async () => {
     if (!isConnected) {
@@ -206,9 +314,10 @@ export const useVoiceAgentWebSocket = ({
     }
 
     try {
-      console.log('🎤 Requesting microphone permission...');
+      console.log('🎤 Starting recording with microphone...');
+      setStatus('Requesting Microphone...');
       
-      // Request microphone access
+      // Request microphone access with detailed constraints
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           sampleRate: 16000,
@@ -219,53 +328,59 @@ export const useVoiceAgentWebSocket = ({
         }
       });
       
-      console.log('✅ Microphone access granted');
+      console.log('✅ Microphone access granted, initializing recorder');
       streamRef.current = stream;
       
-      // Create MediaRecorder
+      // Create MediaRecorder for audio capture
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
         ? 'audio/webm;codecs=opus' 
-        : 'audio/webm';
+        : MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : 'audio/wav';
         
-      console.log('🎵 Using mime type:', mimeType);
+      console.log('🎵 Using audio format:', mimeType);
       
       mediaRecorderRef.current = new MediaRecorder(stream, {
         mimeType: mimeType
       });
       
-      const audioChunks: Blob[] = [];
-      
       mediaRecorderRef.current.ondataavailable = (event) => {
         if (event.data.size > 0) {
-          audioChunks.push(event.data);
-          console.log('📊 Audio chunk received:', event.data.size, 'bytes');
+          console.log('📊 Audio chunk captured:', event.data.size, 'bytes');
+          processAudioChunk(event.data);
         }
       };
       
       mediaRecorderRef.current.onstop = () => {
-        console.log('🛑 Recording stopped, processing audio...');
-        if (audioChunks.length > 0) {
-          const audioBlob = new Blob(audioChunks, { type: mimeType });
-          processAudioBlob(audioBlob);
-        }
+        console.log('🛑 Recording stopped');
+        setStatus('Ready to Chat');
       };
       
-      mediaRecorderRef.current.start(1000); // Collect data every second
+      mediaRecorderRef.current.onerror = (event) => {
+        console.error('❌ MediaRecorder error:', event);
+        onError('Recording error occurred');
+      };
+      
+      // Start recording with frequent data events for real-time processing
+      mediaRecorderRef.current.start(250); // Send data every 250ms
       setIsRecording(true);
-      setStatus('Recording...');
+      setStatus('Recording - Speak Now...');
       
       console.log('🎤 Recording started successfully');
       
-      // Start conversation if this is the first recording
+      // Notify server that conversation has started
       wsRef.current?.send(JSON.stringify({
-        type: 'start_conversation'
+        event: 'conversation_started',
+        assistantId: agent.id,
+        timestamp: Date.now()
       }));
       
     } catch (error) {
-      console.error('❌ Recording error:', error);
-      onError(`Microphone access failed: ${error}`);
+      console.error('❌ Recording start error:', error);
+      setStatus('Recording Failed');
+      onError(`Failed to start recording: ${error}`);
     }
-  }, [isConnected, onError]);
+  }, [isConnected, onError, agent.id]);
 
   const stopRecording = useCallback(() => {
     console.log('🛑 Stopping recording...');
@@ -280,43 +395,37 @@ export const useVoiceAgentWebSocket = ({
     }
     
     setIsRecording(false);
-    setStatus('Processing...');
+    setStatus('Processing Audio...');
   }, [isRecording]);
 
-  const processAudioBlob = useCallback(async (audioBlob: Blob) => {
+  const processAudioChunk = useCallback(async (audioBlob: Blob) => {
     try {
-      console.log('🔄 Converting audio blob to base64...');
       const reader = new FileReader();
       
       reader.onloadend = () => {
         const base64Audio = reader.result?.toString().split(',')[1];
         if (base64Audio && wsRef.current?.readyState === WebSocket.OPEN) {
-          console.log('📤 Sending audio data to server...');
+          // Send audio data as media event
           wsRef.current.send(JSON.stringify({
-            type: 'audio_data',
-            audio: base64Audio
+            event: 'media',
+            media: {
+              payload: base64Audio
+            },
+            timestamp: Date.now()
           }));
-          setStatus('Processing speech...');
+          console.log('📤 Audio chunk sent to server:', base64Audio.length, 'chars');
         }
+      };
+      
+      reader.onerror = (error) => {
+        console.error('❌ FileReader error:', error);
+        onError('Failed to process audio data');
       };
       
       reader.readAsDataURL(audioBlob);
     } catch (error) {
-      console.error('❌ Error processing audio:', error);
+      console.error('❌ Error processing audio chunk:', error);
       onError('Failed to process audio');
-    }
-  }, [onError]);
-
-  const sendTextMessage = useCallback((text: string) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      console.log('💬 Sending text message:', text);
-      wsRef.current.send(JSON.stringify({
-        type: 'text_input',
-        text: text
-      }));
-    } else {
-      console.log('⚠️ Cannot send text - not connected');
-      onError('Not connected to send message');
     }
   }, [onError]);
 
@@ -346,15 +455,34 @@ export const useVoiceAgentWebSocket = ({
       const source = audioContextRef.current.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(audioContextRef.current.destination);
+      
+      source.onended = () => {
+        console.log('✅ Audio playback finished');
+        setStatus('Ready to Chat');
+      };
+      
       source.start();
       
-      console.log('✅ Audio played successfully');
-      setStatus('Agent Ready');
+      console.log('✅ Audio playback started');
     } catch (error) {
       console.error('❌ Audio playback error:', error);
-      setStatus('Agent Ready'); // Still mark as ready even if audio fails
+      setStatus('Ready to Chat'); // Still mark as ready even if audio fails
     }
   }, []);
+
+  const sendTextMessage = useCallback((text: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      console.log('📤 Sending text message:', text);
+      wsRef.current.send(JSON.stringify({
+        event: 'text_input',
+        text: text,
+        timestamp: Date.now()
+      }));
+    } else {
+      console.log('⚠️ Cannot send text - WebSocket not connected');
+      onError('Not connected to send message');
+    }
+  }, [onError]);
 
   // Cleanup on unmount
   useEffect(() => {
