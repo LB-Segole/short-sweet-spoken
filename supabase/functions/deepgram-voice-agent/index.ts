@@ -1,7 +1,8 @@
+
 import { serve } from 'https://deno.land/std@0.192.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🎙️ Deepgram Voice Agent WebSocket v11.0 - Ultra Stable Connection')
+console.log('🎙️ Deepgram Voice Agent WebSocket v12.0 - Fixed Start Handler')
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -605,29 +606,6 @@ serve(async (req) => {
           return
         }
 
-        // Handle "start" command from client
-        if (message.event === 'start') {
-          log("✅ Received 'start' event", message.message)
-
-          socket.send(JSON.stringify({
-            type: "ack",
-            message: `Hello, session started for: ${message.message}`,
-            timestamp: Date.now()
-          }))
-
-        // Optional: kick off STT streaming
-        connectSTT()
-        loadAssistant(assistantId)
-        return
-      }
-
-      // Handle raw audio chunks (optional)
-      if (message.event === 'audio' && deepgramSTT?.readyState === WebSocket.OPEN) {
-        deepgramSTT.send(message.audio)
-        return
-      }
-
-
         // Handle ping from client
         if (message.type === 'ping') {
           if (socket.readyState === WebSocket.OPEN) {
@@ -640,17 +618,47 @@ serve(async (req) => {
           return
         }
 
+        // ✅ UNIFIED "START" EVENT HANDLER - Replace all existing ones
+        if (message.event === 'start') {
+          log("✅ Received 'start' event", message.message)
+
+          // Step 1: Acknowledge to client
+          socket.send(JSON.stringify({
+            type: "ack",
+            message: `Session started: ${message.message}`,
+            timestamp: Date.now()
+          }))
+
+          // Step 2: Load assistant config
+          await loadAssistant(assistantId)
+
+          // Step 3: Connect to Deepgram STT and TTS
+          await connectSTT()
+          await connectTTS()
+
+          // Step 4: Send ready signal
+          sendToClient({
+            type: 'ready',
+            status: 'Assistant is ready for voice input',
+            assistant: assistant?.name,
+            timestamp: Date.now()
+          })
+
+          // Step 5: Send first message if available
+          if (assistant?.first_message && !firstMessageSent) {
+            setTimeout(async () => {
+              if (isConnectionAlive) {
+                await sendTTSMessage(assistant.first_message)
+                firstMessageSent = true
+              }
+            }, 1000)
+          }
+
+          return
+        }
+
+        // Handle other message types
         switch (message.event || message.type) {
-          case 'start':
-            log("✅ Received 'start' event", message.message);
-            socket.send(JSON.stringify({
-              type: "ack",
-              message: `Hello, session started for: ${message.message}`,
-              timestamp: Date.now()
-             }));
-            // Optional: kick off transcription or audio streaming here
-            break;
-            
           case 'connected':
             assistantId = message.assistantId || 'demo'
             userId = message.userId || 'demo-user'
