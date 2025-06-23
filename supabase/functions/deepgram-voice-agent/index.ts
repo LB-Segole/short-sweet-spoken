@@ -1,21 +1,20 @@
+
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, upgrade, connection, sec-websocket-key, sec-websocket-version, sec-websocket-protocol',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, UPGRADE',
-  'Content-Type': 'application/json',
 }
 
-console.log('🎙️ Deepgram Voice Agent WebSocket v5.0 - Fixed Authentication & Endpoints')
+console.log('🎙️ Deepgram Voice Agent WebSocket v6.0 - Enhanced WebSocket Support')
 
 serve(async (req) => {
   console.log('🚀 deepgram-voice-agent function invoked', {
     method: req.method,
     url: req.url,
-    upgradeHeader: req.headers.get('upgrade'),
-    connectionHeader: req.headers.get('connection'),
+    headers: Object.fromEntries(req.headers.entries()),
   })
 
   // Handle CORS preflight
@@ -24,29 +23,50 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders })
   }
 
-  // Verify WebSocket upgrade headers
-  const upgradeHeader = req.headers.get('upgrade')
-  
-  if (upgradeHeader?.toLowerCase() !== 'websocket') {
-    console.log('❌ Not a valid WebSocket upgrade request', { upgradeHeader })
-    return new Response('Expected websocket connection', {
-      status: 426,
-      headers: { ...corsHeaders, Upgrade: 'websocket', Connection: 'Upgrade' },
-    })
-  }
-
-  // Check required environment variables
+  // Check required environment variables first
   const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')
   const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
   
+  console.log('🔑 Environment check:', {
+    deepgramKeyPresent: !!deepgramApiKey,
+    openaiKeyPresent: !!openaiApiKey,
+  })
+  
   if (!deepgramApiKey) {
     console.error('❌ Missing DEEPGRAM_API_KEY')
-    return new Response('DEEPGRAM_API_KEY not configured', { status: 500, headers: corsHeaders })
+    return new Response(
+      JSON.stringify({ error: 'DEEPGRAM_API_KEY not configured' }), 
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
   }
   
   if (!openaiApiKey) {
     console.error('❌ Missing OPENAI_API_KEY')
-    return new Response('OPENAI_API_KEY not configured', { status: 500, headers: corsHeaders })
+    return new Response(
+      JSON.stringify({ error: 'OPENAI_API_KEY not configured' }), 
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+
+  // Verify WebSocket upgrade headers
+  const upgradeHeader = req.headers.get('upgrade')
+  const connectionHeader = req.headers.get('connection')
+  
+  console.log('🔍 WebSocket headers check:', {
+    upgrade: upgradeHeader,
+    connection: connectionHeader,
+  })
+
+  if (!upgradeHeader || upgradeHeader.toLowerCase() !== 'websocket') {
+    console.log('❌ Not a valid WebSocket upgrade request')
+    return new Response('Expected WebSocket connection', {
+      status: 426,
+      headers: { 
+        ...corsHeaders, 
+        'Upgrade': 'websocket', 
+        'Connection': 'Upgrade' 
+      },
+    })
   }
 
   try {
@@ -62,23 +82,29 @@ serve(async (req) => {
     let assistantId = 'demo'
     let userId = 'demo-user'
 
-    const log = (msg: string, data?: any) => console.log(`[${new Date().toISOString()}] [${assistantId}] ${msg}`, data || '')
+    const log = (msg: string, data?: any) => {
+      const timestamp = new Date().toISOString()
+      const logMsg = `[${timestamp}] [${assistantId}] ${msg}`
+      console.log(logMsg, data || '')
+    }
 
     const sendToClient = (message: any) => {
       if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify(message))
+        try {
+          socket.send(JSON.stringify(message))
+        } catch (error) {
+          log('❌ Error sending to client:', error)
+        }
       }
     }
 
-    // Initialize Deepgram STT connection with proper authentication
+    // Initialize Deepgram STT connection
     const connectSTT = async () => {
       try {
-        log('🔗 Connecting to Deepgram STT with Token authentication...')
+        log('🔗 Connecting to Deepgram STT...')
         
-        // Use the correct WebSocket URL with proper authentication header
         const sttUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&endpointing=300&utterance_end_ms=1000&vad_events=true&punctuate=true`
         
-        // Create WebSocket with Authorization header using token format
         deepgramSTT = new WebSocket(sttUrl, [], {
           headers: {
             'Authorization': `Token ${deepgramApiKey}`
@@ -105,7 +131,6 @@ serve(async (req) => {
               if (transcript && transcript.length > 2) {
                 log('📝 Transcript received:', { transcript, isFinal, speechFinal })
                 
-                // Send transcript to client
                 sendToClient({
                   type: 'transcript',
                   text: transcript,
@@ -114,7 +139,6 @@ serve(async (req) => {
                   timestamp: Date.now()
                 })
 
-                // Process final transcripts
                 if (speechFinal || isFinal) {
                   await processTranscript(transcript)
                 }
@@ -141,7 +165,6 @@ serve(async (req) => {
             error: 'Speech recognition error',
             timestamp: Date.now()
           })
-          // Reconnect after delay
           setTimeout(connectSTT, 2000)
         }
 
@@ -162,15 +185,14 @@ serve(async (req) => {
       }
     }
 
-    // Initialize Deepgram TTS connection with proper authentication
+    // Initialize Deepgram TTS connection
     const connectTTS = async () => {
       try {
-        log('🔗 Connecting to Deepgram TTS with Token authentication...')
+        log('🔗 Connecting to Deepgram TTS...')
         
         const voiceModel = assistant?.voice_id || 'aura-asteria-en'
         const ttsUrl = `wss://api.deepgram.com/v1/speak?model=${voiceModel}&encoding=linear16&sample_rate=24000&container=none`
         
-        // Create WebSocket with Authorization header using token format
         deepgramTTS = new WebSocket(ttsUrl, [], {
           headers: {
             'Authorization': `Token ${deepgramApiKey}`
@@ -184,7 +206,6 @@ serve(async (req) => {
             timestamp: Date.now()
           })
           
-          // Send initial greeting if available
           if (assistant?.first_message) {
             setTimeout(() => {
               sendTTSMessage(assistant.first_message)
@@ -194,7 +215,6 @@ serve(async (req) => {
 
         deepgramTTS.onmessage = (event) => {
           if (event.data instanceof ArrayBuffer) {
-            // Convert audio data to base64 and send to client
             const audioData = new Uint8Array(event.data)
             const base64Audio = btoa(String.fromCharCode(...audioData))
             
@@ -228,15 +248,12 @@ serve(async (req) => {
       try {
         log('🤖 Processing transcript with OpenAI...', { transcript })
         
-        // Add user message to conversation history
         conversationHistory.push({ role: 'user', content: transcript })
         
-        // Keep only last 10 messages to avoid token limits
         if (conversationHistory.length > 10) {
           conversationHistory = conversationHistory.slice(-10)
         }
 
-        // Prepare messages for OpenAI
         const systemPrompt = assistant?.system_prompt || 'You are a helpful voice assistant. Be friendly, conversational, and keep responses concise since this is a voice conversation.'
         
         const messages = [
@@ -244,7 +261,6 @@ serve(async (req) => {
           ...conversationHistory
         ]
 
-        // Call OpenAI API
         const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -266,7 +282,6 @@ serve(async (req) => {
         const openaiData = await openaiResponse.json()
         let aiResponse = openaiData.choices?.[0]?.message?.content?.trim() || ''
 
-        // Ensure response is appropriate for voice
         if (aiResponse.length > 300) {
           aiResponse = aiResponse.substring(0, 300) + '...'
         }
@@ -277,17 +292,14 @@ serve(async (req) => {
 
         log('✅ AI response generated:', aiResponse.substring(0, 100))
         
-        // Add assistant response to conversation history
         conversationHistory.push({ role: 'assistant', content: aiResponse })
         
-        // Send text response to client
         sendToClient({
           type: 'ai_response',
           text: aiResponse,
           timestamp: Date.now()
         })
 
-        // Convert to speech
         await sendTTSMessage(aiResponse)
 
       } catch (error) {
@@ -310,10 +322,8 @@ serve(async (req) => {
         if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN) {
           log('🔊 Converting text to speech:', text.substring(0, 100))
           
-          // Clear any previous audio
           deepgramTTS.send(JSON.stringify({ type: 'Clear' }))
           
-          // Send text to convert
           setTimeout(() => {
             if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN) {
               deepgramTTS.send(JSON.stringify({
@@ -321,7 +331,6 @@ serve(async (req) => {
                 text: text
               }))
               
-              // Flush after sending
               setTimeout(() => {
                 if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN) {
                   deepgramTTS.send(JSON.stringify({ type: 'Flush' }))
@@ -353,7 +362,6 @@ serve(async (req) => {
           assistant = data
           log('✅ Assistant loaded successfully:', assistant.name)
         } else {
-          // Use default assistant
           assistant = {
             id: id,
             name: 'Demo Assistant',
@@ -367,7 +375,6 @@ serve(async (req) => {
           log('🤖 Using default assistant configuration')
         }
 
-        // Send assistant info to client
         sendToClient({
           type: 'connection_established',
           assistant: {
@@ -379,7 +386,6 @@ serve(async (req) => {
 
       } catch (error) {
         log('❌ Error loading assistant:', error)
-        // Use fallback
         assistant = {
           id: id,
           name: 'Demo Assistant',
@@ -394,6 +400,13 @@ serve(async (req) => {
     socket.onopen = async () => {
       log('🔌 Client WebSocket connected')
       isConnected = true
+      
+      // Send immediate connection confirmation
+      sendToClient({
+        type: 'connection_ready',
+        status: 'WebSocket connection established',
+        timestamp: Date.now()
+      })
     }
 
     socket.onmessage = async (event) => {
@@ -403,18 +416,15 @@ serve(async (req) => {
 
         switch (message.event || message.type) {
           case 'connected':
-            // Initialize connection
             assistantId = message.assistantId || 'demo'
             userId = message.userId || 'demo-user'
             
             log('🔐 Client connected with assistant:', assistantId)
             
-            // Load assistant and initialize connections
             await loadAssistant(assistantId)
             await connectSTT()
             await connectTTS()
             
-            // Send ready status
             setTimeout(() => {
               sendToClient({
                 type: 'ready',
@@ -426,7 +436,6 @@ serve(async (req) => {
             break
 
           case 'media':
-            // Forward audio to Deepgram STT
             if (deepgramSTT && deepgramSTT.readyState === WebSocket.OPEN && message.media?.payload) {
               try {
                 const audioBuffer = Uint8Array.from(atob(message.media.payload), c => c.charCodeAt(0))
@@ -463,7 +472,6 @@ serve(async (req) => {
       log('🔌 Client WebSocket closed:', { code: event.code, reason: event.reason })
       isConnected = false
       
-      // Clean up Deepgram connections
       if (deepgramSTT) {
         deepgramSTT.close()
         deepgramSTT = null
@@ -482,10 +490,17 @@ serve(async (req) => {
     return response
 
   } catch (error) {
-    console.error('❌ Critical error:', error)
+    console.error('❌ Critical WebSocket upgrade error:', error)
     return new Response(
-      JSON.stringify({ error: 'Internal server error', details: error.message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({ 
+        error: 'WebSocket upgrade failed', 
+        details: error.message,
+        timestamp: Date.now()
+      }),
+      { 
+        status: 500, 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      }
     )
   }
 })
