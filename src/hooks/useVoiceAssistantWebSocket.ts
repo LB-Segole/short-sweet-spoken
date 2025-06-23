@@ -1,4 +1,3 @@
-
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Assistant } from '@/types/assistant';
 
@@ -139,15 +138,16 @@ export const useVoiceAssistantWebSocket = ({
         connectionEstablished.current = true;
         lastPongTime.current = Date.now();
         
-        // Send initial connection message
-        const connectMessage = {
-          type: 'connected',
+        // Send start message to initialize the session
+        const startMessage = {
+          event: 'start',
+          message: 'Initializing voice assistant session',
           assistantId: assistant.id,
           userId: 'browser-user',
           timestamp: Date.now()
         };
-        console.log('📤 Sending connection message:', connectMessage);
-        wsRef.current?.send(JSON.stringify(connectMessage));
+        console.log('📤 Sending start message:', startMessage);
+        wsRef.current?.send(JSON.stringify(startMessage));
 
         // Start ping-pong after connection is established
         setTimeout(() => {
@@ -165,6 +165,16 @@ export const useVoiceAssistantWebSocket = ({
           console.log('📨 Received message:', data.type || data.event);
           
           switch (data.type || data.event) {
+            case 'connection_ready':
+              console.log('🔗 Backend connection ready');
+              setStatus('Ready');
+              break;
+              
+            case 'ack':
+              console.log('✅ Backend acknowledged start:', data.message);
+              setStatus('Initializing...');
+              break;
+
             case 'connection_established':
               console.log('🔗 Backend connection established');
               setStatus('Backend Connected');
@@ -197,7 +207,7 @@ export const useVoiceAssistantWebSocket = ({
               }
               break;
               
-            case 'assistant_response':
+            case 'ai_response':
               if (data.text) {
                 console.log('🤖 Assistant response received:', data.text);
                 onAssistantResponse(data.text);
@@ -255,7 +265,7 @@ export const useVoiceAssistantWebSocket = ({
         if (event.code === 1006 && !connectionEstablished.current) {
           console.log('❌ Connection failed before establishment (1006)');
           setStatus('Connection Failed');
-          onError('Failed to establish WebSocket connection. Please check your network.');
+          onError('Failed to establish WebSocket connection. Please check the Edge Function logs.');
         } else if (event.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
           reconnectAttempts.current++;
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 10000);
@@ -276,7 +286,7 @@ export const useVoiceAssistantWebSocket = ({
       wsRef.current.onerror = (error) => {
         console.error('❌ WebSocket error event:', error);
         setStatus('Connection Error');
-        onError('WebSocket connection error - please check your network connection');
+        onError('WebSocket connection error - please check the Edge Function status');
       };
 
     } catch (error) {
@@ -333,20 +343,6 @@ export const useVoiceAssistantWebSocket = ({
     connectionEstablished.current = false;
   }, [isRecording, stopPingPong]);
 
-  // Send test message to verify connection
-  const sendTestMessage = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      console.log('🧪 Sending test message');
-      wsRef.current.send(JSON.stringify({
-        type: 'test',
-        message: 'Frontend test message',
-        timestamp: Date.now()
-      }));
-    } else {
-      console.log('⚠️ Cannot send test - WebSocket not connected');
-    }
-  }, []);
-
   const startRecording = useCallback(async () => {
     console.log('🎤 Start recording requested');
     if (!isConnected) {
@@ -394,8 +390,10 @@ export const useVoiceAssistantWebSocket = ({
         const base64Audio = reader.result?.toString().split(',')[1];
         if (base64Audio && wsRef.current?.readyState === WebSocket.OPEN) {
           wsRef.current.send(JSON.stringify({
-            type: 'audio_chunk',
-            audio: base64Audio,
+            event: 'media',
+            media: {
+              payload: base64Audio
+            },
             timestamp: Date.now()
           }));
         }
@@ -447,12 +445,25 @@ export const useVoiceAssistantWebSocket = ({
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       console.log('📤 Sending text message:', text);
       wsRef.current.send(JSON.stringify({
-        type: 'text_input',
+        event: 'text_input',
         text: text,
         timestamp: Date.now()
       }));
     } else {
       console.log('⚠️ Cannot send text - WebSocket not connected');
+    }
+  }, []);
+
+  const sendTestMessage = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      console.log('🧪 Sending test message');
+      wsRef.current.send(JSON.stringify({
+        event: 'test',
+        message: 'Frontend test message',
+        timestamp: Date.now()
+      }));
+    } else {
+      console.log('⚠️ Cannot send test - WebSocket not connected');
     }
   }, []);
 

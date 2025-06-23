@@ -1,12 +1,13 @@
+
 import { serve } from 'https://deno.land/std@0.192.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🎙️ Deepgram Voice Agent WebSocket v14.0 - Fixed WebSocket Upgrade')
+console.log('🎙️ Deepgram Voice Agent WebSocket v15.0 - Fixed Connection Issues')
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, UPGRADE',
 }
 
 serve(async (req) => {
@@ -25,7 +26,7 @@ serve(async (req) => {
   if (upgradeHeader.toLowerCase() !== 'websocket') {
     console.log('❌ Not a WebSocket request, returning 426')
     return new Response(
-      JSON.stringify({ error: "Use WebSocket" }),
+      JSON.stringify({ error: "Expected WebSocket connection" }),
       {
         status: 426,
         headers: { 
@@ -39,7 +40,7 @@ serve(async (req) => {
     )
   }
 
-  // Check required environment variables
+  // Check required environment variables BEFORE upgrade
   const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')
   const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
   
@@ -284,7 +285,7 @@ serve(async (req) => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: assistant?.model || 'gpt-4.1-2025-04-14',
+            model: assistant?.model || 'gpt-4o-mini',
             messages: messages,
             max_tokens: assistant?.max_tokens || 150,
             temperature: assistant?.temperature || 0.8,
@@ -388,7 +389,7 @@ serve(async (req) => {
             system_prompt: 'You are a helpful voice assistant. Be friendly, conversational, and keep responses concise since this is a voice conversation.',
             first_message: 'Hello! I can hear you clearly. How can I help you today?',
             voice_id: 'aura-asteria-en',
-            model: 'gpt-4.1-2025-04-14',
+            model: 'gpt-4o-mini',
             temperature: 0.8,
             max_tokens: 150
           }
