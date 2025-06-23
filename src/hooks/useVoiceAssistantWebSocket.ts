@@ -1,3 +1,4 @@
+
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Assistant } from '@/types/assistant';
 
@@ -28,105 +29,8 @@ export const useVoiceAssistantWebSocket = ({
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 3;
   const isManualDisconnect = useRef(false);
-  const connectionEstablished = useRef(false);
-  const lastPongTime = useRef(Date.now());
 
   console.log('🎙️ useVoiceAssistantWebSocket initialized for assistant:', assistant.name);
-
-  // Test Edge Function availability
-  const testEdgeFunction = useCallback(async (): Promise<boolean> => {
-    try {
-      console.log('🧪 Testing Edge Function availability...');
-      const testUrl = `https://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent`;
-      
-      const response = await fetch(testUrl, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      
-      console.log('🧪 Edge Function test response:', response.status, response.statusText);
-      
-      if (response.status === 426) {
-        // Expected - function is working but wants WebSocket
-        console.log('✅ Edge Function is available and requesting WebSocket upgrade');
-        return true;
-      } else if (response.status === 500) {
-        const errorText = await response.text();
-        console.log('❌ Edge Function error:', errorText);
-        
-        try {
-          const errorData = JSON.parse(errorText);
-          if (errorData.error === 'Required API keys not configured') {
-            onError('Missing API keys: Please configure DEEPGRAM_API_KEY and OPENAI_API_KEY in Supabase Edge Function secrets');
-            return false;
-          }
-        } catch (e) {
-          // Error text isn't JSON
-        }
-        
-        onError(`Edge Function error (${response.status}): ${errorText}`);
-        return false;
-      } else {
-        console.log('⚠️ Unexpected response, but function seems available');
-        return true;
-      }
-    } catch (error) {
-      console.error('❌ Edge Function test failed:', error);
-      onError(`Edge Function not available: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      return false;
-    }
-  }, [onError]);
-
-  // Start ping-pong keepalive
-  const startPingPong = useCallback(() => {
-    if (pingIntervalRef.current) return;
-    
-    console.log('💓 Starting frontend ping-pong system');
-    
-    pingIntervalRef.current = setInterval(() => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        try {
-          const now = Date.now();
-          
-          // Check if we haven't received a pong in too long
-          if (now - lastPongTime.current > 45000) {
-            console.log('⚠️ No pong received for 45s, connection may be dead');
-            if (wsRef.current) {
-              wsRef.current.close(1008, 'Keepalive timeout');
-            }
-            return;
-          }
-
-          // Send ping
-          wsRef.current.send(JSON.stringify({
-            type: 'ping',
-            timestamp: now
-          }));
-          console.log('💓 Sent ping to backend');
-          
-        } catch (error) {
-          console.error('❌ Error sending ping:', error);
-        }
-      } else {
-        console.log('💔 WebSocket not open, stopping ping');
-        if (pingIntervalRef.current) {
-          clearInterval(pingIntervalRef.current);
-          pingIntervalRef.current = null;
-        }
-      }
-    }, 20000); // Ping every 20 seconds
-  }, []);
-
-  // Stop ping-pong
-  const stopPingPong = useCallback(() => {
-    if (pingIntervalRef.current) {
-      clearInterval(pingIntervalRef.current);
-      pingIntervalRef.current = null;
-      console.log('💓 Frontend ping-pong stopped');
-    }
-  }, []);
 
   const connect = useCallback(async () => {
     if (wsRef.current?.readyState === WebSocket.CONNECTING) {
@@ -135,18 +39,7 @@ export const useVoiceAssistantWebSocket = ({
     }
 
     try {
-      // First test if Edge Function is available
-      console.log('🔍 Checking Edge Function availability...');
-      setStatus('Checking Edge Function...');
-      
-      const functionAvailable = await testEdgeFunction();
-      if (!functionAvailable) {
-        setStatus('Edge Function Error');
-        return;
-      }
-
       isManualDisconnect.current = false;
-      connectionEstablished.current = false;
       
       console.log('🔄 Starting WebSocket connection...');
       setStatus('Connecting...');
@@ -166,23 +59,21 @@ export const useVoiceAssistantWebSocket = ({
       const wsUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent`;
       console.log('🌐 Connecting to:', wsUrl);
       
-      // Create WebSocket connection with proper headers
       wsRef.current = new WebSocket(wsUrl);
 
       // Set connection timeout
       connectionTimeoutRef.current = setTimeout(() => {
-        console.log('⏰ Connection timeout after 15 seconds');
+        console.log('⏰ Connection timeout after 10 seconds');
         if (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING) {
           wsRef.current.close();
           setStatus('Connection Timeout');
           onError('Connection timeout - Edge Function may be starting up. Please try again.');
         }
-      }, 15000);
+      }, 10000);
 
       wsRef.current.onopen = () => {
         console.log('✅ WebSocket connection opened successfully!');
         
-        // Clear timeout
         if (connectionTimeoutRef.current) {
           clearTimeout(connectionTimeoutRef.current);
           connectionTimeoutRef.current = null;
@@ -191,10 +82,8 @@ export const useVoiceAssistantWebSocket = ({
         setIsConnected(true);
         setStatus('Connected');
         reconnectAttempts.current = 0;
-        connectionEstablished.current = true;
-        lastPongTime.current = Date.now();
         
-        // Send start message to initialize the session
+        // Send start message
         const startMessage = {
           event: 'start',
           message: 'Initializing voice assistant session',
@@ -205,18 +94,12 @@ export const useVoiceAssistantWebSocket = ({
         console.log('📤 Sending start message:', startMessage);
         wsRef.current?.send(JSON.stringify(startMessage));
 
-        // Start ping-pong after connection is established
-        setTimeout(() => {
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            startPingPong();
-          }
-        }, 1000);
+        // Start ping-pong
+        startPingPong();
       };
 
       wsRef.current.onmessage = (event) => {
         try {
-          lastPongTime.current = Date.now(); // Update activity time
-          
           const data = JSON.parse(event.data);
           console.log('📨 Received message:', data.type || data.event);
           
@@ -228,16 +111,6 @@ export const useVoiceAssistantWebSocket = ({
               
             case 'ack':
               console.log('✅ Backend acknowledged start:', data.message);
-              setStatus('Initializing...');
-              break;
-
-            case 'connection_established':
-              console.log('🔗 Backend connection established');
-              setStatus('Backend Connected');
-              break;
-              
-            case 'ready':
-              console.log('✅ Backend ready');
               setStatus('Ready');
               break;
               
@@ -246,7 +119,6 @@ export const useVoiceAssistantWebSocket = ({
               break;
               
             case 'ping':
-              // Respond to backend ping
               if (wsRef.current?.readyState === WebSocket.OPEN) {
                 wsRef.current.send(JSON.stringify({
                   type: 'pong',
@@ -276,10 +148,6 @@ export const useVoiceAssistantWebSocket = ({
                 playAudioResponse(data.audio);
               }
               break;
-
-            case 'test_response':
-              console.log('🧪 Test response received:', data.message);
-              break;
               
             case 'error':
               console.error('❌ Backend error:', data.error);
@@ -298,11 +166,9 @@ export const useVoiceAssistantWebSocket = ({
         console.log('🔌 WebSocket closed:', { 
           code: event.code, 
           reason: event.reason,
-          wasClean: event.wasClean,
-          connectionEstablished: connectionEstablished.current
+          wasClean: event.wasClean
         });
         
-        // Clear timeouts and intervals
         if (connectionTimeoutRef.current) {
           clearTimeout(connectionTimeoutRef.current);
           connectionTimeoutRef.current = null;
@@ -317,33 +183,12 @@ export const useVoiceAssistantWebSocket = ({
           return;
         }
         
-        // Provide specific error messages based on close code
         if (event.code === 1006) {
-          if (!connectionEstablished.current) {
-            console.log('❌ Connection failed before establishment (1006)');
-            setStatus('Connection Failed');
-            onError('Connection failed. This usually means:\n• Missing API keys in Supabase secrets\n• Edge Function not deployed\n• Network/firewall issues\n\nPlease check your Supabase Edge Function configuration.');
-          } else {
-            console.log('❌ Connection lost unexpectedly (1006)');
-            setStatus('Connection Lost');
-          }
-        } else if (event.code === 1011) {
-          setStatus('Server Error');
-          onError('Server error - check Edge Function logs for details');
-        } else if (event.code === 1008) {
-          setStatus('Policy Violation');
-          onError('Connection closed due to policy violation or keepalive timeout');
+          console.log('❌ Connection failed (1006)');
+          setStatus('Connection Failed');
+          onError('Connection failed. Please check:\n• API keys are configured in Supabase\n• Edge Function is deployed\n• Network connection is stable');
         } else if (event.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
-          reconnectAttempts.current++;
-          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 10000);
-          console.log(`🔄 Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})`);
-          setStatus(`Reconnecting... (${reconnectAttempts.current}/${maxReconnectAttempts})`);
-          
-          reconnectTimeoutRef.current = setTimeout(() => {
-            if (!isManualDisconnect.current) {
-              connect();
-            }
-          }, delay);
+          attemptReconnect();
         } else {
           setStatus('Connection Lost');
           onError('WebSocket connection lost. Please refresh and try again.');
@@ -353,7 +198,7 @@ export const useVoiceAssistantWebSocket = ({
       wsRef.current.onerror = (error) => {
         console.error('❌ WebSocket error event:', error);
         setStatus('Connection Error');
-        onError('WebSocket connection error. Please check:\n• Your internet connection\n• Supabase Edge Function deployment\n• API keys configuration');
+        onError('WebSocket connection error - please check the Edge Function status');
       };
 
     } catch (error) {
@@ -361,7 +206,53 @@ export const useVoiceAssistantWebSocket = ({
       setStatus('Connection Failed');
       onError(`Failed to setup connection: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  }, [assistant.id, onError, onTranscript, onAssistantResponse, startPingPong, stopPingPong, testEdgeFunction]);
+  }, [assistant.id, onError, onTranscript, onAssistantResponse]);
+
+  const attemptReconnect = useCallback(() => {
+    if (reconnectAttempts.current < maxReconnectAttempts) {
+      reconnectAttempts.current++;
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 10000);
+      console.log(`🔄 Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})`);
+      setStatus(`Reconnecting... (${reconnectAttempts.current}/${maxReconnectAttempts})`);
+      
+      reconnectTimeoutRef.current = setTimeout(() => {
+        if (!isManualDisconnect.current) {
+          connect();
+        }
+      }, delay);
+    } else {
+      setStatus('Connection Failed - Max Retries Reached');
+      onError('Connection lost after multiple attempts. Please refresh and try again.');
+    }
+  }, [connect, onError]);
+
+  const startPingPong = useCallback(() => {
+    if (pingIntervalRef.current) return;
+    
+    console.log('💓 Starting ping-pong system');
+    
+    pingIntervalRef.current = setInterval(() => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        try {
+          wsRef.current.send(JSON.stringify({
+            type: 'ping',
+            timestamp: Date.now()
+          }));
+          console.log('💓 Sent ping to backend');
+        } catch (error) {
+          console.error('❌ Error sending ping:', error);
+        }
+      }
+    }, 30000) as unknown as NodeJS.Timeout;
+  }, []);
+
+  const stopPingPong = useCallback(() => {
+    if (pingIntervalRef.current) {
+      clearInterval(pingIntervalRef.current);
+      pingIntervalRef.current = null;
+      console.log('💓 Ping-pong stopped');
+    }
+  }, []);
 
   const disconnect = useCallback(() => {
     console.log('🔄 Manual disconnect initiated');
@@ -407,7 +298,6 @@ export const useVoiceAssistantWebSocket = ({
     setIsRecording(false);
     setStatus('Disconnected');
     reconnectAttempts.current = 0;
-    connectionEstablished.current = false;
   }, [isRecording, stopPingPong]);
 
   const startRecording = useCallback(async () => {
