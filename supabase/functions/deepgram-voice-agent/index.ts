@@ -2,7 +2,13 @@
 import { serve } from 'https://deno.land/std@0.192.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🎙️ Deepgram Voice Agent WebSocket v7.0 - Optimized WebSocket Support')
+console.log('🎙️ Deepgram Voice Agent WebSocket v8.0 - Fixed WebSocket Support')
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+}
 
 serve(async (req) => {
   console.log('🚀 deepgram-voice-agent function invoked', {
@@ -12,17 +18,17 @@ serve(async (req) => {
     connectionHeader: req.headers.get('connection'),
   })
 
-  // Check for WebSocket upgrade first
-  const upgradeHeader = req.headers.get('upgrade')
-  const connectionHeader = req.headers.get('connection')
-  
-  console.log('🔍 WebSocket headers check:', {
-    upgrade: upgradeHeader,
-    connection: connectionHeader,
-  })
+  // Handle CORS preflight requests ONLY
+  if (req.method === 'OPTIONS') {
+    console.log('✅ Handling CORS preflight request')
+    return new Response(null, { headers: corsHeaders })
+  }
 
+  // Check for WebSocket upgrade - CRITICAL: No CORS headers on WebSocket responses
+  const upgradeHeader = req.headers.get('upgrade')
   if (!upgradeHeader || upgradeHeader.toLowerCase() !== 'websocket') {
-    console.log('❌ Not a WebSocket upgrade request')
+    console.log('❌ Not a WebSocket upgrade request, returning 426')
+    // IMPORTANT: DO NOT include CORS headers here - breaks WebSocket handshake
     return new Response('Expected WebSocket connection', {
       status: 426,
       headers: { 
@@ -63,6 +69,7 @@ serve(async (req) => {
     let conversationHistory: Array<{ role: string; content: string }> = []
     let assistantId = 'demo'
     let userId = 'demo-user'
+    let firstMessageSent = false
 
     const log = (msg: string, data?: any) => {
       const timestamp = new Date().toISOString()
@@ -138,11 +145,6 @@ serve(async (req) => {
 
         deepgramSTT.onerror = (error) => {
           log('❌ Deepgram STT error:', error)
-          sendToClient({
-            type: 'error',
-            error: 'Speech recognition error',
-            timestamp: Date.now()
-          })
           setTimeout(connectSTT, 2000)
         }
 
@@ -155,11 +157,6 @@ serve(async (req) => {
 
       } catch (error) {
         log('❌ Failed to connect STT:', error)
-        sendToClient({
-          type: 'error',
-          error: 'Failed to connect speech recognition',
-          timestamp: Date.now()
-        })
       }
     }
 
@@ -180,9 +177,10 @@ serve(async (req) => {
             timestamp: Date.now()
           })
           
-          if (assistant?.first_message) {
+          if (assistant?.first_message && !firstMessageSent) {
             setTimeout(() => {
               sendTTSMessage(assistant.first_message)
+              firstMessageSent = true
             }, 500)
           }
         }
@@ -242,7 +240,7 @@ serve(async (req) => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: assistant?.model || 'gpt-4o-mini',
+            model: assistant?.model || 'gpt-4.1-2025-04-14',
             messages: messages,
             max_tokens: assistant?.max_tokens || 150,
             temperature: assistant?.temperature || 0.8,
@@ -342,7 +340,7 @@ serve(async (req) => {
             system_prompt: 'You are a helpful voice assistant. Be friendly, conversational, and keep responses concise since this is a voice conversation.',
             first_message: 'Hello! I can hear you clearly. How can I help you today?',
             voice_id: 'aura-asteria-en',
-            model: 'gpt-4o-mini',
+            model: 'gpt-4.1-2025-04-14',
             temperature: 0.8,
             max_tokens: 150
           }
@@ -375,7 +373,6 @@ serve(async (req) => {
       log('🔌 Client WebSocket connected')
       isConnected = true
       
-      // Send immediate connection confirmation
       sendToClient({
         type: 'connection_ready',
         status: 'WebSocket connection established',

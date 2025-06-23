@@ -24,7 +24,7 @@ export const useVoiceAssistantWebSocket = ({
   const streamRef = useRef<MediaStream | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttempts = useRef(0);
-  const maxReconnectAttempts = 3; // Reduced from 5 for faster failure detection
+  const maxReconnectAttempts = 3;
   const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const keepAliveIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const connectionLockRef = useRef(false);
@@ -54,24 +54,12 @@ export const useVoiceAssistantWebSocket = ({
         clearTimeout(connectionTimeoutRef.current);
       }
       
-      // Test network connectivity first
-      try {
-        const response = await fetch('https://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent', {
-          method: 'HEAD',
-          signal: AbortSignal.timeout(5000)
-        });
-        console.log('🌐 Network connectivity test:', response.status);
-      } catch (networkError) {
-        console.error('❌ Network connectivity test failed:', networkError);
-        throw new Error('Network connectivity issue detected');
-      }
-      
-      // Build WebSocket URL with explicit protocol
+      // Build WebSocket URL - CRITICAL: Use wss:// directly, NOT HTTP
       const wsUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent`;
       console.log('🌐 Connecting to WebSocket:', wsUrl);
       
-      // Create WebSocket with explicit protocols
-      wsRef.current = new WebSocket(wsUrl, ['websocket']);
+      // Create WebSocket connection directly - no HTTP testing needed
+      wsRef.current = new WebSocket(wsUrl);
 
       // Set shorter connection timeout for faster feedback
       connectionTimeoutRef.current = setTimeout(() => {
@@ -108,7 +96,7 @@ export const useVoiceAssistantWebSocket = ({
         console.log('📤 Sending connection message:', connectMessage);
         wsRef.current?.send(JSON.stringify(connectMessage));
 
-        // Start keepalive with shorter interval
+        // Start keepalive
         startKeepAlive();
       };
 
@@ -193,7 +181,7 @@ export const useVoiceAssistantWebSocket = ({
           
           if (reconnectAttempts.current < maxReconnectAttempts) {
             reconnectAttempts.current++;
-            const delay = Math.min(2000 * reconnectAttempts.current, 8000); // Cap at 8 seconds
+            const delay = Math.min(2000 * reconnectAttempts.current, 8000);
             console.log(`🔄 Attempting reconnection ${reconnectAttempts.current}/${maxReconnectAttempts} in ${delay}ms`);
             setStatus(`Reconnecting... (${reconnectAttempts.current}/${maxReconnectAttempts})`);
             
@@ -204,7 +192,7 @@ export const useVoiceAssistantWebSocket = ({
             setStatus('Connection failed');
             onError('Unable to connect to voice assistant. Please check your network connection and try again.');
           }
-        } else if (event.code !== 1000) { // Not a normal closure
+        } else if (event.code !== 1000) {
           setStatus('Disconnected unexpectedly');
           if (reconnectAttempts.current < maxReconnectAttempts) {
             reconnectAttempts.current++;
@@ -254,7 +242,7 @@ export const useVoiceAssistantWebSocket = ({
         wsRef.current.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
         console.log('💓 Sent keepalive ping');
       }
-    }, 15000) as unknown as NodeJS.Timeout; // Reduced from 30s for better detection
+    }, 15000) as unknown as NodeJS.Timeout;
   }, []);
 
   const stopKeepAlive = useCallback(() => {
