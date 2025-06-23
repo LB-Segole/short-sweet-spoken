@@ -475,6 +475,51 @@ export type Database = {
         }
         Relationships: []
       }
+      voice_agents: {
+        Row: {
+          created_at: string
+          first_message: string | null
+          id: string
+          max_tokens: number | null
+          model: string | null
+          name: string
+          system_prompt: string
+          temperature: number | null
+          updated_at: string
+          user_id: string
+          voice_id: string | null
+          voice_provider: string | null
+        }
+        Insert: {
+          created_at?: string
+          first_message?: string | null
+          id?: string
+          max_tokens?: number | null
+          model?: string | null
+          name: string
+          system_prompt: string
+          temperature?: number | null
+          updated_at?: string
+          user_id: string
+          voice_id?: string | null
+          voice_provider?: string | null
+        }
+        Update: {
+          created_at?: string
+          first_message?: string | null
+          id?: string
+          max_tokens?: number | null
+          model?: string | null
+          name?: string
+          system_prompt?: string
+          temperature?: number | null
+          updated_at?: string
+          user_id?: string
+          voice_id?: string | null
+          voice_provider?: string | null
+        }
+        Relationships: []
+      }
       webhook_logs: {
         Row: {
           call_id: string | null
