@@ -17,7 +17,7 @@ export const OutboundCallInterface: React.FC<OutboundCallInterfaceProps> = ({
   assistant,
   onClose,
 }) => {
-  const [phone Number, setPhoneNumber] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [callStatus, setCallStatus] = useState<string>('');
   const [callSid, setCallSid] = useState<string>('');
