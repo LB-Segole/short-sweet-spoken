@@ -57,12 +57,9 @@ serve(async (req) => {
 
   try {
     console.log('🔄 Attempting WebSocket upgrade...')
-    const { socket, response } = Deno.upgradeWebSocket(req)
-    console.log('✅ WebSocket upgrade successful!')
     
     // Perform WebSocket upgrade
     const { socket, response } = Deno.upgradeWebSocket(req)
-    
     console.log('✅ WebSocket upgrade successful!')
 
     // Connection state management
