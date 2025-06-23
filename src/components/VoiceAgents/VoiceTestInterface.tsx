@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -29,6 +28,8 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
   const [conversation, setConversation] = useState<ConversationMessage[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const [showFloatingAssistant, setShowFloatingAssistant] = useState(false);
+
+  console.log('🎮 VoiceTestInterface initialized for agent:', agent.name);
 
   const addLog = (message: string) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -82,10 +83,15 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
   };
 
   const handleStartVoiceChat = () => {
-    if (!isConnected) {
-      connect();
-    }
+    console.log('🚀 Starting voice chat for agent:', agent.name);
+    addLog(`Starting voice chat with ${agent.name}...`);
     setShowFloatingAssistant(true);
+  };
+
+  const handleCloseVoiceChat = () => {
+    console.log('🛑 Closing voice chat');
+    addLog('Voice chat session ended');
+    setShowFloatingAssistant(false);
   };
 
   const handleSendText = () => {
@@ -135,61 +141,73 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
           
           <CardContent className="space-y-4">
             {/* Main Voice Chat Button */}
-            <div className="flex justify-center p-6 bg-gradient-to-br from-blue-50 to-purple-50 rounded-lg">
-              <Button
-                onClick={handleStartVoiceChat}
-                size="lg"
-                className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white text-lg px-8 py-4 h-auto"
-              >
-                <MessageSquare className="h-6 w-6 mr-3" />
-                Start Voice Chat
-              </Button>
+            <div className="flex justify-center p-8 bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl border-2 border-dashed border-blue-200">
+              <div className="text-center">
+                <Button
+                  onClick={handleStartVoiceChat}
+                  size="lg"
+                  className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white text-xl px-12 py-6 h-auto rounded-full shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+                >
+                  <MessageSquare className="h-8 w-8 mr-4" />
+                  Start Voice Chat
+                </Button>
+                <p className="text-gray-600 mt-4 text-lg">
+                  Click to launch the interactive voice assistant
+                </p>
+                <p className="text-gray-500 text-sm mt-2">
+                  You'll see a floating orb that you can speak to directly
+                </p>
+              </div>
             </div>
 
-            {/* Connection Controls */}
-            <div className="flex gap-2 p-4 bg-gray-50 rounded-lg">
-              <Button
-                onClick={handleConnect}
-                variant={isConnected ? 'destructive' : 'default'}
-                className="flex-1"
-              >
-                {isConnected ? <PhoneOff className="h-4 w-4 mr-2" /> : <Phone className="h-4 w-4 mr-2" />}
-                {isConnected ? 'Disconnect' : 'Connect'}
-              </Button>
-              
-              <Button
-                onClick={isRecording ? stopRecording : startRecording}
-                variant={isRecording ? 'destructive' : 'secondary'}
-                disabled={!isConnected}
-                className="flex-1"
-              >
-                {isRecording ? <MicOff className="h-4 w-4 mr-2" /> : <Mic className="h-4 w-4 mr-2" />}
-                {isRecording ? 'Stop Recording' : 'Start Recording'}
-              </Button>
-            </div>
+            {/* Debug Controls */}
+            <div className="border rounded-lg p-4 bg-gray-50">
+              <h3 className="font-semibold mb-3 text-gray-700">Debug Controls</h3>
+              <div className="flex gap-2 mb-4">
+                <Button
+                  onClick={handleConnect}
+                  variant={isConnected ? 'destructive' : 'default'}
+                  size="sm"
+                >
+                  {isConnected ? <PhoneOff className="h-4 w-4 mr-2" /> : <Phone className="h-4 w-4 mr-2" />}
+                  {isConnected ? 'Disconnect' : 'Connect'}
+                </Button>
+                
+                <Button
+                  onClick={isRecording ? stopRecording : startRecording}
+                  variant={isRecording ? 'destructive' : 'secondary'}
+                  disabled={!isConnected}
+                  size="sm"
+                >
+                  {isRecording ? <MicOff className="h-4 w-4 mr-2" /> : <Mic className="h-4 w-4 mr-2" />}
+                  {isRecording ? 'Stop Recording' : 'Start Recording'}
+                </Button>
+              </div>
 
-            {/* Text Input */}
-            <div className="flex gap-2">
-              <Textarea
-                value={textInput}
-                onChange={(e) => setTextInput(e.target.value)}
-                placeholder="Type a message to test text input..."
-                className="flex-1"
-                rows={2}
-                disabled={!isConnected}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSendText();
-                  }
-                }}
-              />
-              <Button
-                onClick={handleSendText}
-                disabled={!isConnected || !textInput.trim()}
-              >
-                <Send className="h-4 w-4" />
-              </Button>
+              {/* Text Input */}
+              <div className="flex gap-2">
+                <Textarea
+                  value={textInput}
+                  onChange={(e) => setTextInput(e.target.value)}
+                  placeholder="Type a message to test text input..."
+                  className="flex-1"
+                  rows={2}
+                  disabled={!isConnected}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendText();
+                    }
+                  }}
+                />
+                <Button
+                  onClick={handleSendText}
+                  disabled={!isConnected || !textInput.trim()}
+                  size="sm"
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
 
             <div className="grid md:grid-cols-2 gap-4">
@@ -198,7 +216,7 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
                 <h3 className="font-semibold">Conversation</h3>
                 <div className="h-64 overflow-y-auto border rounded-lg p-4 space-y-2 bg-white">
                   {conversation.length === 0 ? (
-                    <p className="text-gray-500 text-center">No conversation yet. Connect and start talking!</p>
+                    <p className="text-gray-500 text-center">No conversation yet. Start voice chat above!</p>
                   ) : (
                     conversation.map((item, index) => (
                       <div
@@ -263,7 +281,7 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
       {showFloatingAssistant && (
         <FloatingVoiceAssistant
           agent={agent}
-          onClose={() => setShowFloatingAssistant(false)}
+          onClose={handleCloseVoiceChat}
         />
       )}
     </>
