@@ -1,4 +1,3 @@
-
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Assistant } from '@/types/assistant';
 
@@ -47,8 +46,8 @@ export const useVoiceAssistantWebSocket = ({
         clearTimeout(connectionTimeoutRef.current);
       }
       
-      // Build WebSocket URL - FIXED: removed /v1/
-      const wsUrl = `wss://csixccpoxpnwowbgkoyw.functions.supabase.co/functions/deepgram-voice-agent`;
+      // Build WebSocket URL - UPDATED: using correct path with /functions/v1/
+      const wsUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent`;
       console.log('🌐 Connecting to:', wsUrl);
       
       // Create WebSocket with proper headers

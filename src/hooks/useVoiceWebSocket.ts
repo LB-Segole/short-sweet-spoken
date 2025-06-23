@@ -206,8 +206,8 @@ export const useVoiceWebSocket = ({
         throw new Error(`Session error: ${sessionError.message}`);
       }
 
-      // Build WebSocket URL with authentication - FIXED: using correct path without /v1/
-      const wsUrl = new URL('wss://csixccpoxpnwowbgkoyw.functions.supabase.co/functions/deepgram-voice-websocket');
+      // Build WebSocket URL with authentication - UPDATED: using correct path with /functions/v1/
+      const wsUrl = new URL('wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-websocket');
       wsUrl.searchParams.set('userId', userId);
       wsUrl.searchParams.set('callId', callId || 'browser-test');
       wsUrl.searchParams.set('assistantId', assistantId || 'demo');

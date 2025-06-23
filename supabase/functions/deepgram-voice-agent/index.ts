@@ -1,4 +1,3 @@
-
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -6,9 +5,10 @@ const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, UPGRADE',
+  'Content-Type': 'application/json',
 }
 
-console.log('🎙️ Deepgram Voice Agent WebSocket v4.0 - Real-time Voice Chat with Proper Authentication')
+console.log('🎙️ Deepgram Voice Agent WebSocket v5.0 - Fixed Authentication & Endpoints')
 
 serve(async (req) => {
   console.log('🚀 deepgram-voice-agent function invoked', {
@@ -37,16 +37,16 @@ serve(async (req) => {
 
   // Check required environment variables
   const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')
-  const huggingFaceApi = Deno.env.get('HUGGING_FACE_API')
+  const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
   
   if (!deepgramApiKey) {
     console.error('❌ Missing DEEPGRAM_API_KEY')
     return new Response('DEEPGRAM_API_KEY not configured', { status: 500, headers: corsHeaders })
   }
   
-  if (!huggingFaceApi) {
-    console.error('❌ Missing HUGGING_FACE_API')
-    return new Response('HUGGING_FACE_API not configured', { status: 500, headers: corsHeaders })
+  if (!openaiApiKey) {
+    console.error('❌ Missing OPENAI_API_KEY')
+    return new Response('OPENAI_API_KEY not configured', { status: 500, headers: corsHeaders })
   }
 
   try {
@@ -73,13 +73,17 @@ serve(async (req) => {
     // Initialize Deepgram STT connection with proper authentication
     const connectSTT = async () => {
       try {
-        log('🔗 Connecting to Deepgram STT with proper authentication...')
+        log('🔗 Connecting to Deepgram STT with Token authentication...')
         
-        // Use the correct WebSocket URL with protocol-based authentication
+        // Use the correct WebSocket URL with proper authentication header
         const sttUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&endpointing=300&utterance_end_ms=1000&vad_events=true&punctuate=true`
         
-        // Create WebSocket with token protocol for authentication
-        deepgramSTT = new WebSocket(sttUrl, ['token', deepgramApiKey])
+        // Create WebSocket with Authorization header using token format
+        deepgramSTT = new WebSocket(sttUrl, [], {
+          headers: {
+            'Authorization': `Token ${deepgramApiKey}`
+          }
+        })
 
         deepgramSTT.onopen = () => {
           log('✅ Deepgram STT connected successfully')
@@ -161,13 +165,17 @@ serve(async (req) => {
     // Initialize Deepgram TTS connection with proper authentication
     const connectTTS = async () => {
       try {
-        log('🔗 Connecting to Deepgram TTS with proper authentication...')
+        log('🔗 Connecting to Deepgram TTS with Token authentication...')
         
         const voiceModel = assistant?.voice_id || 'aura-asteria-en'
         const ttsUrl = `wss://api.deepgram.com/v1/speak?model=${voiceModel}&encoding=linear16&sample_rate=24000&container=none`
         
-        // Create WebSocket with token protocol for authentication
-        deepgramTTS = new WebSocket(ttsUrl, ['token', deepgramApiKey])
+        // Create WebSocket with Authorization header using token format
+        deepgramTTS = new WebSocket(ttsUrl, [], {
+          headers: {
+            'Authorization': `Token ${deepgramApiKey}`
+          }
+        })
 
         deepgramTTS.onopen = () => {
           log('✅ Deepgram TTS connected successfully')
@@ -218,7 +226,7 @@ serve(async (req) => {
     // Process transcript and get AI response
     const processTranscript = async (transcript: string) => {
       try {
-        log('🤖 Processing transcript with AI...', { transcript })
+        log('🤖 Processing transcript with OpenAI...', { transcript })
         
         // Add user message to conversation history
         conversationHistory.push({ role: 'user', content: transcript })
@@ -228,64 +236,39 @@ serve(async (req) => {
           conversationHistory = conversationHistory.slice(-10)
         }
 
-        // Prepare context for Hugging Face
+        // Prepare messages for OpenAI
         const systemPrompt = assistant?.system_prompt || 'You are a helpful voice assistant. Be friendly, conversational, and keep responses concise since this is a voice conversation.'
         
-        // Create conversation context
-        let conversationContext = systemPrompt + '\n\n'
-        conversationHistory.forEach(msg => {
-          if (msg.role === 'user') {
-            conversationContext += `Human: ${msg.content}\n`
-          } else if (msg.role === 'assistant') {
-            conversationContext += `Assistant: ${msg.content}\n`
-          }
+        const messages = [
+          { role: 'system', content: systemPrompt },
+          ...conversationHistory
+        ]
+
+        // Call OpenAI API
+        const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${openaiApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: assistant?.model || 'gpt-4o-mini',
+            messages: messages,
+            max_tokens: assistant?.max_tokens || 150,
+            temperature: assistant?.temperature || 0.8,
+          }),
         })
-        conversationContext += `Human: ${transcript}\nAssistant:`
 
-        // Call Hugging Face API
-        const hfResponse = await fetch(
-          'https://api-inference.huggingface.co/models/microsoft/DialoGPT-large',
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${huggingFaceApi}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              inputs: conversationContext,
-              parameters: {
-                max_new_tokens: assistant?.max_tokens || 150,
-                temperature: assistant?.temperature || 0.8,
-                do_sample: true,
-                top_p: 0.9,
-                return_full_text: false
-              }
-            }),
-          }
-        )
-
-        if (!hfResponse.ok) {
-          throw new Error(`Hugging Face API error: ${hfResponse.status}`)
+        if (!openaiResponse.ok) {
+          throw new Error(`OpenAI API error: ${openaiResponse.status}`)
         }
 
-        const hfData = await hfResponse.json()
-        let aiResponse = ''
-        
-        if (Array.isArray(hfData) && hfData.length > 0) {
-          aiResponse = hfData[0].generated_text?.trim() || ''
-        }
+        const openaiData = await openaiResponse.json()
+        let aiResponse = openaiData.choices?.[0]?.message?.content?.trim() || ''
 
-        // Clean up the response
-        if (aiResponse) {
-          // Remove the input context from response
-          aiResponse = aiResponse.replace(conversationContext, '').trim()
-          // Remove any role prefixes
-          aiResponse = aiResponse.replace(/^(Assistant:|AI:|Bot:)\s*/i, '').trim()
-          
-          // Ensure response is appropriate for voice
-          if (aiResponse.length > 300) {
-            aiResponse = aiResponse.substring(0, 300) + '...'
-          }
+        // Ensure response is appropriate for voice
+        if (aiResponse.length > 300) {
+          aiResponse = aiResponse.substring(0, 300) + '...'
         }
 
         if (!aiResponse) {
@@ -361,7 +344,7 @@ serve(async (req) => {
         )
 
         const { data } = await supabase
-          .from('assistants')
+          .from('voice_agents')
           .select('*')
           .eq('id', id)
           .single()
@@ -377,7 +360,7 @@ serve(async (req) => {
             system_prompt: 'You are a helpful voice assistant. Be friendly, conversational, and keep responses concise since this is a voice conversation.',
             first_message: 'Hello! I can hear you clearly. How can I help you today?',
             voice_id: 'aura-asteria-en',
-            model: 'nova-2',
+            model: 'gpt-4o-mini',
             temperature: 0.8,
             max_tokens: 150
           }
