@@ -1,4 +1,3 @@
-
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -7,221 +6,166 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
-interface HuggingFaceRequest {
-  agentId: string;
-  message: string;
-  conversationHistory?: ChatMessage[];
-}
-
-console.log('🤖 Hugging Face Chat Service v3.0 - ChatGPT-4 Integration');
-
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
   }
 
   try {
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
-
-    // Get user from auth header
-    const authHeader = req.headers.get('Authorization')
-    if (!authHeader) {
-      console.log('⚠️ No authorization header, using service role');
+    const { assistantId, message, conversationHistory = [] } = await req.json()
+    
+    if (!assistantId || !message) {
+      throw new Error('Assistant ID and message are required')
     }
 
-    const { agentId, message, conversationHistory = [] }: HuggingFaceRequest = await req.json()
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    )
 
-    // Fetch agent configuration
-    const { data: agent, error: agentError } = await supabaseClient
-      .from('voice_agents')
+    // Get assistant configuration
+    const { data: assistant, error: assistantError } = await supabase
+      .from('assistants')
       .select('*')
-      .eq('id', agentId)
+      .eq('id', assistantId)
       .single()
 
-    if (agentError || !agent) {
-      throw new Error('Agent not found or access denied')
+    if (assistantError || !assistant) {
+      throw new Error('Assistant not found')
     }
 
-    console.log('🤖 Processing request for agent:', agent.name);
-    console.log('📝 User message:', message.substring(0, 100));
+    console.log('🤖 Processing chat for assistant:', assistant.name)
+    console.log('💬 User message:', message)
+    console.log('📚 Conversation history length:', conversationHistory.length)
 
-    // Prepare conversation context with better formatting
-    const messages: ChatMessage[] = [
-      {
-        role: 'system',
-        content: agent.system_prompt || 'You are a helpful AI assistant. Be conversational, natural, and keep responses concise but engaging. Respond as if you are having a voice conversation.'
-      },
-      ...conversationHistory.slice(-6), // Keep last 6 messages for context
-      {
-        role: 'user',
-        content: message
+    // Prepare conversation context
+    const systemPrompt = assistant.system_prompt || 'You are a helpful AI assistant.'
+    
+    // Build conversation context with recent history (keep last 10 messages to avoid token limits)
+    const recentHistory = conversationHistory.slice(-10)
+    
+    let conversationContext = `System: ${systemPrompt}\n\n`
+    
+    // Add conversation history
+    for (const msg of recentHistory) {
+      if (msg.role === 'user') {
+        conversationContext += `Human: ${msg.content}\n`
+      } else if (msg.role === 'assistant') {
+        conversationContext += `Assistant: ${msg.content}\n`
       }
+    }
+    
+    // Add current message
+    conversationContext += `Human: ${message}\nAssistant:`
+
+    console.log('📝 Conversation context prepared, length:', conversationContext.length)
+
+    // Try multiple Hugging Face models with fallbacks
+    const modelOptions = [
+      'microsoft/DialoGPT-large',
+      'facebook/blenderbot-400M-distill',
+      'microsoft/DialoGPT-medium',
+      'gpt2'
     ]
 
-    // Format conversation for ChatGPT-4 model
-    const conversationText = messages.map(msg => {
-      if (msg.role === 'system') return `System: ${msg.content}`
-      if (msg.role === 'user') return `Human: ${msg.content}`
-      return `Assistant: ${msg.content}`
-    }).join('\n\n')
+    let response = null
+    let lastError = null
 
-    const prompt = `${conversationText}\n\nAssistant:`
-
-    console.log('🔄 Calling Hugging Face ChatGPT-4 model...');
-
-    // Get Hugging Face API key
-    const huggingFaceApiKey = Deno.env.get('HUGGING_FACE_API');
-    if (!huggingFaceApiKey) {
-      throw new Error('Hugging Face API key not configured');
-    }
-
-    // Try ChatGPT-4 model first
-    let huggingFaceResponse = await fetch(
-      'https://api-inference.huggingface.co/models/OpenAI-ChatGPT/ChatGPT-4-Micro',
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${huggingFaceApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          inputs: prompt,
-          parameters: {
-            max_new_tokens: agent.settings?.max_tokens || 200,
-            temperature: agent.settings?.temperature || 0.8,
-            top_p: 0.9,
-            do_sample: true,
-            return_full_text: false,
-          },
-          options: {
-            wait_for_model: true,
-            use_cache: false,
+    for (const model of modelOptions) {
+      try {
+        console.log(`🔄 Trying model: ${model}`)
+        
+        const hfResponse = await fetch(
+          `https://api-inference.huggingface.co/models/${model}`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${Deno.env.get('HUGGING_FACE_API')}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              inputs: conversationContext,
+              parameters: {
+                max_new_tokens: assistant.max_tokens || 150,
+                temperature: assistant.temperature || 0.8,
+                do_sample: true,
+                top_p: 0.9,
+                return_full_text: false
+              }
+            }),
           }
-        }),
-      }
-    )
+        )
 
-    let result;
-    let responseText = '';
-
-    if (!huggingFaceResponse.ok) {
-      console.log('❌ ChatGPT-4 model failed, trying alternative...');
-      
-      // Fallback to a more reliable conversational model
-      huggingFaceResponse = await fetch(
-        'https://api-inference.huggingface.co/models/microsoft/DialoGPT-large',
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${huggingFaceApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            inputs: message,
-            parameters: {
-              max_length: agent.settings?.max_tokens || 200,
-              temperature: agent.settings?.temperature || 0.8,
-              pad_token_id: 50256,
-              do_sample: true,
-            },
-            options: {
-              wait_for_model: true,
-            }
-          }),
+        if (!hfResponse.ok) {
+          const errorText = await hfResponse.text()
+          console.log(`❌ Model ${model} failed:`, hfResponse.status, errorText)
+          lastError = new Error(`${model}: ${hfResponse.status} ${errorText}`)
+          continue
         }
-      );
 
-      if (huggingFaceResponse.ok) {
-        result = await huggingFaceResponse.json();
-        if (Array.isArray(result) && result[0]?.generated_text) {
-          responseText = result[0].generated_text;
-          // Clean up DialoGPT response
-          responseText = responseText.replace(message, '').trim();
+        const hfData = await hfResponse.json()
+        console.log('🤖 Raw HF response:', JSON.stringify(hfData))
+
+        // Extract response text
+        let aiResponse = ''
+        
+        if (Array.isArray(hfData) && hfData.length > 0) {
+          if (hfData[0].generated_text) {
+            aiResponse = hfData[0].generated_text.trim()
+          } else if (hfData[0].text) {
+            aiResponse = hfData[0].text.trim()
+          }
+        } else if (hfData.generated_text) {
+          aiResponse = hfData.generated_text.trim()
+        } else if (typeof hfData === 'string') {
+          aiResponse = hfData.trim()
         }
-      }
-    } else {
-      result = await huggingFaceResponse.json();
-      console.log('📨 Raw ChatGPT-4 response:', result);
 
-      if (Array.isArray(result) && result.length > 0) {
-        responseText = result[0].generated_text || result[0].text || '';
-      } else if (result.generated_text) {
-        responseText = result.generated_text;
-      }
-    }
-
-    // Final fallback to ensure we always have a response
-    if (!responseText || responseText.length < 3) {
-      console.log('🔄 Using fallback to Zephyr model...');
-      
-      const fallbackResponse = await fetch(
-        'https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta',
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${huggingFaceApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            inputs: `<|system|>\n${agent.system_prompt || 'You are a helpful AI assistant.'}\n<|user|>\n${message}\n<|assistant|>\n`,
-            parameters: {
-              max_new_tokens: agent.settings?.max_tokens || 150,
-              temperature: agent.settings?.temperature || 0.7,
-              do_sample: true,
-              top_p: 0.9,
-              return_full_text: false,
-            },
-            options: {
-              wait_for_model: true,
-            }
-          }),
+        if (aiResponse) {
+          // Clean up the response - remove any context that was echoed back
+          aiResponse = aiResponse.replace(/^(System:|Human:|Assistant:).*?\n/gm, '')
+          aiResponse = aiResponse.replace(conversationContext, '').trim()
+          
+          // If response starts with the input message, remove it
+          if (aiResponse.toLowerCase().startsWith(message.toLowerCase())) {
+            aiResponse = aiResponse.substring(message.length).trim()
+          }
+          
+          // Remove any remaining prefixes
+          aiResponse = aiResponse.replace(/^(Assistant:|AI:|Bot:)\s*/i, '').trim()
+          
+          if (aiResponse.length > 0) {
+            console.log('✅ Successfully got response from', model)
+            response = aiResponse
+            break
+          }
         }
-      );
-
-      if (fallbackResponse.ok) {
-        const fallbackResult = await fallbackResponse.json();
-        if (Array.isArray(fallbackResult) && fallbackResult[0]?.generated_text) {
-          responseText = fallbackResult[0].generated_text;
-        }
+        
+        lastError = new Error(`${model}: Empty or invalid response`)
+        
+      } catch (error) {
+        console.log(`❌ Error with model ${model}:`, error.message)
+        lastError = error
+        continue
       }
     }
 
-    // Clean up the response
-    responseText = responseText
-      .replace(prompt, '') // Remove the input prompt
-      .replace(/^(Assistant:|Human:|System:)\s*/i, '') // Remove role prefixes
-      .replace(/<\|.*?\|>/g, '') // Remove special tokens
-      .trim()
-
-    // Ensure we have a meaningful response
-    if (!responseText || responseText.length < 3) {
-      responseText = "I understand what you're saying. Could you tell me more about that so I can help you better?";
+    if (!response) {
+      // Fallback response if all models fail
+      console.log('⚠️ All models failed, using fallback response')
+      response = "I'm having trouble processing your request right now. Could you please try rephrasing your question?"
     }
 
-    // Make response more conversational for voice
-    if (responseText.length > 250) {
-      const sentences = responseText.split(/[.!?]+/);
-      responseText = sentences.slice(0, 2).join('. ') + '.';
-    }
-
-    console.log('✅ Final AI response:', responseText);
+    console.log('✅ Final AI response:', response)
 
     return new Response(
       JSON.stringify({
         success: true,
-        response: responseText,
-        agent: {
-          id: agent.id,
-          name: agent.name,
-          voice_model: agent.voice_model
+        response: response,
+        assistant: {
+          id: assistant.id,
+          name: assistant.name,
+          voice_id: assistant.voice_id
         }
       }),
       {
@@ -231,11 +175,11 @@ serve(async (req) => {
     )
 
   } catch (error) {
-    console.error('❌ Hugging Face chat error:', error)
+    console.error('❌ Hugging Face Chat error:', error)
     return new Response(
       JSON.stringify({
         success: false,
-        error: error.message || 'Unknown error occurred'
+        error: error.message
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

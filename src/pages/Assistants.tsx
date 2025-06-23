@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Plus } from 'lucide-react';
@@ -8,6 +7,8 @@ import AssistantForm from '@/components/Assistants/AssistantForm';
 import AssistantCard from '@/components/Assistants/AssistantCard';
 import CallInterface from '@/components/Assistants/CallInterface';
 import { Assistant, AssistantFormData } from '@/types/assistant';
+import FloatingVoiceAssistant from '@/components/Assistants/FloatingVoiceAssistant';
+import OutboundCallInterface from '@/components/Assistants/OutboundCallInterface';
 
 const Assistants = () => {
   const navigate = useNavigate();
@@ -15,6 +16,9 @@ const Assistants = () => {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingAssistant, setEditingAssistant] = useState<Assistant | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showVoiceChat, setShowVoiceChat] = useState(false);
+  const [selectedAssistant, setSelectedAssistant] = useState<Assistant | null>(null);
+  const [showOutboundCall, setShowOutboundCall] = useState(false);
 
   // Form state with DeepGram defaults
   const [formData, setFormData] = useState<AssistantFormData>({
@@ -93,6 +97,29 @@ const Assistants = () => {
     }
   };
 
+  const handleStartVoiceChat = (assistant: Assistant) => {
+    console.log('🚀 Starting voice chat for assistant:', assistant.name);
+    setSelectedAssistant(assistant);
+    setShowVoiceChat(true);
+  };
+
+  const handleCloseVoiceChat = () => {
+    console.log('🛑 Closing voice chat');
+    setShowVoiceChat(false);
+    setSelectedAssistant(null);
+  };
+
+  const handleMakeCall = (assistant: Assistant) => {
+    console.log('📞 Making call with assistant:', assistant.name);
+    setSelectedAssistant(assistant);
+    setShowOutboundCall(true);
+  };
+
+  const handleCloseOutboundCall = () => {
+    setShowOutboundCall(false);
+    setSelectedAssistant(null);
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -102,73 +129,93 @@ const Assistants = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Navigation Header */}
-      <header className="bg-white shadow-sm border-b">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <Button 
-                variant="ghost" 
-                onClick={() => navigate('/dashboard')}
-                className="flex items-center"
-              >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Dashboard
-              </Button>
-              <h1 className="text-2xl font-bold text-gray-900">Voice AI Agents</h1>
+    <>
+      <div className="min-h-screen bg-gray-50">
+        {/* Navigation Header */}
+        <header className="bg-white shadow-sm border-b">
+          <div className="container mx-auto px-4 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-4">
+                <Button 
+                  variant="ghost" 
+                  onClick={() => navigate('/dashboard')}
+                  className="flex items-center"
+                >
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Back to Dashboard
+                </Button>
+                <h1 className="text-2xl font-bold text-gray-900">Voice AI Agents</h1>
+              </div>
+              <div className="flex items-center space-x-4">
+                <Button onClick={() => setShowCreateForm(true)}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Create AI Agent
+                </Button>
+              </div>
             </div>
-            <div className="flex items-center space-x-4">
+          </div>
+        </header>
+
+        <div className="container mx-auto px-4 py-8 space-y-8">
+          {/* Create/Edit Form */}
+          {showCreateForm && (
+            <AssistantForm
+              formData={formData}
+              setFormData={setFormData}
+              onSubmit={handleSubmit}
+              onCancel={handleCancel}
+              isSubmitting={isSubmitting}
+              editingAssistant={editingAssistant}
+            />
+          )}
+
+          {/* Call Interface */}
+          {assistants.length > 0 && !showCreateForm && (
+            <CallInterface assistants={assistants} />
+          )}
+
+          {/* AI Assistants Grid */}
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {assistants.map((assistant) => (
+              <AssistantCard
+                key={assistant.id}
+                assistant={assistant}
+                onEdit={startEdit}
+                onDelete={deleteAssistant}
+                onStartVoiceChat={handleStartVoiceChat}
+                onMakeCall={handleMakeCall}
+              />
+            ))}
+          </div>
+
+          {assistants.length === 0 && (
+            <div className="text-center py-12">
+              <p className="text-gray-500 text-lg mb-4">No AI agents created yet</p>
               <Button onClick={() => setShowCreateForm(true)}>
                 <Plus className="w-4 h-4 mr-2" />
-                Create AI Agent
+                Create Your First AI Agent
               </Button>
             </div>
-          </div>
+          )}
         </div>
-      </header>
-
-      <div className="container mx-auto px-4 py-8 space-y-8">
-        {/* Create/Edit Form */}
-        {showCreateForm && (
-          <AssistantForm
-            formData={formData}
-            setFormData={setFormData}
-            onSubmit={handleSubmit}
-            onCancel={handleCancel}
-            isSubmitting={isSubmitting}
-            editingAssistant={editingAssistant}
-          />
-        )}
-
-        {/* Call Interface */}
-        {assistants.length > 0 && !showCreateForm && (
-          <CallInterface assistants={assistants} />
-        )}
-
-        {/* AI Agents Grid */}
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {assistants.map((assistant) => (
-            <AssistantCard
-              key={assistant.id}
-              assistant={assistant}
-              onEdit={startEdit}
-              onDelete={deleteAssistant}
-            />
-          ))}
-        </div>
-
-        {assistants.length === 0 && (
-          <div className="text-center py-12">
-            <p className="text-gray-500 text-lg mb-4">No AI agents created yet</p>
-            <Button onClick={() => setShowCreateForm(true)}>
-              <Plus className="w-4 h-4 mr-2" />
-              Create Your First AI Agent
-            </Button>
-          </div>
-        )}
       </div>
-    </div>
+
+      {/* Floating Voice Assistant */}
+      {showVoiceChat && selectedAssistant && (
+        <FloatingVoiceAssistant
+          assistant={selectedAssistant}
+          onClose={handleCloseVoiceChat}
+        />
+      )}
+
+      {/* Outbound Call Interface */}
+      {showOutboundCall && selectedAssistant && (
+        <OutboundCallInterface
+          assistant={selectedAssistant}
+          onClose={handleCloseOutboundCall}
+        />
+      )}
+    </>
   );
 };
 

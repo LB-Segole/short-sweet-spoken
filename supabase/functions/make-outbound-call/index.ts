@@ -14,10 +14,10 @@ serve(async (req) => {
   }
 
   try {
-    const { agentId, phoneNumber, userId } = await req.json()
+    const { assistantId, phoneNumber, userId } = await req.json()
     
-    if (!agentId || !phoneNumber) {
-      throw new Error('Agent ID and phone number are required')
+    if (!assistantId || !phoneNumber) {
+      throw new Error('Assistant ID and phone number are required')
     }
 
     const supabase = createClient(
@@ -25,16 +25,15 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
-    // Get voice agent configuration
-    const { data: agent, error: agentError } = await supabase
-      .from('voice_agents')
+    // Get assistant configuration (updated from voice_agents to assistants)
+    const { data: assistant, error: assistantError } = await supabase
+      .from('assistants')
       .select('*')
-      .eq('id', agentId)
-      .eq('is_active', true)
+      .eq('id', assistantId)
       .single()
 
-    if (agentError || !agent) {
-      throw new Error('Voice agent not found or inactive')
+    if (assistantError || !assistant) {
+      throw new Error('Assistant not found')
     }
 
     // SignalWire configuration
@@ -47,13 +46,16 @@ serve(async (req) => {
       throw new Error('SignalWire configuration missing')
     }
 
-    // Create SWML for the call
+    // Create SWML for the call with assistant integration
     const webhookUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/signalwire-webhook`
-    const streamUrl = `wss://${Deno.env.get('SUPABASE_URL')?.replace('https://', '')}/functions/v1/deepgram-voice-agent?agentId=${agentId}`
+    const streamUrl = `wss://${Deno.env.get('SUPABASE_URL')?.replace('https://', '')}/functions/v1/deepgram-voice-agent?assistantId=${assistantId}`
+
+    // Use assistant's first message or a default greeting
+    const greeting = assistant.first_message || `Hello! This is ${assistant.name}, an AI assistant. How can I help you today?`
 
     const swml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice">Hello! Connecting you to ${agent.name}.</Say>
+  <Say voice="alice">${greeting}</Say>
   <Connect>
     <Stream url="${streamUrl}" />
   </Connect>
@@ -70,7 +72,7 @@ serve(async (req) => {
         To: phoneNumber,
         From: signalwirePhoneNumber,
         Twiml: swml,
-        StatusCallback: `${webhookUrl}?agentId=${agentId}`,
+        StatusCallback: `${webhookUrl}?assistantId=${assistantId}`,
         StatusCallbackMethod: 'POST'
       })
     })
@@ -86,14 +88,16 @@ serve(async (req) => {
     const { data: session, error: sessionError } = await supabase
       .from('call_sessions')
       .insert({
-        agent_id: agentId,
+        assistant_id: assistantId, // Updated field name
         user_id: userId,
         session_type: 'outbound',
         phone_number: phoneNumber,
         status: 'active',
         metadata: {
           signalwire_call_sid: callData.sid,
-          agent_name: agent.name
+          assistant_name: assistant.name,
+          assistant_model: assistant.model,
+          voice_id: assistant.voice_id
         }
       })
       .select()
@@ -108,8 +112,9 @@ serve(async (req) => {
         success: true,
         call_sid: callData.sid,
         session_id: session?.id,
-        agent_name: agent.name,
-        phone_number: phoneNumber
+        assistant_name: assistant.name,
+        phone_number: phoneNumber,
+        message: `Call initiated with ${assistant.name} using Hugging Face model: ${assistant.model}`
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
