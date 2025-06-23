@@ -31,7 +31,7 @@ enabled = true
 port = 54326
 
 [edge_runtime]
-# Keep worker alive for WebSocket handshakes
+# Critical: Keep worker alive for WebSocket connections
 lifetime = "per-worker"
 
 [functions.call-webhook]
@@ -57,3 +57,5 @@ verify_jwt = false
 
 [functions.deepgram-voice-agent]
 verify_jwt = false
+# Enable per-worker lifetime for WebSocket persistence
+lifetime = "per-worker"
