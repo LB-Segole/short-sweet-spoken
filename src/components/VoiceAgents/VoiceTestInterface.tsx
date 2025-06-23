@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -209,7 +208,7 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
   };
 
   const getConnectionStatus = () => {
-    if (isConnected) return 'success';
+    if (isConnected) return 'default';
     if (connectionStage.includes('Error') || connectionStage.includes('Failed') || connectionStage.includes('Denied')) return 'destructive';
     if (connectionStage.includes('Connecting') || connectionStage.includes('Initializing')) return 'secondary';
     return 'outline';
