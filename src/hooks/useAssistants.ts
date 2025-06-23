@@ -111,7 +111,7 @@ export const useAssistants = () => {
       }
 
       const requestBody = {
-        id: assistant.id, // Include the agent ID
+        id: assistant.id,
         name: formData.name.trim(),
         system_prompt: formData.system_prompt.trim(),
         first_message: formData.first_message.trim(),
