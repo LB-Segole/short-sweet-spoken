@@ -1,3 +1,4 @@
+
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { AudioRecorder, AudioQueue, AudioEncoder } from '@/utils/audioUtils';
@@ -206,8 +207,8 @@ export const useVoiceWebSocket = ({
         throw new Error(`Session error: ${sessionError.message}`);
       }
 
-      // Build WebSocket URL with authentication
-      const wsUrl = new URL('wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-websocket');
+      // Build WebSocket URL with authentication - FIXED: removed /v1/
+      const wsUrl = new URL('wss://csixccpoxpnwowbgkoyw.functions.supabase.co/functions/deepgram-voice-websocket');
       wsUrl.searchParams.set('userId', userId);
       wsUrl.searchParams.set('callId', callId || 'browser-test');
       wsUrl.searchParams.set('assistantId', assistantId || 'demo');

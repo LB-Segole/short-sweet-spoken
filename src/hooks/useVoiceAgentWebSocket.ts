@@ -1,3 +1,4 @@
+
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { VoiceAgent } from '@/types/voiceAgent';
 
@@ -48,8 +49,8 @@ export const useVoiceAgentWebSocket = ({
         connectionTimeoutRef.current = null;
       }
       
-      // Build WebSocket URL for deepgram-voice-agent function
-      const wsUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent`;
+      // Build WebSocket URL for deepgram-voice-agent function - FIXED: removed /v1/
+      const wsUrl = `wss://csixccpoxpnwowbgkoyw.functions.supabase.co/functions/deepgram-voice-agent`;
       console.log('🌐 Connecting to WebSocket URL:', wsUrl);
       setStatus('Connecting to WebSocket...');
       
