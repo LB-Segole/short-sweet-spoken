@@ -1,3 +1,4 @@
+
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -7,13 +8,14 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, UPGRADE',
 }
 
-console.log('🎙️ Deepgram Voice Agent WebSocket v3.0 - Real-time Voice Chat')
+console.log('🎙️ Deepgram Voice Agent WebSocket v4.0 - Real-time Voice Chat with Proper Authentication')
 
 serve(async (req) => {
   console.log('🚀 deepgram-voice-agent function invoked', {
     method: req.method,
     url: req.url,
-    headers: Object.fromEntries(req.headers.entries()),
+    upgradeHeader: req.headers.get('upgrade'),
+    connectionHeader: req.headers.get('connection'),
   })
 
   // Handle CORS preflight
@@ -22,18 +24,11 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders })
   }
 
-  const url = new URL(req.url)
-  const assistantId = url.searchParams.get('assistantId') || 'demo'
-  const userId = url.searchParams.get('userId') || 'demo-user'
-
-  console.log('📋 WebSocket parameters extracted:', { assistantId, userId })
-
   // Verify WebSocket upgrade headers
   const upgradeHeader = req.headers.get('upgrade')
-  const connectionHeader = req.headers.get('connection')
   
-  if (upgradeHeader?.toLowerCase() !== 'websocket' || !connectionHeader?.toLowerCase().includes('upgrade')) {
-    console.log('❌ Not a valid WebSocket upgrade request', { upgradeHeader, connectionHeader })
+  if (upgradeHeader?.toLowerCase() !== 'websocket') {
+    console.log('❌ Not a valid WebSocket upgrade request', { upgradeHeader })
     return new Response('Expected websocket connection', {
       status: 426,
       headers: { ...corsHeaders, Upgrade: 'websocket', Connection: 'Upgrade' },
@@ -44,9 +39,14 @@ serve(async (req) => {
   const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')
   const huggingFaceApi = Deno.env.get('HUGGING_FACE_API')
   
-  if (!deepgramApiKey || !huggingFaceApi) {
-    console.error('❌ Missing required API keys', { deepgramApiKey: !!deepgramApiKey, huggingFaceApi: !!huggingFaceApi })
-    return new Response('Server configuration error', { status: 500, headers: corsHeaders })
+  if (!deepgramApiKey) {
+    console.error('❌ Missing DEEPGRAM_API_KEY')
+    return new Response('DEEPGRAM_API_KEY not configured', { status: 500, headers: corsHeaders })
+  }
+  
+  if (!huggingFaceApi) {
+    console.error('❌ Missing HUGGING_FACE_API')
+    return new Response('HUGGING_FACE_API not configured', { status: 500, headers: corsHeaders })
   }
 
   try {
@@ -59,57 +59,10 @@ serve(async (req) => {
     let isConnected = false
     let assistant: any = null
     let conversationHistory: Array<{ role: string; content: string }> = []
+    let assistantId = 'demo'
+    let userId = 'demo-user'
 
     const log = (msg: string, data?: any) => console.log(`[${new Date().toISOString()}] [${assistantId}] ${msg}`, data || '')
-
-    // Get assistant configuration
-    const loadAssistant = async () => {
-      try {
-        const supabase = createClient(
-          Deno.env.get('SUPABASE_URL')!,
-          Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-        )
-
-        const { data, error } = await supabase
-          .from('assistants')
-          .select('*')
-          .eq('id', assistantId)
-          .single()
-
-        if (error || !data) {
-          log('⚠️ Assistant not found, using default configuration')
-          assistant = {
-            id: assistantId,
-            name: 'Demo Assistant',
-            system_prompt: 'You are a helpful voice assistant. Be friendly, conversational, and keep responses concise since this is a voice conversation.',
-            voice_id: 'aura-asteria-en',
-            model: 'nova-2',
-            temperature: 0.8,
-            max_tokens: 150
-          }
-        } else {
-          assistant = data
-          log('✅ Assistant loaded successfully:', assistant.name)
-        }
-
-        // Send assistant info to client
-        sendToClient({
-          type: 'assistant_loaded',
-          data: { assistant },
-          timestamp: Date.now()
-        })
-
-      } catch (error) {
-        log('❌ Error loading assistant:', error)
-        assistant = {
-          id: assistantId,
-          name: 'Demo Assistant',
-          system_prompt: 'You are a helpful voice assistant. Be friendly, conversational, and keep responses concise.',
-          voice_id: 'aura-asteria-en',
-          model: 'nova-2'
-        }
-      }
-    }
 
     const sendToClient = (message: any) => {
       if (socket.readyState === WebSocket.OPEN) {
@@ -117,12 +70,15 @@ serve(async (req) => {
       }
     }
 
-    // Initialize Deepgram STT connection
+    // Initialize Deepgram STT connection with proper authentication
     const connectSTT = async () => {
       try {
-        log('🔗 Connecting to Deepgram STT...')
-        const sttUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=false&utterance_end_ms=1000&vad_events=true`
+        log('🔗 Connecting to Deepgram STT with proper authentication...')
         
+        // Use the correct WebSocket URL with protocol-based authentication
+        const sttUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&endpointing=300&utterance_end_ms=1000&vad_events=true&punctuate=true`
+        
+        // Create WebSocket with token protocol for authentication
         deepgramSTT = new WebSocket(sttUrl, ['token', deepgramApiKey])
 
         deepgramSTT.onopen = () => {
@@ -138,23 +94,37 @@ serve(async (req) => {
             const data = JSON.parse(event.data)
             
             if (data.type === 'Results' && data.channel?.alternatives?.[0]) {
-              const transcript = data.channel.alternatives[0].transcript
+              const transcript = data.channel.alternatives[0].transcript.trim()
               const isFinal = data.is_final || false
+              const speechFinal = data.speech_final || false
               
-              if (transcript.trim() && isFinal) {
-                log('📝 Final transcript received:', transcript)
+              if (transcript && transcript.length > 2) {
+                log('📝 Transcript received:', { transcript, isFinal, speechFinal })
                 
                 // Send transcript to client
                 sendToClient({
                   type: 'transcript',
-                  data: { text: transcript, isFinal },
+                  text: transcript,
+                  isFinal,
+                  speechFinal,
                   timestamp: Date.now()
                 })
 
-                // Get AI response
-                await processTranscript(transcript)
+                // Process final transcripts
+                if (speechFinal || isFinal) {
+                  await processTranscript(transcript)
+                }
               }
             }
+
+            if (data.type === 'UtteranceEnd') {
+              log('🔚 Utterance end detected')
+            }
+
+            if (data.type === 'SpeechStarted') {
+              log('🎤 Speech detection started')
+            }
+            
           } catch (error) {
             log('❌ Error processing STT message:', error)
           }
@@ -164,31 +134,39 @@ serve(async (req) => {
           log('❌ Deepgram STT error:', error)
           sendToClient({
             type: 'error',
-            data: { error: 'Speech recognition error' },
+            error: 'Speech recognition error',
             timestamp: Date.now()
           })
+          // Reconnect after delay
+          setTimeout(connectSTT, 2000)
         }
 
         deepgramSTT.onclose = (event) => {
-          log('🔌 Deepgram STT closed:', event.code)
+          log('🔌 Deepgram STT closed:', { code: event.code, reason: event.reason })
+          if (isConnected && event.code !== 1000) {
+            setTimeout(connectSTT, 2000)
+          }
         }
 
       } catch (error) {
         log('❌ Failed to connect STT:', error)
         sendToClient({
           type: 'error',
-          data: { error: 'Failed to connect speech recognition' },
+          error: 'Failed to connect speech recognition',
           timestamp: Date.now()
         })
       }
     }
 
-    // Initialize Deepgram TTS connection
+    // Initialize Deepgram TTS connection with proper authentication
     const connectTTS = async () => {
       try {
-        log('🔗 Connecting to Deepgram TTS...')
-        const ttsUrl = `wss://api.deepgram.com/v1/speak?model=${assistant?.voice_id || 'aura-asteria-en'}&encoding=linear16&sample_rate=24000`
+        log('🔗 Connecting to Deepgram TTS with proper authentication...')
         
+        const voiceModel = assistant?.voice_id || 'aura-asteria-en'
+        const ttsUrl = `wss://api.deepgram.com/v1/speak?model=${voiceModel}&encoding=linear16&sample_rate=24000&container=none`
+        
+        // Create WebSocket with token protocol for authentication
         deepgramTTS = new WebSocket(ttsUrl, ['token', deepgramApiKey])
 
         deepgramTTS.onopen = () => {
@@ -197,6 +175,13 @@ serve(async (req) => {
             type: 'tts_connected',
             timestamp: Date.now()
           })
+          
+          // Send initial greeting if available
+          if (assistant?.first_message) {
+            setTimeout(() => {
+              sendTTSMessage(assistant.first_message)
+            }, 500)
+          }
         }
 
         deepgramTTS.onmessage = (event) => {
@@ -207,7 +192,7 @@ serve(async (req) => {
             
             sendToClient({
               type: 'audio_response',
-              data: { audio_base64: base64Audio },
+              audio: base64Audio,
               timestamp: Date.now()
             })
           }
@@ -215,10 +200,14 @@ serve(async (req) => {
 
         deepgramTTS.onerror = (error) => {
           log('❌ Deepgram TTS error:', error)
+          setTimeout(connectTTS, 2000)
         }
 
         deepgramTTS.onclose = (event) => {
-          log('🔌 Deepgram TTS closed:', event.code)
+          log('🔌 Deepgram TTS closed:', { code: event.code, reason: event.reason })
+          if (isConnected && event.code !== 1000) {
+            setTimeout(connectTTS, 2000)
+          }
         }
 
       } catch (error) {
@@ -229,7 +218,7 @@ serve(async (req) => {
     // Process transcript and get AI response
     const processTranscript = async (transcript: string) => {
       try {
-        log('🤖 Processing transcript with AI...')
+        log('🤖 Processing transcript with AI...', { transcript })
         
         // Add user message to conversation history
         conversationHistory.push({ role: 'user', content: transcript })
@@ -239,23 +228,21 @@ serve(async (req) => {
           conversationHistory = conversationHistory.slice(-10)
         }
 
-        // Prepare messages for Hugging Face
+        // Prepare context for Hugging Face
         const systemPrompt = assistant?.system_prompt || 'You are a helpful voice assistant. Be friendly, conversational, and keep responses concise since this is a voice conversation.'
         
-        let conversationContext = `System: ${systemPrompt}\n\n`
-        
-        // Add conversation history
-        for (const msg of conversationHistory.slice(-5)) { // Last 5 messages
+        // Create conversation context
+        let conversationContext = systemPrompt + '\n\n'
+        conversationHistory.forEach(msg => {
           if (msg.role === 'user') {
             conversationContext += `Human: ${msg.content}\n`
           } else if (msg.role === 'assistant') {
             conversationContext += `Assistant: ${msg.content}\n`
           }
-        }
-        
+        })
         conversationContext += `Human: ${transcript}\nAssistant:`
 
-        // Call Hugging Face API directly
+        // Call Hugging Face API
         const hfResponse = await fetch(
           'https://api-inference.huggingface.co/models/microsoft/DialoGPT-large',
           {
@@ -267,7 +254,7 @@ serve(async (req) => {
             body: JSON.stringify({
               inputs: conversationContext,
               parameters: {
-                max_new_tokens: assistant?.max_tokens || 100,
+                max_new_tokens: assistant?.max_tokens || 150,
                 temperature: assistant?.temperature || 0.8,
                 do_sample: true,
                 top_p: 0.9,
@@ -285,28 +272,27 @@ serve(async (req) => {
         let aiResponse = ''
         
         if (Array.isArray(hfData) && hfData.length > 0) {
-          if (hfData[0].generated_text) {
-            aiResponse = hfData[0].generated_text.trim()
-          }
+          aiResponse = hfData[0].generated_text?.trim() || ''
         }
 
         // Clean up the response
         if (aiResponse) {
-          aiResponse = aiResponse.replace(/^(System:|Human:|Assistant:).*?\n/gm, '')
+          // Remove the input context from response
           aiResponse = aiResponse.replace(conversationContext, '').trim()
+          // Remove any role prefixes
           aiResponse = aiResponse.replace(/^(Assistant:|AI:|Bot:)\s*/i, '').trim()
           
-          // Ensure response is not too long for voice
+          // Ensure response is appropriate for voice
           if (aiResponse.length > 300) {
             aiResponse = aiResponse.substring(0, 300) + '...'
           }
         }
 
-        if (!aiResponse || aiResponse.length === 0) {
-          aiResponse = "I'm sorry, I didn't catch that. Could you please repeat your question?"
+        if (!aiResponse) {
+          aiResponse = "I understand. Could you tell me more about that?"
         }
 
-        log('✅ AI response generated:', aiResponse.substring(0, 50) + '...')
+        log('✅ AI response generated:', aiResponse.substring(0, 100))
         
         // Add assistant response to conversation history
         conversationHistory.push({ role: 'assistant', content: aiResponse })
@@ -314,12 +300,12 @@ serve(async (req) => {
         // Send text response to client
         sendToClient({
           type: 'ai_response',
-          data: { text: aiResponse },
+          text: aiResponse,
           timestamp: Date.now()
         })
 
         // Convert to speech
-        await convertToSpeech(aiResponse)
+        await sendTTSMessage(aiResponse)
 
       } catch (error) {
         log('❌ Error processing transcript:', error)
@@ -327,34 +313,97 @@ serve(async (req) => {
         
         sendToClient({
           type: 'ai_response',
-          data: { text: fallbackResponse },
+          text: fallbackResponse,
           timestamp: Date.now()
         })
         
-        await convertToSpeech(fallbackResponse)
+        await sendTTSMessage(fallbackResponse)
       }
     }
 
-    // Convert text to speech
-    const convertToSpeech = async (text: string) => {
+    // Send text to TTS
+    const sendTTSMessage = async (text: string) => {
       try {
         if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN) {
-          log('🔊 Converting text to speech...')
+          log('🔊 Converting text to speech:', text.substring(0, 100))
           
-          deepgramTTS.send(JSON.stringify({
-            type: 'Speak',
-            text: text
-          }))
+          // Clear any previous audio
+          deepgramTTS.send(JSON.stringify({ type: 'Clear' }))
           
-          // Flush the TTS
+          // Send text to convert
           setTimeout(() => {
             if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN) {
-              deepgramTTS.send(JSON.stringify({ type: 'Flush' }))
+              deepgramTTS.send(JSON.stringify({
+                type: 'Speak',
+                text: text
+              }))
+              
+              // Flush after sending
+              setTimeout(() => {
+                if (deepgramTTS && deepgramTTS.readyState === WebSocket.OPEN) {
+                  deepgramTTS.send(JSON.stringify({ type: 'Flush' }))
+                }
+              }, 100)
             }
           }, 100)
         }
       } catch (error) {
-        log('❌ Error converting to speech:', error)
+        log('❌ Error sending TTS message:', error)
+      }
+    }
+
+    // Load assistant configuration
+    const loadAssistant = async (id: string) => {
+      try {
+        const supabase = createClient(
+          Deno.env.get('SUPABASE_URL')!,
+          Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+        )
+
+        const { data } = await supabase
+          .from('assistants')
+          .select('*')
+          .eq('id', id)
+          .single()
+
+        if (data) {
+          assistant = data
+          log('✅ Assistant loaded successfully:', assistant.name)
+        } else {
+          // Use default assistant
+          assistant = {
+            id: id,
+            name: 'Demo Assistant',
+            system_prompt: 'You are a helpful voice assistant. Be friendly, conversational, and keep responses concise since this is a voice conversation.',
+            first_message: 'Hello! I can hear you clearly. How can I help you today?',
+            voice_id: 'aura-asteria-en',
+            model: 'nova-2',
+            temperature: 0.8,
+            max_tokens: 150
+          }
+          log('🤖 Using default assistant configuration')
+        }
+
+        // Send assistant info to client
+        sendToClient({
+          type: 'connection_established',
+          assistant: {
+            name: assistant.name,
+            first_message: assistant.first_message
+          },
+          timestamp: Date.now()
+        })
+
+      } catch (error) {
+        log('❌ Error loading assistant:', error)
+        // Use fallback
+        assistant = {
+          id: id,
+          name: 'Demo Assistant',
+          system_prompt: 'You are a helpful voice assistant.',
+          first_message: 'Hello! How can I help you today?',
+          voice_id: 'aura-asteria-en'
+        }
       }
     }
 
@@ -362,57 +411,42 @@ serve(async (req) => {
     socket.onopen = async () => {
       log('🔌 Client WebSocket connected')
       isConnected = true
-      
-      // Send immediate connection confirmation
-      sendToClient({
-        type: 'connection_established',
-        data: { status: 'Connected' },
-        timestamp: Date.now()
-      })
-      
-      // Load assistant and initialize connections
-      await loadAssistant()
-      await connectSTT()
-      await connectTTS()
-      
-      // Wait a bit then send ready status
-      setTimeout(() => {
-        sendToClient({
-          type: 'ready',
-          data: { status: 'Ready to chat', assistant: assistant?.name },
-          timestamp: Date.now()
-        })
-      }, 1000)
     }
 
     socket.onmessage = async (event) => {
       try {
         const message = JSON.parse(event.data)
-        log('📨 Received from client:', { type: message.type })
+        log('📨 Received from client:', { event: message.event || message.type })
 
-        switch (message.type) {
-          case 'auth':
-            log('🔐 Client authentication received')
-            sendToClient({
-              type: 'auth_confirmed',
-              timestamp: Date.now()
-            })
+        switch (message.event || message.type) {
+          case 'connected':
+            // Initialize connection
+            assistantId = message.assistantId || 'demo'
+            userId = message.userId || 'demo-user'
+            
+            log('🔐 Client connected with assistant:', assistantId)
+            
+            // Load assistant and initialize connections
+            await loadAssistant(assistantId)
+            await connectSTT()
+            await connectTTS()
+            
+            // Send ready status
+            setTimeout(() => {
+              sendToClient({
+                type: 'ready',
+                status: 'Ready to chat',
+                assistant: assistant?.name,
+                timestamp: Date.now()
+              })
+            }, 1000)
             break
 
-          case 'start_conversation':
-            log('🎬 Starting conversation...')
-            sendToClient({
-              type: 'conversation_started',
-              data: { status: 'Listening...' },
-              timestamp: Date.now()
-            })
-            break
-
-          case 'audio_data':
+          case 'media':
             // Forward audio to Deepgram STT
-            if (deepgramSTT && deepgramSTT.readyState === WebSocket.OPEN && message.audio) {
+            if (deepgramSTT && deepgramSTT.readyState === WebSocket.OPEN && message.media?.payload) {
               try {
-                const audioBuffer = Uint8Array.from(atob(message.audio), c => c.charCodeAt(0))
+                const audioBuffer = Uint8Array.from(atob(message.media.payload), c => c.charCodeAt(0))
                 deepgramSTT.send(audioBuffer)
               } catch (error) {
                 log('❌ Error forwarding audio to STT:', error)
@@ -420,7 +454,7 @@ serve(async (req) => {
             }
             break
 
-          case 'text_message':
+          case 'text_input':
             if (message.text) {
               await processTranscript(message.text)
             }
@@ -434,7 +468,7 @@ serve(async (req) => {
             break
 
           default:
-            log('❓ Unknown message type:', message.type)
+            log('❓ Unknown message event:', message.event || message.type)
         }
 
       } catch (error) {
