@@ -1,10 +1,9 @@
-
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Assistant } from '@/types/assistant';
-import { Edit, Trash2, Phone, MessageCircle, Mic } from 'lucide-react';
+import { Edit, Trash2, Phone, Mic } from 'lucide-react';
 
 interface AssistantCardProps {
   assistant: Assistant;

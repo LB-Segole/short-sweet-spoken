@@ -7,8 +7,8 @@ import AssistantForm from '@/components/Assistants/AssistantForm';
 import AssistantCard from '@/components/Assistants/AssistantCard';
 import CallInterface from '@/components/Assistants/CallInterface';
 import { Assistant, AssistantFormData } from '@/types/assistant';
-import FloatingVoiceAssistant from '@/components/Assistants/FloatingVoiceAssistant';
-import OutboundCallInterface from '@/components/Assistants/OutboundCallInterface';
+import { FloatingVoiceAssistant } from '@/components/Assistants/FloatingVoiceAssistant';
+import { OutboundCallInterface } from '@/components/Assistants/OutboundCallInterface';
 
 const Assistants = () => {
   const navigate = useNavigate();
