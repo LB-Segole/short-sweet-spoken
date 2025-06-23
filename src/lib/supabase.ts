@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = 'https://csixccpoxpnwowbgkoyw.supabase.co';
 const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzaXhjY3BveHBud293Ymdrb3l3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc5Mjg0MDMsImV4cCI6MjA2MzUwNDQwM30.tQrCwtiHS5p-CTp1Z2gkVnAcV_TGlcxpGy-zwI46UyQ';
 
+// Create a single instance to be shared across the app
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
