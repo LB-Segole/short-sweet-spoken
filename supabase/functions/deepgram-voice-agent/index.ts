@@ -57,6 +57,8 @@ serve(async (req) => {
 
   try {
     console.log('🔄 Attempting WebSocket upgrade...')
+    const { socket, response } = Deno.upgradeWebSocket(req)
+    console.log('✅ WebSocket upgrade successful!')
     
     // Perform WebSocket upgrade
     const { socket, response } = Deno.upgradeWebSocket(req)
@@ -691,6 +693,18 @@ serve(async (req) => {
         status: 500,
         headers: { 'Content-Type': 'application/json', ...corsHeaders }
       }
+    )
+  }
+})
+
+    console.log('🎯 WebSocket setup complete, returning response')
+    return response
+
+  } catch (error) {
+    console.error('❌ Critical WebSocket upgrade error:', error)
+    return new Response(
+      JSON.stringify({ error: 'WebSocket upgrade failed: ' + error.message }),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
     )
   }
 })
