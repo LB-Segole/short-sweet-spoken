@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -6,9 +6,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { VoiceAgent } from '@/types/voiceAgent';
 import { useVoiceAgentWebSocket } from '@/hooks/useVoiceAgentWebSocket';
 import { FloatingVoiceAssistant } from './FloatingVoiceAssistant';
-import { Mic, MicOff, Send, Phone, PhoneOff, Volume2, MessageSquare, AlertCircle, CheckCircle, X, VolumeX } from 'lucide-react';
-import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { Mic, MicOff, Send, Phone, PhoneOff, Volume2, MessageSquare, AlertCircle, CheckCircle } from 'lucide-react';
 
 interface VoiceTestInterfaceProps {
   agent: VoiceAgent;
@@ -26,11 +24,9 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
   agent,
   onClose,
 }) => {
-  const [conversation, setConversation] = useState<ConversationMessage[]>([]);
   const [textInput, setTextInput] = useState('');
-  const [isMuted, setIsMuted] = useState(false);
+  const [conversation, setConversation] = useState<ConversationMessage[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
   const [showFloatingAssistant, setShowFloatingAssistant] = useState(false);
   const [microphoneStatus, setMicrophoneStatus] = useState<'unknown' | 'checking' | 'granted' | 'denied'>('unknown');
   const [connectionStage, setConnectionStage] = useState<string>('Disconnected');
@@ -42,16 +38,6 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
     const logEntry = `[${timestamp}] ${message}`;
     setLogs(prev => [...prev.slice(-19), logEntry]); // Keep last 20 logs
     console.log('🎙️', logEntry);
-  };
-
-  const addMessage = (speaker: 'user' | 'agent', text: string, type: 'transcript' | 'response' = 'transcript') => {
-    const message: ConversationMessage = {
-      speaker,
-      text,
-      timestamp: new Date().toLocaleTimeString(),
-      type
-    };
-    setConversation(prev => [...prev, message]);
   };
 
   const checkMicrophoneAccess = async () => {
@@ -87,41 +73,34 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
     agent,
     onTranscript: (text) => {
       addLog(`User said: "${text}"`);
-      addMessage('user', text, 'transcript');
+      setConversation(prev => [...prev, {
+        speaker: 'user',
+        text,
+        timestamp: new Date().toLocaleTimeString(),
+        type: 'transcript'
+      }]);
     },
     onAgentResponse: (text) => {
       addLog(`AI responded: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
-      addMessage('agent', text, 'response');
+      setConversation(prev => [...prev, {
+        speaker: 'agent',
+        text,
+        timestamp: new Date().toLocaleTimeString(),
+        type: 'response'
+      }]);
     },
     onError: (error) => {
       addLog(`Error: ${error}`);
       setConnectionStage(`Error: ${error}`);
     },
-    onStatusChange: (status) => {
-      addLog(`📊 Status: ${status}`);
-      if (status !== connectionStage) {
-        setConnectionStage(status);
-      }
-    }
   });
 
+  // Update connection stage based on status
   useEffect(() => {
-    addLog(`Voice test interface initialized for agent: ${agent.name}`);
-    
-    // Check microphone on mount
-    checkMicrophoneAccess();
-    
-    return () => {
-      disconnect();
-    };
-  }, [agent.name, disconnect]);
-
-  useEffect(() => {
-    // Auto-scroll to bottom when new messages are added
-    if (scrollAreaRef.current) {
-      scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
+    if (status !== connectionStage) {
+      setConnectionStage(status);
     }
-  }, [conversation]);
+  }, [status]);
 
   const handleConnect = async () => {
     if (isConnected) {
@@ -198,14 +177,34 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
     if (textInput.trim()) {
       addLog(`Sending text: "${textInput}"`);
       sendTextMessage(textInput);
-      addMessage('user', textInput, 'transcript');
+      setConversation(prev => [...prev, {
+        speaker: 'user',
+        text: textInput,
+        timestamp: new Date().toLocaleTimeString(),
+        type: 'transcript'
+      }]);
       setTextInput('');
     }
   };
 
+  useEffect(() => {
+    addLog(`Voice test interface initialized for agent: ${agent.name}`);
+    
+    // Check microphone on mount
+    checkMicrophoneAccess();
+    
+    return () => {
+      disconnect();
+    };
+  }, [agent.name, disconnect]);
+
   const getMicrophoneIcon = () => {
-    if (isRecording) return <MicOff className="h-6 w-6" />;
-    return <Mic className="h-6 w-6" />;
+    switch (microphoneStatus) {
+      case 'checking': return <Volume2 className="h-4 w-4 animate-pulse" />;
+      case 'granted': return <CheckCircle className="h-4 w-4 text-green-500" />;
+      case 'denied': return <AlertCircle className="h-4 w-4 text-red-500" />;
+      default: return <Mic className="h-4 w-4" />;
+    }
   };
 
   const getConnectionStatus = () => {
@@ -214,14 +213,6 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
     if (connectionStage.includes('Connecting') || connectionStage.includes('Initializing')) return 'secondary';
     return 'outline';
   };
-
-  const getStatusColor = () => {
-    if (isRecording) return 'text-red-500';
-    if (isConnected) return 'text-green-500';
-    return 'text-gray-500';
-  };
-
-  const statusInfo = getConnectionStatus();
 
   return (
     <>
@@ -235,11 +226,12 @@ export const VoiceTestInterface: React.FC<VoiceTestInterfaceProps> = ({
                   <span>Voice AI Test - {agent.name}</span>
                 </CardTitle>
                 <div className="flex items-center gap-2 mt-2">
-                  <Badge variant={statusInfo}>
+                  <Badge variant={getConnectionStatus()}>
                     {connectionStage}
                   </Badge>
-                  <Badge variant="outline" className={getStatusColor()}>
-                    {status}
+                  <Badge variant="outline" className="flex items-center gap-1">
+                    {getMicrophoneIcon()}
+                    Mic: {microphoneStatus}
                   </Badge>
                   <Badge variant="outline">{agent.voice_model}</Badge>
                 </div>
