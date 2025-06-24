@@ -99,7 +99,7 @@ export class SupabaseService extends BackendService {
   }
 
   onAuthStateChange(callback: (user: AuthUser | null) => void): () => void {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       const user = session?.user ? {
         id: session.user.id,
         email: session.user.email,
@@ -206,7 +206,7 @@ export class RailwayService extends BackendService {
     }
   }
 
-  onAuthStateChange(callback: (user: AuthUser | null) => void): () => void {
+  onAuthStateChange(_callback: (user: AuthUser | null) => void): () => void {
     // Implementation would depend on Railway setup
     // Could use WebSocket or polling
     return () => {};
@@ -251,7 +251,7 @@ export class RailwayService extends BackendService {
     if (!response.ok) throw new Error('Delete failed');
   }
 
-  subscribe(table: string, callback: (payload: any) => void): () => void {
+  subscribe(_table: string, _callback: (payload: any) => void): () => void {
     // Implementation would use WebSocket or SSE
     return () => {};
   }
