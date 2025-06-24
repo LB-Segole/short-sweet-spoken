@@ -14,6 +14,8 @@ serve(async (req) => {
   const method = req.method
   
   console.log(`⌛ Received: ${method} upgrade=${upgradeHeader}`)
+  console.log(`🌐 Request URL: ${req.url}`)
+  console.log(`📋 Headers: ${JSON.stringify(Object.fromEntries(req.headers.entries()))}`)
 
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -550,6 +552,12 @@ serve(async (req) => {
         // Handle start event
         if (message.event === 'start') {
           log("✅ Received 'start' event", message.message)
+
+          // Update assistantId from client message if provided
+          if (message.assistantId) {
+            assistantId = message.assistantId
+            log("🔄 Updated assistantId from client:", assistantId)
+          }
 
           // Acknowledge to client
           socket.send(JSON.stringify({

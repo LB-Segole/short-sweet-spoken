@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .log {
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        .log-entry.info { background: #e3f2fd; }
+        .log-entry.success { background: #e8f5e8; }
+        .log-entry.error { background: #ffebee; }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .connect { background: #4caf50; color: white; }
+        .disconnect { background: #f44336; color: white; }
+        .send { background: #2196f3; color: white; }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Connection Test</h1>
+    
+    <div>
+        <button class="connect" onclick="connect()">Connect</button>
+        <button class="disconnect" onclick="disconnect()">Disconnect</button>
+        <button class="send" onclick="sendStart()">Send Start Event</button>
+    </div>
+    
+    <div class="log" id="log"></div>
+
+    <script>
+        let ws = null;
+        const logElement = document.getElementById('log');
+
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logElement.appendChild(entry);
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        function connect() {
+            try {
+                log('Attempting to connect to WebSocket...', 'info');
+                
+                const wsUrl = 'wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent';
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = function(event) {
+                    log('✅ WebSocket connection opened successfully', 'success');
+                };
+
+                ws.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        log(`📨 Received: ${data.type || data.event} - ${JSON.stringify(data)}`, 'info');
+                    } catch (error) {
+                        log(`📨 Received raw data: ${event.data}`, 'info');
+                    }
+                };
+
+                ws.onclose = function(event) {
+                    log(`🔌 WebSocket closed: code=${event.code}, reason=${event.reason}`, 'error');
+                };
+
+                ws.onerror = function(error) {
+                    log(`❌ WebSocket error: ${error}`, 'error');
+                };
+
+            } catch (error) {
+                log(`❌ Connection error: ${error.message}`, 'error');
+            }
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close(1000, 'User disconnect');
+                ws = null;
+                log('Disconnected from WebSocket', 'info');
+            }
+        }
+
+        function sendStart() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const message = {
+                    event: 'start',
+                    assistantId: 'test-assistant',
+                    userId: 'test-user',
+                    message: 'Starting test session',
+                    timestamp: Date.now()
+                };
+                
+                ws.send(JSON.stringify(message));
+                log(`📤 Sent start event: ${JSON.stringify(message)}`, 'info');
+            } else {
+                log('❌ WebSocket not connected', 'error');
+            }
+        }
+
+        // Auto-connect on page load
+        window.onload = function() {
+            log('Page loaded, ready to test WebSocket connection', 'info');
+        };
+    </script>
+</body>
+</html> 
