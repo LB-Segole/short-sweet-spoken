@@ -203,13 +203,11 @@ export class RailwayDatabaseAdapter implements DatabaseAdapter {
 }
 
 export class RailwayVoiceServiceAdapter implements VoiceServiceAdapter {
-  private readonly baseUrl: string;
   private readonly websocketUrl: string;
 
-  constructor(baseUrl: string, websocketUrl: string) {
-    this.baseUrl = baseUrl;
+  constructor(_baseUrl: string, websocketUrl: string) {
     this.websocketUrl = websocketUrl;
-    console.log('🚂 RailwayVoiceServiceAdapter: Initialized', { baseUrl, websocketUrl });
+    console.log('🚂 RailwayVoiceServiceAdapter: Initialized', { websocketUrl });
   }
 
   createWebSocketUrl(path: string, params?: Record<string, string>): string {

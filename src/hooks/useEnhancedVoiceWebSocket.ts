@@ -120,7 +120,7 @@ export const useEnhancedVoiceWebSocket = (config: VoiceWebSocketConfig) => {
       const processedAudio = voice.processAudioData(audioData);
       wsServiceRef.current.send({
         event: 'media',
-        media: { payload: processe- dAudio },
+        media: { payload: processedAudio },
         timestamp: Date.now()
       });
     } catch (error) {
