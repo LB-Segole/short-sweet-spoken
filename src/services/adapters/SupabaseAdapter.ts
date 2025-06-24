@@ -134,7 +134,6 @@ export class SupabaseDatabaseAdapter implements DatabaseAdapter {
 }
 
 export class SupabaseVoiceServiceAdapter implements VoiceServiceAdapter {
-  private readonly baseUrl = 'https://csixccpoxpnwowbgkoyw.supabase.co';
   private readonly websocketUrl = 'wss://csixccpoxpnwowbgkoyw.supabase.co';
 
   createWebSocketUrl(path: string, params?: Record<string, string>): string {
@@ -175,5 +174,9 @@ export class SupabaseVoiceServiceAdapter implements VoiceServiceAdapter {
       data: message,
       timestamp: Date.now()
     };
+  }
+
+  getCurrentBackendType(): string {
+    return 'supabase';
   }
 }

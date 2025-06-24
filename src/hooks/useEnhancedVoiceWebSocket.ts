@@ -110,7 +110,7 @@ export const useEnhancedVoiceWebSocket = (config: VoiceWebSocketConfig) => {
 
   const wsServiceRef = useRef<WebSocketService | null>(null);
   const audioRecorderRef = useRef<AudioRecorder | null>(null);
-  const { voice } = useBackendService();
+  const { voice, utils } = useBackendService();
 
   // Handle audio data from microphone
   const handleAudioData = useCallback((audioData: Float32Array) => {
@@ -120,7 +120,7 @@ export const useEnhancedVoiceWebSocket = (config: VoiceWebSocketConfig) => {
       const processedAudio = voice.processAudioData(audioData);
       wsServiceRef.current.send({
         event: 'media',
-        media: { payload: processedAudio },
+        media: { payload: processe- dAudio },
         timestamp: Date.now()
       });
     } catch (error) {
@@ -357,7 +357,7 @@ export const useEnhancedVoiceWebSocket = (config: VoiceWebSocketConfig) => {
     sendTextMessage,
     
     // Utility methods
-    getBackendType: () => voice.getCurrentBackendType?.() || 'unknown'
+    getBackendType: () => utils.getCurrentBackendType()
   };
 };
 

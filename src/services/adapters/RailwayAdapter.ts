@@ -89,7 +89,7 @@ export class RailwayAuthAdapter implements AuthAdapter {
     }
   }
 
-  onAuthStateChange(callback: (user: AuthUser | null) => void): () => void {
+  onAuthStateChange(_callback: (user: AuthUser | null) => void): () => void {
     console.log('🔐 RailwayAuthAdapter: Setting up auth state listener');
     
     // Railway implementation could use WebSocket or polling
@@ -186,14 +186,14 @@ export class RailwayDatabaseAdapter implements DatabaseAdapter {
     }
   }
 
-  subscribe(table: string, callback: (payload: any) => void): () => void {
-    console.log('🗄️ RailwayDatabaseAdapter: Setting up realtime subscription', { table });
+  subscribe(_table: string, _callback: (payload: any) => void): () => void {
+    console.log('🗄️ RailwayDatabaseAdapter: Setting up realtime subscription', { _table });
     
     // Railway implementation would use WebSocket or SSE
     // TODO: Implement actual realtime subscription when Railway backend is ready
     
     return () => {
-      console.log('🗄️ RailwayDatabaseAdapter: Cleaning up subscription', { table });
+      console.log('🗄️ RailwayDatabaseAdapter: Cleaning up subscription', { _table });
     };
   }
 
@@ -250,5 +250,9 @@ export class RailwayVoiceServiceAdapter implements VoiceServiceAdapter {
       data: message,
       timestamp: Date.now()
     };
+  }
+
+  getCurrentBackendType(): string {
+    return 'railway';
   }
 }

@@ -1,6 +1,6 @@
 
 import { WebSocketManager } from '@/utils/websocketManager';
-import { backendService } from './backendService';
+import { backendService } from './BackendService';
 
 export interface VoiceMessage {
   type: string;
@@ -34,7 +34,7 @@ export class VoiceWebSocketService {
       console.log('🎙️ Initializing voice WebSocket connection...');
       
       // Create WebSocket URL through backend service
-      const wsUrl = backendService.createWebSocket('deepgram-voice-agent');
+      const wsUrl = backendService.createVoiceWebSocketUrl('deepgram-voice-agent');
       const url = new URL(wsUrl);
       url.searchParams.set('userId', this.config.userId);
       url.searchParams.set('callId', this.config.callId || 'browser-test');

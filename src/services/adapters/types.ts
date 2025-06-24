@@ -67,4 +67,5 @@ export interface VoiceServiceAdapter {
   createWebSocketUrl(path: string, params?: Record<string, string>): string;
   processAudioData(audioData: Float32Array): string;
   handleVoiceMessage(message: any): WebSocketMessage;
+  getCurrentBackendType(): string;
 }
