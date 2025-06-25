@@ -9,6 +9,39 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      activity_logs: {
+        Row: {
+          action: string
+          created_at: string
+          id: string
+          metadata: Json | null
+          resource_id: string | null
+          resource_type: string
+          team_id: string | null
+          user_id: string
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          resource_id?: string | null
+          resource_type: string
+          team_id?: string | null
+          user_id: string
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          resource_id?: string | null
+          resource_type?: string
+          team_id?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       agent_chains: {
         Row: {
           configuration: Json
@@ -34,6 +67,39 @@ export type Database = {
           configuration?: Json
           created_at?: string
           description?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      agent_flows: {
+        Row: {
+          created_at: string
+          description: string | null
+          flow_data: Json
+          id: string
+          is_active: boolean
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          flow_data?: Json
+          id?: string
+          is_active?: boolean
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          flow_data?: Json
           id?: string
           is_active?: boolean
           name?: string
@@ -406,6 +472,27 @@ export type Database = {
             referencedRelation: "chain_steps"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "fk_chain_executions_call_id"
+            columns: ["call_id"]
+            isOneToOne: false
+            referencedRelation: "call_analytics_view"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_chain_executions_call_id"
+            columns: ["call_id"]
+            isOneToOne: false
+            referencedRelation: "calls"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_chain_executions_chain_id"
+            columns: ["chain_id"]
+            isOneToOne: false
+            referencedRelation: "agent_chains"
+            referencedColumns: ["id"]
+          },
         ]
       }
       chain_steps: {
@@ -462,6 +549,27 @@ export type Database = {
             columns: ["fallback_step_id"]
             isOneToOne: false
             referencedRelation: "chain_steps"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_chain_steps_agent_id"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "assistants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_chain_steps_chain_id"
+            columns: ["chain_id"]
+            isOneToOne: false
+            referencedRelation: "agent_chains"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_chain_steps_flow_id"
+            columns: ["flow_id"]
+            isOneToOne: false
+            referencedRelation: "agent_flows"
             referencedColumns: ["id"]
           },
         ]
@@ -665,6 +773,50 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      team_invitations: {
+        Row: {
+          accepted_at: string | null
+          created_at: string
+          email: string
+          expires_at: string
+          id: string
+          invited_by: string
+          role: string
+          team_id: string
+          token: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          created_at?: string
+          email: string
+          expires_at?: string
+          id?: string
+          invited_by: string
+          role?: string
+          team_id: string
+          token?: string
+        }
+        Update: {
+          accepted_at?: string | null
+          created_at?: string
+          email?: string
+          expires_at?: string
+          id?: string
+          invited_by?: string
+          role?: string
+          team_id?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_invitations_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       team_members: {
         Row: {
