@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { RefreshCw, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
 
 interface HealthStatus {
   status: 'healthy' | 'unhealthy' | 'unknown';
@@ -26,12 +27,20 @@ export const HealthCheck: React.FC = () => {
     try {
       console.log('🏥 Starting health check...');
       
+      // Get current session for authentication
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        throw new Error('No authentication session found');
+      }
+
       const response = await fetch(
         `https://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent/health`,
         {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
           },
         }
       );
@@ -49,7 +58,8 @@ export const HealthCheck: React.FC = () => {
         });
         console.log('✅ Health check passed:', data);
       } else {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
       }
     } catch (error) {
       console.error('❌ Health check failed:', error);
@@ -67,11 +77,6 @@ export const HealthCheck: React.FC = () => {
   useEffect(() => {
     // Check health on component mount
     checkHealth();
-    
-    // Set up periodic health checks every 30 seconds
-    const interval = setInterval(checkHealth, 30000);
-    
-    return () => clearInterval(interval);
   }, []);
 
   const getStatusIcon = () => {
