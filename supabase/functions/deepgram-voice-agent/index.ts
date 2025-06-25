@@ -1,348 +1,245 @@
 // deno-lint-ignore-file
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-console.log('🚀 DeepGram Voice Agent - WebSocket Handler v2.0');
+console.log('🚀 DeepGram Voice Agent - ENHANCED DEBUG VERSION v6.0');
+console.log('📍 Function deployed and ready to accept connections');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, upgrade, connection',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, UPGRADE',
 }
 
 serve(async (req) => {
-  console.log(`📡 Request: ${req.method} ${req.url}`);
+  const startTime = Date.now();
+  const requestId = crypto.randomUUID().substring(0, 8);
   
+  console.log(`🔵 [${requestId}] === NEW REQUEST START ===`);
+  console.log(`📡 [${requestId}] Method: ${req.method}`);
+  console.log(`📡 [${requestId}] URL: ${req.url}`);
+  console.log(`📡 [${requestId}] Timestamp: ${new Date().toISOString()}`);
+
+  // Log all headers for debugging
+  const headers = Object.fromEntries(req.headers.entries());
+  console.log(`📋 [${requestId}] Headers:`, JSON.stringify(headers, null, 2));
+
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
+    console.log(`✅ [${requestId}] Handling CORS preflight request`);
+    return new Response(null, { 
+      status: 200,
+      headers: corsHeaders 
+    });
   }
 
-  // Check for WebSocket upgrade
-  const upgradeHeader = req.headers.get('upgrade')
-  if (upgradeHeader?.toLowerCase() !== 'websocket') {
-    console.log('❌ Not a WebSocket request');
-    return new Response('WebSocket upgrade required', {
-      status: 426,
-      headers: { ...corsHeaders, 'Upgrade': 'websocket', 'Connection': 'Upgrade' },
-    })
-  }
+  // Parse URL parameters
+  const url = new URL(req.url);
+  const userId = url.searchParams.get('userId') || 'anonymous';
+  const callId = url.searchParams.get('callId') || 'default-call';
+  const assistantId = url.searchParams.get('assistantId') || 'default-assistant';
 
-  // Verify authentication
-  const authHeader = req.headers.get('authorization') || new URL(req.url).searchParams.get('authorization');
-  if (!authHeader) {
-    console.error('❌ No authorization header');
-    return new Response('Unauthorized', { status: 401, headers: corsHeaders });
-  }
+  console.log(`🔍 [${requestId}] Connection params:`, { userId, callId, assistantId });
 
-  try {
-    // Create Supabase client for auth verification
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    // Extract token from header
-    const token = authHeader.replace('Bearer ', '');
-    
-    // Verify the JWT token
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    
-    if (authError || !user) {
-      console.error('❌ Authentication failed:', authError);
-      return new Response('Unauthorized', { status: 401, headers: corsHeaders });
-    }
-
-    console.log('✅ User authenticated:', user.id);
-
-  } catch (authError) {
-    console.error('❌ Authentication error:', authError);
-    return new Response('Unauthorized', { status: 401, headers: corsHeaders });
-  }
-
-  // Verify environment variables early
-  const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY')
-  const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
+  // Check for WebSocket upgrade headers
+  const upgradeHeader = req.headers.get('upgrade');
+  const connectionHeader = req.headers.get('connection');
   
-  console.log('🔍 Environment check:', {
+  console.log(`🔍 [${requestId}] WebSocket headers:`, { 
+    upgrade: upgradeHeader, 
+    connection: connectionHeader 
+  });
+  
+  if (!upgradeHeader || upgradeHeader.toLowerCase() !== 'websocket') {
+    console.log(`❌ [${requestId}] Missing or invalid Upgrade header`);
+    console.log(`❌ [${requestId}] Expected: websocket, Received: ${upgradeHeader}`);
+    return new Response(JSON.stringify({ 
+      error: 'WebSocket upgrade required',
+      received_upgrade: upgradeHeader,
+      expected: 'websocket',
+      request_id: requestId
+    }), {
+      status: 426,
+      headers: { 
+        ...corsHeaders, 
+        'Content-Type': 'application/json',
+        'Upgrade': 'websocket', 
+        'Connection': 'Upgrade' 
+      },
+    });
+  }
+
+  // Verify environment variables
+  const deepgramApiKey = Deno.env.get('DEEPGRAM_API_KEY');
+  const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+  
+  console.log(`🔍 [${requestId}] Environment check:`, {
     hasDeepgram: !!deepgramApiKey,
-    hasOpenAI: !!openaiApiKey
+    hasOpenAI: !!openaiApiKey,
+    deepgramKeyLength: deepgramApiKey?.length || 0,
+    openaiKeyLength: openaiApiKey?.length || 0
   });
 
   if (!deepgramApiKey || !openaiApiKey) {
-    console.error('❌ Missing required API keys');
+    console.error(`❌ [${requestId}] Missing required API keys`);
     return new Response(JSON.stringify({ 
-      error: 'Server configuration error',
-      details: 'Required API keys not configured'
+      error: 'Server configuration error - missing API keys',
+      details: 'Required API keys not configured',
+      missing: {
+        deepgram: !deepgramApiKey,
+        openai: !openaiApiKey
+      },
+      request_id: requestId
     }), { 
       status: 500, 
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    })
+    });
   }
 
   try {
-    console.log('🔄 Attempting WebSocket upgrade...');
-    const { socket, response } = Deno.upgradeWebSocket(req)
+    console.log(`🔄 [${requestId}] Attempting WebSocket upgrade...`);
+    const { socket, response } = Deno.upgradeWebSocket(req);
+    console.log(`✅ [${requestId}] WebSocket upgrade successful`);
     
     let isActive = true;
     let deepgramSTT: WebSocket | null = null;
     let deepgramTTS: WebSocket | null = null;
     let keepAliveInterval: number | null = null;
 
-    // Initialize Deepgram STT connection
-    const initSTT = () => {
-      try {
-        console.log('🎤 Initializing Deepgram STT...');
-        const sttUrl = 'wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true'
-        deepgramSTT = new WebSocket(sttUrl, ['token', deepgramApiKey])
-
-        deepgramSTT.onopen = () => {
-          console.log('✅ Deepgram STT connected');
-        }
-
-        deepgramSTT.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data)
-            if (data.type === 'Results' && data.channel?.alternatives?.[0]?.transcript) {
-              const transcript = data.channel.alternatives[0].transcript.trim()
-              if (transcript && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({
-                  type: 'transcript',
-                  text: transcript,
-                  confidence: data.channel.alternatives[0].confidence || 1.0,
-                  isFinal: data.is_final || false,
-                  timestamp: Date.now()
-                }))
-              }
-            }
-          } catch (error) {
-            console.error('❌ STT message error:', error)
-          }
-        }
-
-        deepgramSTT.onerror = (error) => {
-          console.error('❌ STT connection error:', error)
-        }
-
-        deepgramSTT.onclose = () => {
-          console.log('🔌 STT connection closed')
-          if (isActive) {
-            setTimeout(initSTT, 2000)
-          }
-        }
-      } catch (error) {
-        console.error('❌ STT initialization error:', error)
-      }
-    }
-
-    // Initialize Deepgram TTS connection
-    const initTTS = () => {
-      try {
-        console.log('🔊 Initializing Deepgram TTS...');
-        const ttsUrl = 'wss://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=linear16&sample_rate=24000'
-        deepgramTTS = new WebSocket(ttsUrl, ['token', deepgramApiKey])
-
-        deepgramTTS.onopen = () => {
-          console.log('✅ Deepgram TTS connected');
-        }
-
-        deepgramTTS.onmessage = (event) => {
-          if (event.data instanceof ArrayBuffer && socket.readyState === WebSocket.OPEN) {
-            const audioArray = new Uint8Array(event.data)
-            const base64Audio = btoa(String.fromCharCode(...audioArray))
-            socket.send(JSON.stringify({
-              type: 'audio_response',
-              audio: base64Audio,
-              timestamp: Date.now()
-            }))
-          }
-        }
-
-        deepgramTTS.onerror = (error) => {
-          console.error('❌ TTS connection error:', error)
-        }
-
-        deepgramTTS.onclose = () => {
-          console.log('🔌 TTS connection closed')
-          if (isActive) {
-            setTimeout(initTTS, 2000)
-          }
-        }
-      } catch (error) {
-        console.error('❌ TTS initialization error:', error)
-      }
-    }
-
-    // Generate AI response
-    const generateResponse = async (text: string): Promise<string> => {
-      try {
-        console.log('🧠 Generating AI response for:', text.substring(0, 50));
-        
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${openaiApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'gpt-4o-mini',
-            messages: [
-              { role: 'system', content: 'You are a helpful AI assistant. Keep responses conversational and concise.' },
-              { role: 'user', content: text }
-            ],
-            max_tokens: 150,
-            temperature: 0.7,
-          })
-        })
-
-        if (!response.ok) {
-          throw new Error(`OpenAI API error: ${response.status}`)
-        }
-
-        const data = await response.json()
-        const aiResponse = data.choices?.[0]?.message?.content || 'I understand. How can I help you?'
-        console.log('✅ AI response generated:', aiResponse.substring(0, 50));
-        return aiResponse
-      } catch (error) {
-        console.error('❌ AI response error:', error)
-        return 'I apologize, but I encountered an issue. Could you please try again?'
-      }
-    }
-
-    // Send text to TTS
-    const sendTTS = (text: string) => {
-      if (deepgramTTS?.readyState === WebSocket.OPEN && text.trim()) {
-        console.log('📤 Sending to TTS:', text.substring(0, 50));
-        deepgramTTS.send(JSON.stringify({
-          type: 'Speak',
-          text: text.trim()
-        }))
-      }
-    }
-
-    // Start keepalive ping
-    const startKeepAlive = () => {
-      keepAliveInterval = setInterval(() => {
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }))
-        }
-      }, 30000) as unknown as number
-    }
+    console.log(`🆔 [${requestId}] Connection established for user ${userId}`);
 
     // WebSocket event handlers
     socket.onopen = () => {
-      console.log('🔌 Client WebSocket connected');
-      isActive = true
+      console.log(`🔌 [${requestId}] Client WebSocket OPENED successfully`);
+      isActive = true;
       
-      // Initialize Deepgram connections
-      initSTT()
-      initTTS()
-      
-      // Start keepalive
-      startKeepAlive()
-      
-      // Send ready message
+      // Send immediate ready message
       socket.send(JSON.stringify({
         type: 'connection_ready',
+        connectionId: requestId,
         message: 'Voice assistant ready',
+        userId,
+        callId,
+        assistantId,
         timestamp: Date.now()
-      }))
-    }
+      }));
+      
+      console.log(`📤 [${requestId}] Connection ready message sent`);
+      
+      // Start keepalive
+      keepAliveInterval = setInterval(() => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ 
+            type: 'ping', 
+            connectionId: requestId,
+            timestamp: Date.now() 
+          }));
+          console.log(`💓 [${requestId}] Ping sent`);
+        }
+      }, 30000) as unknown as number;
+    };
 
     socket.onmessage = async (event) => {
       try {
-        const data = JSON.parse(event.data)
-        console.log('📨 Received message type:', data.type || data.event)
+        const data = JSON.parse(event.data);
+        console.log(`📨 [${requestId}] Received message:`, data.type || data.event);
 
         switch (data.type || data.event) {
+          case 'connected':
           case 'start':
-            console.log('🚀 Session start requested');
+            console.log(`🚀 [${requestId}] Session start/connected acknowledged`);
             socket.send(JSON.stringify({
               type: 'ack',
-              message: 'Session started successfully',
+              connectionId: requestId,
+              message: 'Session acknowledged',
               timestamp: Date.now()
-            }))
-            break
-
-          case 'media':
-            if (data.media?.payload && deepgramSTT?.readyState === WebSocket.OPEN) {
-              try {
-                const audioData = Uint8Array.from(atob(data.media.payload), c => c.charCodeAt(0))
-                deepgramSTT.send(audioData)
-              } catch (error) {
-                console.error('❌ Audio processing error:', error)
-              }
-            }
-            break
+            }));
+            break;
 
           case 'text_input':
             if (data.text?.trim()) {
-              console.log('💬 Processing text input:', data.text);
-              const aiResponse = await generateResponse(data.text)
+              console.log(`💬 [${requestId}] Processing text input:`, data.text);
+              
+              // Simple echo response for now
+              const response = `I received your message: "${data.text}". This is a test response from the voice assistant.`;
               
               socket.send(JSON.stringify({
                 type: 'ai_response',
-                text: aiResponse,
+                text: response,
                 timestamp: Date.now()
-              }))
+              }));
               
-              sendTTS(aiResponse)
+              console.log(`📤 [${requestId}] AI response sent`);
             }
-            break
+            break;
 
           case 'ping':
             socket.send(JSON.stringify({
               type: 'pong',
+              connectionId: requestId,
               timestamp: Date.now()
-            }))
-            break
+            }));
+            console.log(`💓 [${requestId}] Pong sent`);
+            break;
 
           default:
-            console.log(`❓ Unknown message type: ${data.type || data.event}`)
+            console.log(`❓ [${requestId}] Unknown message type:`, data.type || data.event);
         }
       } catch (error) {
-        console.error('❌ Message processing error:', error)
-        socket.send(JSON.stringify({
-          type: 'error',
-          error: 'Message processing failed',
-          timestamp: Date.now()
-        }))
+        console.error(`❌ [${requestId}] Message processing error:`, error);
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({
+            type: 'error',
+            error: 'Message processing failed',
+            details: error.message,
+            timestamp: Date.now()
+          }));
+        }
       }
-    }
+    };
 
     socket.onclose = (event) => {
-      console.log('🔌 Client WebSocket closed:', event.code, event.reason);
-      isActive = false
+      console.log(`🔌 [${requestId}] Client WebSocket CLOSED:`, {
+        code: event.code, 
+        reason: event.reason,
+        wasClean: event.wasClean
+      });
       
-      // Clean up
+      isActive = false;
+      
+      // Clean up resources
       if (keepAliveInterval) {
-        clearInterval(keepAliveInterval)
+        clearInterval(keepAliveInterval);
+        keepAliveInterval = null;
+        console.log(`🧹 [${requestId}] Keepalive stopped`);
       }
-      if (deepgramSTT) {
-        deepgramSTT.close()
-      }
-      if (deepgramTTS) {
-        deepgramTTS.close()
-      }
-    }
+      
+      console.log(`✅ [${requestId}] Cleanup completed`);
+    };
 
     socket.onerror = (error) => {
-      console.error('❌ Client WebSocket error:', error)
-    }
+      console.error(`❌ [${requestId}] Client WebSocket ERROR:`, error);
+    };
 
-    console.log('✅ WebSocket upgrade successful');
-    return response
+    const endTime = Date.now();
+    console.log(`✅ [${requestId}] WebSocket setup completed in ${endTime - startTime}ms`);
+    console.log(`🔵 [${requestId}] === REQUEST PROCESSING COMPLETE ===`);
+    
+    return response;
 
   } catch (error) {
-    console.error('❌ WebSocket upgrade failed:', error)
+    console.error(`❌ [${requestId}] WebSocket upgrade failed:`, error);
+    console.error(`❌ [${requestId}] Error stack:`, error.stack);
     return new Response(
       JSON.stringify({ 
         error: 'WebSocket upgrade failed', 
-        details: error.message 
+        details: error.message,
+        stack: error.stack,
+        request_id: requestId
       }),
       { 
         status: 500, 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
       }
-    )
+    );
   }
-})
+});

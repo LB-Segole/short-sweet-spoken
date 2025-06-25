@@ -1,51 +1,179 @@
 
-/**
- * Enhanced Voice WebSocket Hook with Migration Support
- * 
- * This hook uses the new service layer architecture and provides:
- * - Robust WebSocket connection with automatic reconnection
- * - Backend abstraction (Supabase now, Railway later)
- * - Improved error handling and logging
- * - Audio processing and queue management
- * - Connection state management
- */
-
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { WebSocketService, WebSocketState } from '../services/WebSocketService';
-import { useBackendService } from './useBackendService';
+import { VoiceWebSocketService, VoiceWebSocketConfig } from '@/services/voiceWebSocketService';
+import { useBackendService } from '@/hooks/useBackendService';
 
-export interface AudioRecorder {
-  start(): Promise<void>;
-  stop(): void;
+interface ConnectionState {
+  status: 'disconnected' | 'connecting' | 'connected' | 'error';
+  error: string | null;
+  reconnectAttempt: number;
 }
 
-export interface VoiceWebSocketConfig {
-  userId: string;
-  callId?: string;
-  assistantId?: string;
-  onConnectionChange?: (connected: boolean, state: WebSocketState) => void;
-  onMessage?: (message: any) => void;
-  onError?: (error: string) => void;
-  onTranscript?: (text: string, isFinal: boolean) => void;
-  onAIResponse?: (text: string) => void;
-  onAudioResponse?: (audioData: string) => void;
+interface UseEnhancedVoiceWebSocketProps extends Omit<VoiceWebSocketConfig, 'onConnectionChange'> {
+  onConnectionChange?: (connected: boolean, state: ConnectionState) => void;
 }
 
-class SimpleAudioRecorder implements AudioRecorder {
-  private stream: MediaStream | null = null;
-  private audioContext: AudioContext | null = null;
-  private processor: ScriptProcessorNode | null = null;
-  private source: MediaStreamAudioSourceNode | null = null;
+export const useEnhancedVoiceWebSocket = (props: UseEnhancedVoiceWebSocketProps) => {
+  const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
+  const [connectionState, setConnectionState] = useState<ConnectionState>({
+    status: 'disconnected',
+    error: null,
+    reconnectAttempt: 0
+  });
 
-  constructor(private onAudioData: (audioData: Float32Array) => void) {}
+  const serviceRef = useRef<VoiceWebSocketService | null>(null);
+  const isManualDisconnect = useRef(false);
+  const connectTimeoutRef = useRef<number | null>(null);
+  const hasConnected = useRef(false);
+  const { utils } = useBackendService();
 
-  async start(): Promise<void> {
+  console.log('🎙️ useEnhancedVoiceWebSocket initialized');
+
+  const updateConnectionState = useCallback((updates: Partial<ConnectionState>) => {
+    setConnectionState(prev => {
+      const newState = { ...prev, ...updates };
+      console.log('🔄 Connection state changed:', newState);
+      props.onConnectionChange?.(newState.status === 'connected', newState);
+      return newState;
+    });
+  }, [props.onConnectionChange]);
+
+  const connect = useCallback(async () => {
+    // Prevent multiple simultaneous connection attempts
+    if (isConnecting || (isConnected && hasConnected.current)) {
+      console.log('⚠️ Already connecting or connected, skipping...');
+      return;
+    }
+
     try {
-      console.log('🎤 SimpleAudioRecorder: Starting audio recording');
+      isManualDisconnect.current = false;
+      setIsConnecting(true);
+      setError(null);
+      updateConnectionState({ status: 'connecting', error: null });
+
+      console.log('🔄 Connecting to voice WebSocket...');
+
+      // Clear any existing connection timeout
+      if (connectTimeoutRef.current) {
+        clearTimeout(connectTimeoutRef.current);
+      }
+
+      // Create new service instance
+      serviceRef.current = new VoiceWebSocketService({
+        ...props,
+        onConnectionChange: (connected) => {
+          console.log('🔄 Voice WebSocket state changed:', { connected });
+          setIsConnected(connected);
+          setIsConnecting(false);
+          hasConnected.current = connected;
+          
+          if (connected) {
+            updateConnectionState({ 
+              status: 'connected', 
+              error: null, 
+              reconnectAttempt: 0 
+            });
+          } else if (!isManualDisconnect.current) {
+            updateConnectionState({ 
+              status: 'disconnected', 
+              error: 'Connection lost' 
+            });
+          }
+        },
+        onError: (errorMsg) => {
+          console.error('❌ Voice WebSocket error:', errorMsg);
+          setError(errorMsg);
+          setIsConnecting(false);
+          updateConnectionState({ 
+            status: 'error', 
+            error: errorMsg 
+          });
+        },
+        onMessage: props.onMessage,
+        onTranscript: props.onTranscript,
+        onAIResponse: props.onAIResponse,
+        onAudioResponse: props.onAudioResponse,
+      });
+
+      // Set connection timeout
+      connectTimeoutRef.current = window.setTimeout(() => {
+        if (isConnecting && !isConnected) {
+          console.log('⏰ Connection timeout');
+          setError('Connection timeout');
+          setIsConnecting(false);
+          updateConnectionState({ 
+            status: 'error', 
+            error: 'Connection timeout - please try again' 
+          });
+        }
+      }, 15000); // Increased timeout to 15 seconds
+
+      await serviceRef.current.connect();
       
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      // Clear timeout on successful connection
+      if (connectTimeoutRef.current) {
+        clearTimeout(connectTimeoutRef.current);
+        connectTimeoutRef.current = null;
+      }
+
+    } catch (error) {
+      console.error('❌ Failed to connect:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Connection failed';
+      setError(errorMessage);
+      setIsConnecting(false);
+      hasConnected.current = false;
+      updateConnectionState({ 
+        status: 'error', 
+        error: errorMessage 
+      });
+    }
+  }, [isConnecting, isConnected, props, updateConnectionState]);
+
+  const disconnect = useCallback(() => {
+    console.log('🔄 Disconnecting voice WebSocket...');
+    
+    isManualDisconnect.current = true;
+    hasConnected.current = false;
+    
+    // Clear connection timeout
+    if (connectTimeoutRef.current) {
+      clearTimeout(connectTimeoutRef.current);
+      connectTimeoutRef.current = null;
+    }
+    
+    if (serviceRef.current) {
+      serviceRef.current.disconnect();
+      serviceRef.current = null;
+    }
+    
+    setIsConnected(false);
+    setIsConnecting(false);
+    setIsRecording(false);
+    setError(null);
+    updateConnectionState({ 
+      status: 'disconnected', 
+      error: null, 
+      reconnectAttempt: 0 
+    });
+  }, [updateConnectionState]);
+
+  const startRecording = useCallback(async () => {
+    if (!isConnected || !serviceRef.current) {
+      console.log('⚠️ Cannot start recording - not connected');
+      return;
+    }
+
+    try {
+      console.log('🎤 Starting recording...');
+      
+      // Request microphone access
+      await navigator.mediaDevices.getUserMedia({
         audio: {
-          sampleRate: 24000,
+          sampleRate: 16000,
           channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
@@ -53,312 +181,56 @@ class SimpleAudioRecorder implements AudioRecorder {
         }
       });
 
-      this.audioContext = new AudioContext({ sampleRate: 24000 });
-      this.source = this.audioContext.createMediaStreamSource(this.stream);
-      this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
-
-      this.processor.onaudioprocess = (e) => {
-        const inputData = e.inputBuffer.getChannelData(0);
-        this.onAudioData(new Float32Array(inputData));
-      };
-
-      this.source.connect(this.processor);
-      this.processor.connect(this.audioContext.destination);
-      
-      console.log('✅ SimpleAudioRecorder: Audio recording started successfully');
-    } catch (error) {
-      console.error('❌ SimpleAudioRecorder: Failed to start recording', error);
-      throw error;
-    }
-  }
-
-  stop(): void {
-    console.log('🛑 SimpleAudioRecorder: Stopping audio recording');
-    
-    if (this.source) {
-      this.source.disconnect();
-      this.source = null;
-    }
-    
-    if (this.processor) {
-      this.processor.disconnect();
-      this.processor = null;
-    }
-    
-    if (this.stream) {
-      this.stream.getTracks().forEach(track => track.stop());
-      this.stream = null;
-    }
-    
-    if (this.audioContext && this.audioContext.state !== 'closed') {
-      this.audioContext.close();
-      this.audioContext = null;
-    }
-    
-    console.log('✅ SimpleAudioRecorder: Audio recording stopped');
-  }
-}
-
-export const useEnhancedVoiceWebSocket = (config: VoiceWebSocketConfig) => {
-  const [isRecording, setIsRecording] = useState(false);
-  const [connectionState, setConnectionState] = useState<WebSocketState>({
-    connected: false,
-    connecting: false,
-    error: null,
-    reconnectAttempt: 0
-  });
-
-  const wsServiceRef = useRef<WebSocketService | null>(null);
-  const audioRecorderRef = useRef<AudioRecorder | null>(null);
-  const { voice, utils } = useBackendService();
-
-  // Handle audio data from microphone
-  const handleAudioData = useCallback((audioData: Float32Array) => {
-    if (!wsServiceRef.current?.isConnected) return;
-    
-    try {
-      const processedAudio = voice.processAudioData(audioData);
-      wsServiceRef.current.send({
-        event: 'media',
-        media: { payload: processedAudio },
-        timestamp: Date.now()
-      });
-    } catch (error) {
-      console.error('❌ Failed to process audio data:', error);
-      config.onError?.(`Audio processing failed: ${error}`);
-    }
-  }, [voice, config.onError]);
-
-  // Handle WebSocket messages
-  const handleMessage = useCallback((message: any) => {
-    console.log('📨 Voice WebSocket message received:', message.type);
-    
-    // Process message through backend service
-    const processedMessage = voice.handleMessage(message);
-    
-    // Call general message handler
-    config.onMessage?.(processedMessage);
-
-    // Handle specific message types
-    switch (processedMessage.type) {
-      case 'transcript':
-        if (processedMessage.data?.text) {
-          config.onTranscript?.(processedMessage.data.text, processedMessage.data.isFinal || false);
-        }
-        break;
-
-      case 'ai_response':
-        if (processedMessage.data?.text) {
-          config.onAIResponse?.(processedMessage.data.text);
-        }
-        break;
-
-      case 'audio_response':
-        if (processedMessage.data?.audio) {
-          config.onAudioResponse?.(processedMessage.data.audio);
-        }
-        break;
-
-      case 'connection_ready':
-        console.log('✅ Voice service ready');
-        break;
-
-      case 'error':
-        console.error('❌ Voice service error:', processedMessage.data?.error);
-        config.onError?.(processedMessage.data?.error || 'Voice service error');
-        break;
-
-      default:
-        console.log(`📨 Unhandled voice message: ${processedMessage.type}`);
-    }
-  }, [voice, config]);
-
-  // Handle connection state changes
-  const handleStateChange = useCallback((state: WebSocketState) => {
-    console.log('🔄 Voice WebSocket state changed:', state);
-    setConnectionState(state);
-    config.onConnectionChange?.(state.connected, state);
-    
-    if (!state.connected) {
-      setIsRecording(false);
-    }
-  }, [config.onConnectionChange]);
-
-  // Handle WebSocket errors
-  const handleError = useCallback((error: string) => {
-    console.error('❌ Voice WebSocket error:', error);
-    config.onError?.(error);
-  }, [config.onError]);
-
-  // Connect to voice WebSocket
-  const connect = useCallback(async () => {
-    if (wsServiceRef.current?.isConnected) {
-      console.log('⚠️ Already connected to voice WebSocket');
-      return;
-    }
-
-    try {
-      console.log('🔄 Connecting to voice WebSocket...');
-      
-      // Create WebSocket URL through backend service
-      const wsUrl = voice.createWebSocketUrl('deepgram-voice-agent', {
-        userId: config.userId,
-        callId: config.callId || 'browser-test',
-        assistantId: config.assistantId || 'demo'
-      });
-
-      // Initialize WebSocket service
-      wsServiceRef.current = new WebSocketService({
-        url: wsUrl,
-        reconnectAttempts: 5,
-        reconnectDelay: 1000,
-        maxReconnectDelay: 10000,
-        timeout: 10000,
-        enableLogging: true
-      });
-
-      // Set up event handlers
-      wsServiceRef.current.onMessage = handleMessage;
-      wsServiceRef.current.onError = handleError;
-      wsServiceRef.current.onStateChange = handleStateChange;
-      wsServiceRef.current.onOpen = () => {
-        console.log('✅ Voice WebSocket connected successfully');
-        
-        // Send initial connection message
-        wsServiceRef.current?.send({
-          type: 'connected',
-          userId: config.userId,
-          callId: config.callId || 'browser-test',
-          assistantId: config.assistantId || 'demo',
-          timestamp: Date.now()
-        });
-      };
-
-      await wsServiceRef.current.connect();
-      
-    } catch (error) {
-      console.error('❌ Failed to connect voice WebSocket:', error);
-      config.onError?.(`Connection failed: ${error}`);
-      throw error;
-    }
-  }, [config, voice, handleMessage, handleError, handleStateChange]);
-
-  // Disconnect from voice WebSocket
-  const disconnect = useCallback(() => {
-    console.log('🔄 Disconnecting voice WebSocket...');
-    
-    if (audioRecorderRef.current) {
-      audioRecorderRef.current.stop();
-      audioRecorderRef.current = null;
-      setIsRecording(false);
-    }
-    
-    if (wsServiceRef.current) {
-      wsServiceRef.current.disconnect();
-      wsServiceRef.current = null;
-    }
-    
-    setConnectionState({
-      connected: false,
-      connecting: false,
-      error: null,
-      reconnectAttempt: 0
-    });
-  }, []);
-
-  // Start audio recording
-  const startRecording = useCallback(async () => {
-    if (!connectionState.connected) {
-      throw new Error('Not connected to voice service');
-    }
-
-    if (isRecording) {
-      console.log('⚠️ Already recording audio');
-      return;
-    }
-
-    try {
-      console.log('🎤 Starting audio recording...');
-      
-      if (!audioRecorderRef.current) {
-        audioRecorderRef.current = new SimpleAudioRecorder(handleAudioData);
-      }
-      
-      await audioRecorderRef.current.start();
+      console.log('✅ Microphone access granted');
       setIsRecording(true);
       
-      console.log('✅ Audio recording started successfully');
+      // TODO: Implement actual audio processing and sending
+      // For now, just set the recording state
+      
     } catch (error) {
       console.error('❌ Failed to start recording:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Failed to start recording';
-      config.onError?.(`Recording failed: ${errorMessage}`);
-      throw error;
+      setError('Failed to access microphone');
     }
-  }, [connectionState.connected, isRecording, handleAudioData, config.onError]);
+  }, [isConnected]);
 
-  // Stop audio recording
   const stopRecording = useCallback(() => {
-    if (!isRecording) {
-      console.log('⚠️ Not currently recording');
-      return;
-    }
-
-    console.log('🛑 Stopping audio recording...');
-    
-    if (audioRecorderRef.current) {
-      audioRecorderRef.current.stop();
-      audioRecorderRef.current = null;
-    }
-    
+    console.log('🛑 Stopping recording...');
     setIsRecording(false);
-    console.log('✅ Audio recording stopped');
-  }, [isRecording]);
+  }, []);
 
-  // Send text message
   const sendTextMessage = useCallback((text: string) => {
-    if (!wsServiceRef.current?.isConnected) {
-      throw new Error('Not connected to voice service');
+    if (!serviceRef.current || !isConnected) {
+      console.warn('⚠️ Cannot send text message - not connected');
+      return;
     }
     
     console.log('📤 Sending text message:', text);
-    
-    return wsServiceRef.current.send({
-      type: 'text_input',
-      text,
-      timestamp: Date.now()
-    });
-  }, []);
+    serviceRef.current.sendText(text);
+  }, [isConnected]);
+
+  const getBackendType = useCallback(() => {
+    return utils.isSupabase() ? 'supabase' : utils.isRailway() ? 'railway' : 'unknown';
+  }, [utils]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      console.log('🧹 Cleaning up voice WebSocket hook');
+      console.log('🧹 Cleaning up useEnhancedVoiceWebSocket');
       disconnect();
     };
   }, [disconnect]);
 
   return {
-    // Connection state
-    isConnected: connectionState.connected,
-    isConnecting: connectionState.connecting,
+    isConnected,
+    isConnecting,
     isRecording,
+    error,
     connectionState,
-    error: connectionState.error,
-    
-    // Connection methods
     connect,
     disconnect,
-    
-    // Audio methods
     startRecording,
     stopRecording,
-    
-    // Messaging methods
     sendTextMessage,
-    
-    // Utility methods
-    getBackendType: () => utils.getCurrentBackendType()
+    getBackendType,
   };
 };
-
-export default useEnhancedVoiceWebSocket;

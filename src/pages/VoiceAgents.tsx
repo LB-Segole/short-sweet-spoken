@@ -75,6 +75,10 @@ const VoiceAgents = () => {
     setEditingAgent(undefined);
   };
 
+  const handleCreateFlow = () => {
+    navigate('/agent-flow-editor/new');
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -101,6 +105,10 @@ const VoiceAgents = () => {
               <h1 className="text-2xl font-bold text-gray-900">Voice AI Agents</h1>
             </div>
             <div className="flex items-center space-x-4">
+              <Button onClick={handleCreateFlow} variant="outline">
+                <Plus className="w-4 h-4 mr-2" />
+                Visual Flow Builder
+              </Button>
               <Button onClick={() => setShowForm(true)}>
                 <Plus className="w-4 h-4 mr-2" />
                 Create Voice Agent

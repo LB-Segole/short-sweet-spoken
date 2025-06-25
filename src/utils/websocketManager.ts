@@ -34,7 +34,7 @@ export class WebSocketManager {
       reconnectAttempts: 5,
       reconnectDelay: 1000,
       maxReconnectDelay: 30000,
-      timeout: 10000,
+      timeout: 15000,
       protocols: [],
       ...config
     };
@@ -53,10 +53,10 @@ export class WebSocketManager {
         // Set connection timeout
         this.connectionTimeout = window.setTimeout(() => {
           console.log('⏰ WebSocket connection timeout');
-          if (this.ws?.readyState === WebSocket.CONNECTING) {
-            this.ws.close();
-            reject(new Error('Connection timeout'));
+          if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
+            this.ws.close(1000, 'Connection timeout');
           }
+          reject(new Error('Connection timeout'));
         }, this.config.timeout);
 
         this.ws.onopen = () => {
@@ -89,7 +89,11 @@ export class WebSocketManager {
             this.connectionTimeout = null;
           }
           this.onError?.('WebSocket connection error');
-          reject(new Error('WebSocket connection failed'));
+          
+          // Only reject if we're still in connecting state
+          if (this.ws?.readyState === WebSocket.CONNECTING) {
+            reject(new Error('WebSocket connection failed'));
+          }
         };
 
         this.ws.onclose = (event) => {
@@ -144,7 +148,10 @@ export class WebSocketManager {
     }
     
     if (this.ws) {
-      this.ws.close(1000, 'Manual disconnect');
+      // Only close if the connection is open or connecting
+      if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+        this.ws.close(1000, 'Manual disconnect');
+      }
       this.ws = null;
     }
     

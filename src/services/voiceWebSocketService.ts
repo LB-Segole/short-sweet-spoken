@@ -24,6 +24,7 @@ export class VoiceWebSocketService {
   private wsManager: WebSocketManager | null = null;
   private config: VoiceWebSocketConfig;
   private keepAliveInterval: number | null = null;
+  private maxReconnectAttempts = 3;
 
   constructor(config: VoiceWebSocketConfig) {
     this.config = config;
@@ -40,16 +41,18 @@ export class VoiceWebSocketService {
       url.searchParams.set('callId', this.config.callId || 'browser-test');
       url.searchParams.set('assistantId', this.config.assistantId || 'demo');
 
+      console.log('🔗 Connecting to WebSocket URL:', url.toString());
+
       this.wsManager = new WebSocketManager({
         url: url.toString(),
-        reconnectAttempts: 3,
+        reconnectAttempts: this.maxReconnectAttempts,
         reconnectDelay: 1000,
         maxReconnectDelay: 10000,
-        timeout: 10000
+        timeout: 30000 // Increased timeout
       });
 
       this.wsManager.onOpen = () => {
-        console.log('✅ Voice WebSocket connected');
+        console.log('✅ Voice WebSocket connected successfully');
         this.config.onConnectionChange?.(true);
         this.startKeepAlive();
         
@@ -77,14 +80,23 @@ export class VoiceWebSocketService {
         this.config.onConnectionChange?.(false);
         this.stopKeepAlive();
         
+        // Handle specific error codes
         if (code === 1006) {
-          this.config.onError?.('WebSocket connection failed (1006). Please check your internet connection and try again.');
+          this.config.onError?.('Connection failed - Edge Function may be starting up. Please wait a moment and try again.');
+        } else if (code === 1011) {
+          this.config.onError?.('Server error occurred. Please check the Edge Function logs.');
+        } else if (code === 1008) {
+          this.config.onError?.('Authentication failed. Please refresh and try again.');
+        } else if (code === 1000) {
+          console.log('✅ WebSocket closed normally');
+        } else {
+          this.config.onError?.(`Connection closed with code ${code}: ${reason || 'Unknown reason'}`);
         }
       };
 
       this.wsManager.onReconnect = (attempt) => {
         console.log(`🔄 Voice WebSocket reconnecting (attempt ${attempt})`);
-        this.config.onError?.(`Reconnecting... (attempt ${attempt})`);
+        this.config.onError?.(`Reconnecting... (attempt ${attempt}/${this.maxReconnectAttempts})`);
       };
 
       await this.wsManager.connect();

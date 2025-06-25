@@ -134,20 +134,18 @@ export class SupabaseDatabaseAdapter implements DatabaseAdapter {
 }
 
 export class SupabaseVoiceServiceAdapter implements VoiceServiceAdapter {
-  private readonly websocketUrl = 'wss://csixccpoxpnwowbgkoyw.supabase.co';
-
-  createWebSocketUrl(path: string, params?: Record<string, string>): string {
-    console.log('🎙️ SupabaseVoiceServiceAdapter: Creating WebSocket URL', { path, params });
+  createWebSocketUrl(functionName: string, params?: Record<string, string>): string {
+    console.log('🎙️ SupabaseVoiceServiceAdapter: Creating WebSocket URL', { functionName, params });
     
-    const url = new URL(`${this.websocketUrl}/functions/v1/${path}`);
+    // Use the deepgram-voice-agent endpoint that exists
+    const baseUrl = `wss://csixccpoxpnwowbgkoyw.supabase.co/functions/v1/deepgram-voice-agent`;
     
     if (params) {
-      Object.entries(params).forEach(([key, value]) => {
-        url.searchParams.set(key, value);
-      });
+      const searchParams = new URLSearchParams(params);
+      return `${baseUrl}?${searchParams.toString()}`;
     }
     
-    return url.toString();
+    return baseUrl;
   }
 
   processAudioData(audioData: Float32Array): string {
