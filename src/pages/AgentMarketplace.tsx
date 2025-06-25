@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,7 +17,12 @@ interface AgentTemplate {
   name: string;
   description: string | null;
   category: string;
-  template_data: any;
+  template_data: {
+    system_prompt?: string;
+    voice_model?: string;
+    example_calls?: string[];
+    is_active?: boolean;
+  };
   created_by: string;
   team_id: string | null;
   is_public: boolean;
@@ -39,7 +43,8 @@ interface FilterState {
 
 const AgentMarketplace = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const authContext = useAuth();
+  const user = authContext.user;
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterState>({
