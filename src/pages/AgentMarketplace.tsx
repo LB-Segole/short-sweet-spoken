@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,7 +23,7 @@ interface AgentTemplate {
     voice_model?: string;
     example_calls?: string[];
     is_active?: boolean;
-  };
+  } | null;
   created_by: string;
   team_id: string | null;
   is_public: boolean;
@@ -43,8 +44,7 @@ interface FilterState {
 
 const AgentMarketplace = () => {
   const navigate = useNavigate();
-  const authContext = useAuth();
-  const user = authContext.user;
+  const { isAuthenticated } = useAuth();
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterState>({
@@ -87,7 +87,13 @@ const AgentMarketplace = () => {
 
       if (error) throw error;
 
-      setTemplates(data || []);
+      // Transform the data to match our interface
+      const transformedData: AgentTemplate[] = (data || []).map(item => ({
+        ...item,
+        template_data: item.template_data as AgentTemplate['template_data']
+      }));
+
+      setTemplates(transformedData);
     } catch (error) {
       console.error('Error fetching templates:', error);
       toast.error('Failed to load templates');
@@ -122,7 +128,7 @@ const AgentMarketplace = () => {
   }, [filter]);
 
   const handleRating = async (templateId: string, rating: number, reviewText?: string): Promise<boolean> => {
-    if (!user) {
+    if (!isAuthenticated) {
       toast.error('Please sign in to rate templates');
       return false;
     }
@@ -132,7 +138,7 @@ const AgentMarketplace = () => {
         .from('template_reviews')
         .upsert({
           template_id: templateId,
-          user_id: user.id,
+          user_id: (await supabase.auth.getUser()).data.user?.id,
           rating,
           review_text: reviewText
         });
