@@ -1,262 +1,291 @@
-
-import React, { useState } from 'react';
-import { Card, CardContent } from '@/components/ui/card';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, Plus, Star, TrendingUp, Clock, Users } from 'lucide-react';
-import { TemplateCard } from '@/components/AgentMarketplace/TemplateCard';
+import { ArrowLeft, Search, Star, Download, Heart, Filter, Zap, MessageSquare, Phone, Bot } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
+import { toast } from 'sonner';
 import { TemplateRatingDialog } from '@/components/AgentMarketplace/TemplateRatingDialog';
-import { useAgentTemplates } from '@/hooks/useAgentTemplates';
-import { useToast } from '@/hooks/use-toast';
 
-export const AgentMarketplace: React.FC = () => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('');
-  const [sortBy, setSortBy] = useState('downloads');
-  const [showRatingDialog, setShowRatingDialog] = useState(false);
-  const [selectedTemplateId, setSelectedTemplateId] = useState('');
-  
-  const {
-    templates,
-    isLoading,
-    loadTemplates,
-    downloadTemplate,
-    rateTemplate
-  } = useAgentTemplates();
+interface AgentTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  system_prompt: string;
+  voice_model: string;
+  example_calls: string[];
+  created_at: string;
+  rating_average: number | null;
+  rating_count: number | null;
+  is_active: boolean;
+}
 
-  const { toast } = useToast();
+interface FilterState {
+  searchTerm: string;
+  category: string;
+  sortBy: string;
+}
 
-  const categories = [
-    'Customer Service',
-    'Sales',
-    'Support',
-    'Marketing',
-    'HR',
-    'Finance',
-    'General'
-  ];
+const AgentMarketplace = () => {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const [templates, setTemplates] = useState<AgentTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<FilterState>({
+    searchTerm: '',
+    category: 'all',
+    sortBy: 'newest',
+  });
+  const [categories, setCategories] = useState<string[]>([]);
+  const [showDetails, setShowDetails] = useState<string | null>(null);
 
-  const handleSearch = () => {
-    loadTemplates(selectedCategory, searchTerm);
-  };
+  useEffect(() => {
+    fetchTemplates();
+    fetchCategories();
+  }, []);
 
-  const handleDownload = async (template: any) => {
-    const result = await downloadTemplate(template.id);
-    
-    if (result) {
-      // Here you would typically create a new assistant from the template
-      toast({
-        title: "Template Downloaded",
-        description: `${template.name} has been added to your agents`,
-      });
+  const fetchTemplates = async () => {
+    setLoading(true);
+    try {
+      let query = supabase
+        .from('agent_templates')
+        .select('*')
+        .eq('is_active', true);
+
+      if (filter.searchTerm) {
+        query = query.ilike('name', `%${filter.searchTerm}%`);
+      }
+
+      if (filter.category !== 'all') {
+        query = query.eq('category', filter.category);
+      }
+
+      if (filter.sortBy === 'topRated') {
+        query = query.order('rating_average', { ascending: false, nullsFirst: false });
+      } else {
+        query = query.order('created_at', { ascending: false });
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      setTemplates(data || []);
+    } catch (error) {
+      console.error('Error fetching templates:', error);
+      toast.error('Failed to load templates');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleRate = (templateId: string) => {
-    setSelectedTemplateId(templateId);
-    setShowRatingDialog(true);
+  const fetchCategories = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('agent_templates')
+        .select('category')
+        .eq('is_active', true);
+
+      if (error) throw error;
+
+      const uniqueCategories = ['all', ...new Set(data?.map(item => item.category) || [])];
+      setCategories(uniqueCategories);
+    } catch (error) {
+      console.error('Error fetching categories:', error);
+      toast.error('Failed to load categories');
+    }
   };
 
-  const handleSubmitRating = async (templateId: string, rating: number, reviewText?: string) => {
-    await rateTemplate(templateId, rating, reviewText);
+  const handleFilterChange = (newFilter: Partial<FilterState>) => {
+    setFilter({ ...filter, ...newFilter });
   };
 
-  const featuredTemplates = templates.slice(0, 3);
-  const popularTemplates = templates.filter(t => t.downloads_count > 100);
+  useEffect(() => {
+    fetchTemplates();
+  }, [filter]);
 
-  return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Agent Marketplace</h1>
-          <p className="text-gray-600">Discover and download pre-built agent templates</p>
-        </div>
-        <Button>
-          <Plus className="w-4 h-4 mr-2" />
-          Publish Template
-        </Button>
-      </div>
+  const handleRating = async (templateId: string, rating: number, reviewText?: string): Promise<boolean> => {
+    if (!user) {
+      toast.error('Please sign in to rate templates');
+      return false;
+    }
 
-      {/* Search and Filters */}
-      <Card>
-        <CardContent className="p-6">
-          <div className="flex gap-4 items-end">
-            <div className="flex-1">
-              <Input
-                placeholder="Search templates..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full"
-              />
-            </div>
-            
-            <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-              <SelectTrigger className="w-48">
-                <SelectValue placeholder="All Categories" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">All Categories</SelectItem>
-                {categories.map((category) => (
-                  <SelectItem key={category} value={category}>
-                    {category}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+    try {
+      const { error } = await supabase
+        .from('template_reviews')
+        .upsert({
+          template_id: templateId,
+          user_id: user.id,
+          rating,
+          review_text: reviewText
+        });
 
-            <Select value={sortBy} onValueChange={setSortBy}>
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Sort by" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="downloads">Most Downloaded</SelectItem>
-                <SelectItem value="rating">Highest Rated</SelectItem>
-                <SelectItem value="recent">Most Recent</SelectItem>
-              </SelectContent>
-            </Select>
+      if (error) throw error;
 
-            <Button onClick={handleSearch}>
-              <Search className="w-4 h-4 mr-2" />
-              Search
+      toast.success('Rating submitted successfully!');
+      
+      // Refresh templates to show updated rating
+      const updatedTemplates = templates.map(template => {
+        if (template.id === templateId) {
+          return {
+            ...template,
+            rating_count: (template.rating_count || 0) + 1,
+            rating_average: ((template.rating_average || 0) * (template.rating_count || 0) + rating) / ((template.rating_count || 0) + 1)
+          };
+        }
+        return template;
+      });
+      setTemplates(updatedTemplates);
+      return true;
+    } catch (error) {
+      console.error('Error submitting rating:', error);
+      toast.error('Failed to submit rating');
+      return false;
+    }
+  };
+
+  const TemplateCard = ({ template }: { template: AgentTemplate }) => {
+    const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+    const openDialog = () => setIsDialogOpen(true);
+    const closeDialog = () => setIsDialogOpen(false);
+
+    return (
+      <Card className="bg-white shadow-md rounded-lg overflow-hidden">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-semibold">{template.name}</CardTitle>
+          <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs font-normal">
+            {template.category}
+          </Badge>
+        </CardHeader>
+        <CardContent className="p-4">
+          <p className="text-gray-600 text-sm mb-4">{template.description}</p>
+          <div className="flex items-center space-x-2 mb-3">
+            <Star className="h-4 w-4 text-yellow-500" />
+            <span className="text-sm text-gray-700">
+              {template.rating_average ? template.rating_average.toFixed(1) : 'No ratings'}
+            </span>
+            {template.rating_count && (
+              <span className="text-gray-500 text-xs"> ({template.rating_count} ratings)</span>
+            )}
+          </div>
+          <div className="flex justify-between">
+            <Button variant="outline" size="sm" onClick={() => setShowDetails(template.id)}>
+              <Zap className="w-4 h-4 mr-2" />
+              View Details
             </Button>
+            <TemplateRatingDialog
+              templateId={template.id}
+              templateName={template.name}
+              onSubmit={handleRating}
+            />
           </div>
         </CardContent>
       </Card>
+    );
+  };
 
-      {/* Content Tabs */}
-      <Tabs defaultValue="browse" className="space-y-6">
-        <TabsList>
-          <TabsTrigger value="browse">Browse All</TabsTrigger>
-          <TabsTrigger value="featured">Featured</TabsTrigger>
-          <TabsTrigger value="popular">Popular</TabsTrigger>
-          <TabsTrigger value="recent">Recently Added</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="browse" className="space-y-6">
-          {/* Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2">
-                  <Users className="w-5 h-5 text-blue-500" />
-                  <div>
-                    <div className="text-2xl font-bold">{templates.length}</div>
-                    <div className="text-sm text-gray-600">Total Templates</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2">
-                  <TrendingUp className="w-5 h-5 text-green-500" />
-                  <div>
-                    <div className="text-2xl font-bold">{categories.length}</div>
-                    <div className="text-sm text-gray-600">Categories</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2">
-                  <Star className="w-5 h-5 text-yellow-500" />
-                  <div>
-                    <div className="text-2xl font-bold">4.8</div>
-                    <div className="text-sm text-gray-600">Avg Rating</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-5 h-5 text-purple-500" />
-                  <div>
-                    <div className="text-2xl font-bold">12</div>
-                    <div className="text-sm text-gray-600">New This Week</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Templates Grid */}
-          {isLoading ? (
-            <div className="text-center py-8">Loading templates...</div>
-          ) : templates.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              No templates found
+  const TemplateDetailsDialog = ({ template, onClose }: { template: AgentTemplate; onClose: () => void }) => {
+    return (
+      <Dialog open={showDetails === template.id} onOpenChange={(open) => { if (!open) onClose(); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between">
+              {template.name}
+              <Button variant="ghost" size="icon" onClick={onClose}>
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <h3 className="text-lg font-semibold">Description</h3>
+                <p className="text-gray-600">{template.description}</p>
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-lg font-semibold">System Prompt</h3>
+                <p className="text-gray-600">{template.system_prompt}</p>
+              </div>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {templates.map((template) => (
-                <TemplateCard
-                  key={template.id}
-                  template={template}
-                  onDownload={handleDownload}
-                  onRate={handleRate}
-                />
-              ))}
+            <div className="space-y-2">
+              <h3 className="text-lg font-semibold">Example Calls</h3>
+              <ul className="list-disc pl-5">
+                {template.example_calls.map((call, index) => (
+                  <li key={index} className="text-gray-600">{call}</li>
+                ))}
+              </ul>
             </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="featured" className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {featuredTemplates.map((template) => (
-              <TemplateCard
-                key={template.id}
-                template={template}
-                onDownload={handleDownload}
-                onRate={handleRate}
-              />
-            ))}
           </div>
-        </TabsContent>
+        </DialogContent>
+      </Dialog>
+    );
+  };
 
-        <TabsContent value="popular" className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {popularTemplates.map((template) => (
-              <TemplateCard
-                key={template.id}
-                template={template}
-                onDownload={handleDownload}
-                onRate={handleRate}
-              />
-            ))}
-          </div>
-        </TabsContent>
+  if (loading) {
+    return <div className="flex justify-center items-center h-screen">Loading templates...</div>;
+  }
 
-        <TabsContent value="recent" className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {templates
-              .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-              .slice(0, 9)
-              .map((template) => (
-                <TemplateCard
-                  key={template.id}
-                  template={template}
-                  onDownload={handleDownload}
-                  onRate={handleRate}
-                />
+  return (
+    <div className="container mx-auto py-10">
+      <div className="mb-8 flex items-center justify-between">
+        <Button variant="ghost" onClick={() => navigate('/dashboard')} className="mr-4">
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          Back to Dashboard
+        </Button>
+        <h1 className="text-3xl font-bold text-gray-800">Agent Template Marketplace</h1>
+        <div className="space-x-4 flex items-center">
+          <Input
+            type="search"
+            placeholder="Search templates..."
+            className="md:w-64"
+            value={filter.searchTerm}
+            onChange={(e) => handleFilterChange({ searchTerm: e.target.value })}
+          />
+          <Select value={filter.category} onValueChange={(value) => handleFilterChange({ category: value })}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Filter by category" />
+            </SelectTrigger>
+            <SelectContent>
+              {categories.map(category => (
+                <SelectItem key={category} value={category}>{category}</SelectItem>
               ))}
-          </div>
-        </TabsContent>
-      </Tabs>
+            </SelectContent>
+          </Select>
+          <Select value={filter.sortBy} onValueChange={(value) => handleFilterChange({ sortBy: value })}>
+            <SelectTrigger className="w-[150px]">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="newest">Newest</SelectItem>
+              <SelectItem value="topRated">Top Rated</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {templates.map(template => (
+          <TemplateCard key={template.id} template={template} />
+        ))}
+      </div>
 
-      {/* Rating Dialog */}
-      <TemplateRatingDialog
-        open={showRatingDialog}
-        onOpenChange={setShowRatingDialog}
-        templateId={selectedTemplateId}
-        onSubmit={handleSubmitRating}
-      />
+      {templates.filter(template => template.id === showDetails).map(template => (
+        <TemplateDetailsDialog
+          key={template.id}
+          template={template}
+          onClose={() => setShowDetails(null)}
+        />
+      ))}
     </div>
   );
 };
+
+export default AgentMarketplace;

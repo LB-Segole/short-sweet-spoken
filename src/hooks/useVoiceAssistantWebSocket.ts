@@ -1,4 +1,3 @@
-
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Assistant } from '@/types/assistant';
 
@@ -61,18 +60,18 @@ export const useVoiceAssistantWebSocket = ({
       
       wsRef.current = new WebSocket(wsUrl);
 
-      // Set connection timeout
+      // Set connection timeout - increased for cold starts
       connectionTimeoutRef.current = setTimeout(() => {
-        console.log('⏰ Connection timeout after 10 seconds');
+        console.log('⏰ Connection timeout after 15 seconds');
         if (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING) {
           wsRef.current.close();
-          setStatus('Connection Timeout');
-          onError('Connection timeout - Edge Function may be starting up. Please try again.');
         }
-      }, 10000);
+        setStatus('Connection Timeout');
+        onError('Connection timeout - Edge Function may be starting up. Please try again.');
+      }, 15000);
 
       wsRef.current.onopen = () => {
-        console.log('✅ WebSocket connection opened successfully!');
+        console.log('✅ WebSocket connected successfully!');
         
         if (connectionTimeoutRef.current) {
           clearTimeout(connectionTimeoutRef.current);
@@ -85,8 +84,7 @@ export const useVoiceAssistantWebSocket = ({
         
         // Send start message
         const startMessage = {
-          event: 'start',
-          message: 'Initializing voice assistant session',
+          type: 'start_conversation',
           assistantId: assistant.id,
           userId: 'browser-user',
           timestamp: Date.now()
@@ -104,13 +102,13 @@ export const useVoiceAssistantWebSocket = ({
           console.log('📨 Received message:', data.type || data.event);
           
           switch (data.type || data.event) {
-            case 'connection_ready':
-              console.log('🔗 Backend connection ready');
-              setStatus('Ready');
+            case 'connection_established':
+              console.log('🔗 Backend connection established:', data.message);
+              setStatus('Ready for Voice');
               break;
               
-            case 'ack':
-              console.log('✅ Backend acknowledged start:', data.message);
+            case 'conversation_started':
+              console.log('✅ Conversation started:', data.message);
               setStatus('Ready');
               break;
               
@@ -130,14 +128,14 @@ export const useVoiceAssistantWebSocket = ({
 
             case 'transcript':
               if (data.text) {
-                console.log('📝 Transcript received:', data.text);
+                console.log('📝 Transcript received:', data.text, 'Final:', data.isFinal);
                 onTranscript(data.text);
               }
               break;
               
             case 'ai_response':
               if (data.text) {
-                console.log('🤖 Assistant response received:', data.text);
+                console.log('🤖 AI response received:', data.text);
                 onAssistantResponse(data.text);
               }
               break;
@@ -147,6 +145,11 @@ export const useVoiceAssistantWebSocket = ({
                 console.log('🔊 Audio response received');
                 playAudioResponse(data.audio);
               }
+              break;
+
+            case 'tts_error':
+              console.warn('⚠️ TTS error:', data.message);
+              onError('Audio generation failed, but text response was received');
               break;
               
             case 'error':
@@ -186,7 +189,7 @@ export const useVoiceAssistantWebSocket = ({
         if (event.code === 1006) {
           console.log('❌ Connection failed (1006)');
           setStatus('Connection Failed');
-          onError('Connection failed. Please check:\n• API keys are configured in Supabase\n• Edge Function is deployed\n• Network connection is stable');
+          onError('Connection failed. Please check:\n• Deepgram and HuggingFace API keys are configured\n• Edge Function is deployed\n• Network connection is stable');
         } else if (event.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
           attemptReconnect();
         } else {
@@ -319,8 +322,41 @@ export const useVoiceAssistantWebSocket = ({
       });
       
       streamRef.current = stream;
+      
+      // Create MediaRecorder to capture audio in chunks
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      });
+      
+      mediaRecorderRef.current = mediaRecorder;
+      
+      mediaRecorder.ondataavailable = async (event) => {
+        if (event.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+          try {
+            // Convert blob to base64 and send to backend
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const base64Audio = reader.result?.toString().split(',')[1];
+              if (base64Audio) {
+                wsRef.current?.send(JSON.stringify({
+                  type: 'audio_data',
+                  audio: base64Audio,
+                  timestamp: Date.now()
+                }));
+              }
+            };
+            reader.readAsDataURL(event.data);
+          } catch (error) {
+            console.error('❌ Error processing audio:', error);
+          }
+        }
+      };
+      
+      // Start recording with 250ms chunks for real-time processing
+      mediaRecorder.start(250);
+      
       setIsRecording(true);
-      setStatus('Recording...');
+      setStatus('Recording... Speak naturally');
       
     } catch (error) {
       console.error('❌ Error starting recording:', error);
@@ -330,37 +366,20 @@ export const useVoiceAssistantWebSocket = ({
 
   const stopRecording = useCallback(() => {
     console.log('🛑 Stop recording requested');
+    
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
+    }
+    
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
+    
     setIsRecording(false);
     setStatus('Ready');
-  }, []);
-
-  const processAudioChunk = useCallback(async (audioBlob: Blob) => {
-    console.log('🎵 Processing audio chunk:', audioBlob.size, 'bytes');
-    
-    try {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64Audio = reader.result?.toString().split(',')[1];
-        if (base64Audio && wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({
-            event: 'media',
-            media: {
-              payload: base64Audio
-            },
-            timestamp: Date.now()
-          }));
-        }
-      };
-      reader.readAsDataURL(audioBlob);
-    } catch (error) {
-      console.error('❌ Error processing audio chunk:', error);
-      onError('Failed to process audio');
-    }
-  }, [onError]);
+  }, [isRecording]);
 
   const playAudioResponse = useCallback(async (base64Audio: string) => {
     console.log('🔊 Playing audio response');
@@ -384,19 +403,14 @@ export const useVoiceAssistantWebSocket = ({
       const source = audioContextRef.current.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(audioContextRef.current.destination);
+      source.start(0);
       
-      source.onended = () => {
-        console.log('✅ Audio playback finished');
-        setStatus('Ready');
-      };
-      
-      source.start();
-      
+      console.log('✅ Audio playback started');
     } catch (error) {
-      console.error('❌ Audio playback error:', error);
-      setStatus('Ready');
+      console.error('❌ Error playing audio:', error);
+      onError('Failed to play audio response');
     }
-  }, []);
+  }, [onError]);
 
   const sendTextMessage = useCallback((text: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
