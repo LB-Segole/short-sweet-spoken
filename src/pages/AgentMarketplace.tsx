@@ -43,7 +43,7 @@ interface FilterState {
 
 const AgentMarketplace = () => {
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
+  const { user } = useAuth();
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterState>({
@@ -127,19 +127,12 @@ const AgentMarketplace = () => {
   }, [filter]);
 
   const handleRating = async (templateId: string, rating: number, reviewText?: string): Promise<boolean> => {
-    if (!isAuthenticated) {
+    if (!user) {
       toast.error('Please sign in to rate templates');
       return false;
     }
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) {
-        toast.error('Please sign in to rate templates');
-        return false;
-      }
-
       const { error } = await supabase
         .from('template_reviews')
         .upsert({
