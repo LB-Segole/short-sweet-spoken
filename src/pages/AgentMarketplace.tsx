@@ -18,13 +18,17 @@ interface AgentTemplate {
   name: string;
   description: string | null;
   category: string;
-  system_prompt: string;
-  voice_model: string;
-  example_calls: string[];
-  created_at: string;
+  template_data: any;
+  created_by: string;
+  team_id: string | null;
+  is_public: boolean;
+  downloads_count: number | null;
   rating_average: number | null;
   rating_count: number | null;
-  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  version: string | null;
+  tags: string[] | null;
 }
 
 interface FilterState {
@@ -59,7 +63,7 @@ const AgentMarketplace = () => {
       let query = supabase
         .from('agent_templates')
         .select('*')
-        .eq('is_active', true);
+        .eq('is_public', true);
 
       if (filter.searchTerm) {
         query = query.ilike('name', `%${filter.searchTerm}%`);
@@ -79,22 +83,7 @@ const AgentMarketplace = () => {
 
       if (error) throw error;
 
-      // Transform the data to match our AgentTemplate interface
-      const transformedTemplates: AgentTemplate[] = (data || []).map(item => ({
-        id: item.id,
-        name: item.name,
-        description: item.description,
-        category: item.category,
-        system_prompt: item.system_prompt || 'Default system prompt',
-        voice_model: item.voice_model || 'default',
-        example_calls: item.example_calls || [],
-        created_at: item.created_at,
-        rating_average: item.rating_average,
-        rating_count: item.rating_count,
-        is_active: item.is_active ?? true
-      }));
-
-      setTemplates(transformedTemplates);
+      setTemplates(data || []);
     } catch (error) {
       console.error('Error fetching templates:', error);
       toast.error('Failed to load templates');
@@ -108,7 +97,7 @@ const AgentMarketplace = () => {
       const { data, error } = await supabase
         .from('agent_templates')
         .select('category')
-        .eq('is_active', true);
+        .eq('is_public', true);
 
       if (error) throw error;
 
@@ -169,6 +158,11 @@ const AgentMarketplace = () => {
   };
 
   const TemplateCard = ({ template }: { template: AgentTemplate }) => {
+    const templateData = template.template_data || {};
+    const systemPrompt = templateData.system_prompt || 'No system prompt available';
+    const voiceModel = templateData.voice_model || 'Default voice';
+    const exampleCalls = templateData.example_calls || [];
+
     return (
       <Card className="bg-white shadow-md rounded-lg overflow-hidden">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -208,6 +202,10 @@ const AgentMarketplace = () => {
   };
 
   const TemplateDetailsDialog = ({ template, onClose }: { template: AgentTemplate; onClose: () => void }) => {
+    const templateData = template.template_data || {};
+    const systemPrompt = templateData.system_prompt || 'No system prompt available';
+    const exampleCalls = templateData.example_calls || [];
+
     return (
       <Dialog open={showDetails === template.id} onOpenChange={(open) => { if (!open) onClose(); }}>
         <DialogContent className="max-w-2xl">
@@ -227,13 +225,13 @@ const AgentMarketplace = () => {
               </div>
               <div className="space-y-2">
                 <h3 className="text-lg font-semibold">System Prompt</h3>
-                <p className="text-gray-600">{template.system_prompt}</p>
+                <p className="text-gray-600">{systemPrompt}</p>
               </div>
             </div>
             <div className="space-y-2">
               <h3 className="text-lg font-semibold">Example Calls</h3>
               <ul className="list-disc pl-5">
-                {template.example_calls.map((call, index) => (
+                {exampleCalls.map((call: string, index: number) => (
                   <li key={index} className="text-gray-600">{call}</li>
                 ))}
               </ul>
