@@ -1,23 +1,22 @@
-import React, { useState, useEffect } from 'react';
+
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ArrowLeft, Search, Star, Download, Heart, Filter, Zap, MessageSquare, Phone, Bot } from 'lucide-react';
+import { ArrowLeft, Star, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { TemplateRatingDialog } from '@/components/AgentMarketplace/TemplateRatingDialog';
 
 interface AgentTemplate {
   id: string;
   name: string;
-  description: string;
+  description: string | null;
   category: string;
   system_prompt: string;
   voice_model: string;
@@ -46,6 +45,7 @@ const AgentMarketplace = () => {
   });
   const [categories, setCategories] = useState<string[]>([]);
   const [showDetails, setShowDetails] = useState<string | null>(null);
+  const [showRatingDialog, setShowRatingDialog] = useState<string | null>(null);
 
   useEffect(() => {
     fetchTemplates();
@@ -78,7 +78,22 @@ const AgentMarketplace = () => {
 
       if (error) throw error;
 
-      setTemplates(data || []);
+      // Transform the data to match our AgentTemplate interface
+      const transformedTemplates: AgentTemplate[] = (data || []).map(item => ({
+        id: item.id,
+        name: item.name,
+        description: item.description,
+        category: item.category,
+        system_prompt: item.system_prompt || 'Default system prompt',
+        voice_model: item.voice_model || 'default',
+        example_calls: item.example_calls || [],
+        created_at: item.created_at,
+        rating_average: item.rating_average,
+        rating_count: item.rating_count,
+        is_active: item.is_active ?? true
+      }));
+
+      setTemplates(transformedTemplates);
     } catch (error) {
       console.error('Error fetching templates:', error);
       toast.error('Failed to load templates');
@@ -153,11 +168,6 @@ const AgentMarketplace = () => {
   };
 
   const TemplateCard = ({ template }: { template: AgentTemplate }) => {
-    const [isDialogOpen, setIsDialogOpen] = useState(false);
-
-    const openDialog = () => setIsDialogOpen(true);
-    const closeDialog = () => setIsDialogOpen(false);
-
     return (
       <Card className="bg-white shadow-md rounded-lg overflow-hidden">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -182,11 +192,14 @@ const AgentMarketplace = () => {
               <Zap className="w-4 h-4 mr-2" />
               View Details
             </Button>
-            <TemplateRatingDialog
-              templateId={template.id}
-              templateName={template.name}
-              onSubmit={handleRating}
-            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowRatingDialog(template.id)}
+            >
+              <Star className="w-4 h-4 mr-2" />
+              Rate
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -284,6 +297,16 @@ const AgentMarketplace = () => {
           onClose={() => setShowDetails(null)}
         />
       ))}
+
+      {showRatingDialog && (
+        <TemplateRatingDialog
+          open={!!showRatingDialog}
+          onOpenChange={(open) => !open && setShowRatingDialog(null)}
+          templateId={showRatingDialog}
+          templateName={templates.find(t => t.id === showRatingDialog)?.name}
+          onSubmit={handleRating}
+        />
+      )}
     </div>
   );
 };

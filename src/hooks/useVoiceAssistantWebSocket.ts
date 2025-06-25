@@ -438,6 +438,34 @@ export const useVoiceAssistantWebSocket = ({
     }
   }, []);
 
+  const processAudioChunk = useCallback(async (audioBlob: Blob) => {
+    try {
+      const reader = new FileReader();
+      
+      reader.onloadend = () => {
+        const base64Audio = reader.result?.toString().split(',')[1];
+        if (base64Audio && wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({
+            type: 'audio_data',
+            audio: base64Audio,
+            timestamp: Date.now()
+          }));
+          console.log('📤 Audio chunk sent to server:', base64Audio.length, 'chars');
+        }
+      };
+      
+      reader.onerror = (error) => {
+        console.error('❌ FileReader error:', error);
+        onError('Failed to process audio data');
+      };
+      
+      reader.readAsDataURL(audioBlob);
+    } catch (error) {
+      console.error('❌ Error processing audio chunk:', error);
+      onError('Failed to process audio');
+    }
+  }, [onError]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {

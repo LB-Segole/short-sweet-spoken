@@ -2,7 +2,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { EdgeRuntime } from 'https://deno.land/std@0.168.0/async/edge.ts'
 
-console.log('🚀 Deepgram Voice Agent - Starting with AI processing...');
+console.log('Deepgram Voice Agent - Starting with AI processing...');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -12,7 +12,7 @@ const corsHeaders = {
 
 // Health check endpoint
 const handleHealthCheck = () => {
-  console.log('💚 Health check requested')
+  console.log('Health check requested')
   return new Response(
     JSON.stringify({ 
       status: 'healthy', 
@@ -44,11 +44,11 @@ class DeepgramSTTService {
     const ws = new WebSocket(this.wsUrl, ['token', this.apiKey])
     return new Promise((resolve, reject) => {
       ws.onopen = () => {
-        console.log('✅ Deepgram STT connected')
+        console.log('Deepgram STT connected')
         resolve(ws)
       }
       ws.onerror = (error) => {
-        console.error('❌ Deepgram STT error:', error)
+        console.error('Deepgram STT error:', error)
         reject(error)
       }
       setTimeout(() => reject(new Error('STT connection timeout')), 10000)
@@ -66,7 +66,7 @@ class DeepgramTTSService {
 
   async synthesizeSpeech(text: string): Promise<ArrayBuffer> {
     try {
-      console.log('🗣️ Synthesizing speech:', text.substring(0, 50) + '...')
+      console.log('Synthesizing speech:', text.substring(0, 50) + '...')
       
       const response = await fetch('https://api.deepgram.com/v1/speak?model=aura-asteria-en', {
         method: 'POST',
@@ -83,7 +83,7 @@ class DeepgramTTSService {
 
       return await response.arrayBuffer()
     } catch (error) {
-      console.error('❌ TTS error:', error)
+      console.error('TTS error:', error)
       throw error
     }
   }
@@ -99,7 +99,7 @@ class HuggingFaceAIService {
 
   async generateResponse(userInput: string, conversationHistory: Array<{role: string, content: string}>): Promise<string> {
     try {
-      console.log('🤖 Generating AI response for:', userInput.substring(0, 50) + '...')
+      console.log('Generating AI response for:', userInput.substring(0, 50) + '...')
       
       const messages = [
         { 
@@ -132,14 +132,14 @@ class HuggingFaceAIService {
 
       if (!response.ok) {
         // Fallback to simple responses if HuggingFace is unavailable
-        console.warn('⚠️ HuggingFace unavailable, using fallback responses')
+        console.warn('HuggingFace unavailable, using fallback responses')
         return this.getFallbackResponse(userInput)
       }
 
       const data = await response.json()
       return data.generated_text || this.getFallbackResponse(userInput)
     } catch (error) {
-      console.error('❌ AI generation error:', error)
+      console.error('AI generation error:', error)
       return this.getFallbackResponse(userInput)
     }
   }
@@ -168,13 +168,13 @@ serve(async (req) => {
   const requestId = crypto.randomUUID().substring(0, 8)
   const startTime = Date.now()
   
-  console.log(`🔵 [${requestId}] === NEW REQUEST START ===`)
-  console.log(`📡 [${requestId}] Method: ${req.method}, URL: ${req.url}`)
+  console.log(`[${requestId}] === NEW REQUEST START ===`)
+  console.log(`[${requestId}] Method: ${req.method}, URL: ${req.url}`)
   
   try {
     // Handle CORS preflight
     if (req.method === 'OPTIONS') {
-      console.log(`✅ [${requestId}] CORS preflight handled`)
+      console.log(`[${requestId}] CORS preflight handled`)
       return new Response(null, { status: 200, headers: corsHeaders })
     }
 
@@ -187,7 +187,7 @@ serve(async (req) => {
     // Validate WebSocket upgrade
     const upgradeHeader = req.headers.get('upgrade')
     if (!upgradeHeader || upgradeHeader.toLowerCase() !== 'websocket') {
-      console.log(`❌ [${requestId}] Invalid upgrade header: ${upgradeHeader}`)
+      console.log(`[${requestId}] Invalid upgrade header: ${upgradeHeader}`)
       return new Response(
         JSON.stringify({ 
           error: 'WebSocket upgrade required',
@@ -211,13 +211,13 @@ serve(async (req) => {
     const deepgramKey = Deno.env.get('DEEPGRAM_API_KEY')
     const huggingFaceKey = Deno.env.get('HUGGING_FACE_API')
     
-    console.log(`🔍 [${requestId}] Environment check:`, {
+    console.log(`[${requestId}] Environment check:`, {
       hasDeepgram: !!deepgramKey,
       hasHuggingFace: !!huggingFaceKey
     })
 
     if (!deepgramKey) {
-      console.error(`❌ [${requestId}] Missing DEEPGRAM_API_KEY`)
+      console.error(`[${requestId}] Missing DEEPGRAM_API_KEY`)
       return new Response(
         JSON.stringify({ 
           error: 'Server configuration error',
@@ -229,7 +229,7 @@ serve(async (req) => {
     }
 
     if (!huggingFaceKey) {
-      console.error(`❌ [${requestId}] Missing HUGGING_FACE_API`)
+      console.error(`[${requestId}] Missing HUGGING_FACE_API`)
       return new Response(
         JSON.stringify({ 
           error: 'Server configuration error',
@@ -241,9 +241,9 @@ serve(async (req) => {
     }
 
     // Upgrade to WebSocket
-    console.log(`🔄 [${requestId}] Attempting WebSocket upgrade...`)
+    console.log(`[${requestId}] Attempting WebSocket upgrade...`)
     const { socket, response } = Deno.upgradeWebSocket(req)
-    console.log(`✅ [${requestId}] WebSocket upgrade successful`)
+    console.log(`[${requestId}] WebSocket upgrade successful`)
 
     // Initialize services
     const sttService = new DeepgramSTTService(deepgramKey)
@@ -261,12 +261,12 @@ serve(async (req) => {
     const callId = url.searchParams.get('callId') || 'browser-session'
     const assistantId = url.searchParams.get('assistantId') || 'default'
 
-    console.log(`🆔 [${requestId}] Connection params:`, { userId, callId, assistantId })
+    console.log(`[${requestId}] Connection params:`, { userId, callId, assistantId })
 
     // WebSocket event handlers
     socket.onopen = async () => {
       try {
-        console.log(`🔌 [${requestId}] ✅ CLIENT WEBSOCKET OPENED SUCCESSFULLY`)
+        console.log(`[${requestId}] CLIENT WEBSOCKET OPENED SUCCESSFULLY`)
         isActive = true
         
         // Initialize Deepgram STT connection
@@ -282,7 +282,7 @@ serve(async (req) => {
                 const isFinal = data.is_final || false
                 
                 if (transcript && transcript.trim()) {
-                  console.log(`📝 [${requestId}] Transcript (final: ${isFinal}):`, transcript)
+                  console.log(`[${requestId}] Transcript (final: ${isFinal}):`, transcript)
                   
                   // Send transcript to client
                   socket.send(JSON.stringify({
@@ -300,17 +300,17 @@ serve(async (req) => {
                 }
               }
             } catch (error) {
-              console.error(`❌ [${requestId}] STT message error:`, error)
+              console.error(`[${requestId}] STT message error:`, error)
             }
           }
           
           deepgramSTT.onerror = (error) => {
-            console.error(`❌ [${requestId}] Deepgram STT error:`, error)
+            console.error(`[${requestId}] Deepgram STT error:`, error)
           }
           
-          console.log(`✅ [${requestId}] Deepgram STT initialized`)
+          console.log(`[${requestId}] Deepgram STT initialized`)
         } catch (error) {
-          console.error(`❌ [${requestId}] Failed to initialize Deepgram STT:`, error)
+          console.error(`[${requestId}] Failed to initialize Deepgram STT:`, error)
         }
         
         // Send connection confirmation
@@ -326,7 +326,7 @@ serve(async (req) => {
         }
         
         socket.send(JSON.stringify(welcomeMessage))
-        console.log(`📤 [${requestId}] Welcome message sent`)
+        console.log(`[${requestId}] Welcome message sent`)
         
         // Start keepalive
         keepAliveInterval = setInterval(() => {
@@ -337,21 +337,21 @@ serve(async (req) => {
                 connectionId: requestId,
                 timestamp: Date.now() 
               }))
-              console.log(`💓 [${requestId}] Keepalive ping sent`)
+              console.log(`[${requestId}] Keepalive ping sent`)
             } catch (error) {
-              console.error(`❌ [${requestId}] Keepalive ping failed:`, error)
+              console.error(`[${requestId}] Keepalive ping failed:`, error)
             }
           }
         }, 20000) as unknown as number
         
-        console.log(`💓 [${requestId}] Keepalive system started`)
+        console.log(`[${requestId}] Keepalive system started`)
         
       } catch (error) {
-        console.error(`❌ [${requestId}] Error in onopen handler:`, error)
+        console.error(`[${requestId}] Error in onopen handler:`, error)
         try {
           socket.close(1011, 'Internal server error during initialization')
         } catch (closeError) {
-          console.error(`❌ [${requestId}] Error closing socket:`, closeError)
+          console.error(`[${requestId}] Error closing socket:`, closeError)
         }
       }
     }
@@ -359,7 +359,7 @@ serve(async (req) => {
     // Handle transcript processing with AI
     const handleTranscriptWithAI = async (transcript: string, requestId: string) => {
       try {
-        console.log(`🤖 [${requestId}] Processing transcript with AI: "${transcript}"`)
+        console.log(`[${requestId}] Processing transcript with AI: "${transcript}"`)
         
         // Add user message to conversation history
         conversationHistory.push({ role: 'user', content: transcript })
@@ -375,7 +375,7 @@ serve(async (req) => {
           conversationHistory = conversationHistory.slice(-20)
         }
         
-        console.log(`🤖 [${requestId}] AI response generated: "${aiResponse}"`)
+        console.log(`[${requestId}] AI response generated: "${aiResponse}"`)
         
         // Send text response to client
         socket.send(JSON.stringify({
@@ -396,9 +396,9 @@ serve(async (req) => {
             timestamp: Date.now()
           }))
           
-          console.log(`🔊 [${requestId}] Audio response sent (${base64Audio.length} chars)`)
+          console.log(`[${requestId}] Audio response sent (${base64Audio.length} chars)`)
         } catch (ttsError) {
-          console.error(`❌ [${requestId}] TTS error:`, ttsError)
+          console.error(`[${requestId}] TTS error:`, ttsError)
           // Send text-only response if TTS fails
           socket.send(JSON.stringify({
             type: 'tts_error',
@@ -408,7 +408,7 @@ serve(async (req) => {
         }
         
       } catch (error) {
-        console.error(`❌ [${requestId}] Error processing transcript:`, error)
+        console.error(`[${requestId}] Error processing transcript:`, error)
         socket.send(JSON.stringify({
           type: 'error',
           error: 'Failed to process voice input',
@@ -420,17 +420,17 @@ serve(async (req) => {
 
     socket.onmessage = async (event) => {
       try {
-        console.log(`📨 [${requestId}] Message received, parsing...`)
+        console.log(`[${requestId}] Message received, parsing...`)
         const data = JSON.parse(event.data)
-        console.log(`📨 [${requestId}] Message type: ${data.type || data.event}`)
+        console.log(`[${requestId}] Message type: ${data.type || data.event}`)
 
         switch (data.type || data.event) {
           case 'pong':
-            console.log(`💓 [${requestId}] Pong received - connection healthy`)
+            console.log(`[${requestId}] Pong received - connection healthy`)
             break
 
           case 'ping':
-            console.log(`💓 [${requestId}] Ping received, sending pong`)
+            console.log(`[${requestId}] Ping received, sending pong`)
             socket.send(JSON.stringify({
               type: 'pong',
               connectionId: requestId,
@@ -449,9 +449,9 @@ serve(async (req) => {
                   audioBytes[i] = binaryAudio.charCodeAt(i)
                 }
                 deepgramSTT.send(audioBytes)
-                console.log(`🎵 [${requestId}] Audio forwarded to Deepgram STT`)
+                console.log(`[${requestId}] Audio forwarded to Deepgram STT`)
               } catch (error) {
-                console.error(`❌ [${requestId}] Error forwarding audio:`, error)
+                console.error(`[${requestId}] Error forwarding audio:`, error)
               }
             }
             break
@@ -459,13 +459,13 @@ serve(async (req) => {
           case 'text_input':
             // Handle direct text input (for testing)
             if (data.text?.trim()) {
-              console.log(`💬 [${requestId}] Processing text input: "${data.text.substring(0, 50)}..."``)
+              console.log(`[${requestId}] Processing text input: "${data.text.substring(0, 50)}..."`)
               await handleTranscriptWithAI(data.text, requestId)
             }
             break
 
           case 'start_conversation':
-            console.log(`🚀 [${requestId}] Starting conversation session`)
+            console.log(`[${requestId}] Starting conversation session`)
             socket.send(JSON.stringify({
               type: 'conversation_started',
               message: 'Voice processing ready! Speak naturally.',
@@ -474,11 +474,11 @@ serve(async (req) => {
             break
 
           default:
-            console.log(`❓ [${requestId}] Unknown message type: ${data.type || data.event}`)
+            console.log(`[${requestId}] Unknown message type: ${data.type || data.event}`)
             break
         }
       } catch (error) {
-        console.error(`❌ [${requestId}] Error processing message:`, error)
+        console.error(`[${requestId}] Error processing message:`, error)
         if (socket.readyState === WebSocket.OPEN) {
           try {
             socket.send(JSON.stringify({
@@ -488,14 +488,14 @@ serve(async (req) => {
               timestamp: Date.now()
             }))
           } catch (sendError) {
-            console.error(`❌ [${requestId}] Failed to send error message:`, sendError)
+            console.error(`[${requestId}] Failed to send error message:`, sendError)
           }
         }
       }
     }
 
     socket.onclose = (event) => {
-      console.log(`🔌 [${requestId}] CLIENT WEBSOCKET CLOSED:`, {
+      console.log(`[${requestId}] CLIENT WEBSOCKET CLOSED:`, {
         code: event.code,
         reason: event.reason,
         wasClean: event.wasClean
@@ -507,20 +507,20 @@ serve(async (req) => {
       if (keepAliveInterval) {
         clearInterval(keepAliveInterval)
         keepAliveInterval = null
-        console.log(`🧹 [${requestId}] Keepalive stopped`)
+        console.log(`[${requestId}] Keepalive stopped`)
       }
       
       if (deepgramSTT) {
         deepgramSTT.close()
         deepgramSTT = null
-        console.log(`🧹 [${requestId}] Deepgram STT closed`)
+        console.log(`[${requestId}] Deepgram STT closed`)
       }
       
-      console.log(`✅ [${requestId}] Cleanup completed`)
+      console.log(`[${requestId}] Cleanup completed`)
     }
 
     socket.onerror = (error) => {
-      console.error(`❌ [${requestId}] CLIENT WEBSOCKET ERROR:`, error)
+      console.error(`[${requestId}] CLIENT WEBSOCKET ERROR:`, error)
       isActive = false
     }
 
@@ -548,12 +548,12 @@ serve(async (req) => {
     )
 
     const endTime = Date.now()
-    console.log(`✅ [${requestId}] WebSocket setup completed in ${endTime - startTime}ms`)
+    console.log(`[${requestId}] WebSocket setup completed in ${endTime - startTime}ms`)
     
     return response
 
   } catch (error) {
-    console.error(`❌ [${requestId}] Fatal error:`, error)
+    console.error(`[${requestId}] Fatal error:`, error)
     return new Response(
       JSON.stringify({ 
         error: 'Internal server error', 
@@ -569,4 +569,4 @@ serve(async (req) => {
   }
 })
 
-console.log('🎯 Deepgram Voice Agent with AI processing ready to serve requests')
+console.log('Deepgram Voice Agent with AI processing ready to serve requests')

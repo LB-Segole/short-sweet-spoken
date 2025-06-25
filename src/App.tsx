@@ -19,7 +19,7 @@ import AgentFlowEditor from "./pages/AgentFlowEditor";
 import IntegrationsPage from "./pages/IntegrationsPage";
 import { AgentOrchestration } from "./pages/AgentOrchestration";
 import { TeamManagement } from "./pages/TeamManagement";
-import { AgentMarketplace } from "./pages/AgentMarketplace";
+import AgentMarketplace from "./pages/AgentMarketplace";
 
 const queryClient = new QueryClient();
 
