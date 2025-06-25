@@ -134,11 +134,18 @@ const AgentMarketplace = () => {
     }
 
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (!user) {
+        toast.error('Please sign in to rate templates');
+        return false;
+      }
+
       const { error } = await supabase
         .from('template_reviews')
         .upsert({
           template_id: templateId,
-          user_id: (await supabase.auth.getUser()).data.user?.id,
+          user_id: user.id,
           rating,
           review_text: reviewText
         });
