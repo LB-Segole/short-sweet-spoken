@@ -1,6 +1,5 @@
 // deno-lint-ignore-file
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
-import { EdgeRuntime } from 'https://deno.land/std@0.168.0/async/edge.ts'
 
 console.log('Deepgram Voice Agent - Starting with AI processing...');
 
@@ -523,29 +522,6 @@ serve(async (req) => {
       console.error(`[${requestId}] CLIENT WEBSOCKET ERROR:`, error)
       isActive = false
     }
-
-    // Use EdgeRuntime.waitUntil to ensure proper cleanup
-    const cleanup = async () => {
-      if (keepAliveInterval) {
-        clearInterval(keepAliveInterval)
-      }
-      if (deepgramSTT) {
-        deepgramSTT.close()
-      }
-    }
-
-    EdgeRuntime.waitUntil(
-      new Promise<void>((resolve) => {
-        const checkClosure = () => {
-          if (socket.readyState === WebSocket.CLOSED) {
-            cleanup().then(resolve)
-          } else {
-            setTimeout(checkClosure, 1000)
-          }
-        }
-        checkClosure()
-      })
-    )
 
     const endTime = Date.now()
     console.log(`[${requestId}] WebSocket setup completed in ${endTime - startTime}ms`)

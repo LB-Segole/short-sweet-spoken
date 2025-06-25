@@ -441,25 +441,30 @@ export const useVoiceAssistantWebSocket = ({
   const processAudioChunk = useCallback(async (audioBlob: Blob) => {
     try {
       const reader = new FileReader();
-      
-      reader.onloadend = () => {
-        const base64Audio = reader.result?.toString().split(',')[1];
-        if (base64Audio && wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({
-            type: 'audio_data',
-            audio: base64Audio,
-            timestamp: Date.now()
-          }));
-          console.log('📤 Audio chunk sent to server:', base64Audio.length, 'chars');
-        }
-      };
-      
-      reader.onerror = (error) => {
-        console.error('❌ FileReader error:', error);
-        onError('Failed to process audio data');
-      };
-      
-      reader.readAsDataURL(audioBlob);
+      const audioArrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as ArrayBuffer);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsArrayBuffer(audioBlob);
+      });
+
+      // Convert to base64 for transmission
+      const audioBytes = new Uint8Array(audioArrayBuffer);
+      let binaryString = '';
+      for (let i = 0; i < audioBytes.length; i++) {
+        binaryString += String.fromCharCode(audioBytes[i]);
+      }
+      const base64Audio = btoa(binaryString);
+
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: 'audio_data',
+          audio: base64Audio,
+          timestamp: Date.now()
+        }));
+        console.log('📤 Audio chunk sent to server:', base64Audio.length, 'chars');
+      } else {
+        console.log('⚠️ Cannot send audio - WebSocket not connected');
+      }
     } catch (error) {
       console.error('❌ Error processing audio chunk:', error);
       onError('Failed to process audio');
