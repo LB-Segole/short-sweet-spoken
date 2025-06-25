@@ -8,6 +8,7 @@ import { VoiceAgentCard } from '@/components/VoiceAgents/VoiceAgentCard';
 import { VoiceTestInterface } from '@/components/VoiceAgents/VoiceTestInterface';
 import { VoiceAgent, VoiceAgentFormData } from '@/types/voiceAgent';
 import { BrowserChatTest } from '@/components/VoiceAgents/BrowserChatTest';
+import { HealthCheck } from '@/components/VoiceAgents/HealthCheck';
 
 const VoiceAgents = () => {
   const navigate = useNavigate();
@@ -123,6 +124,11 @@ const VoiceAgents = () => {
       </header>
 
       <div className="container mx-auto px-4 py-8">
+        {/* Add Health Check Component */}
+        <div className="mb-6">
+          <HealthCheck />
+        </div>
+
         {/* Create/Edit Form */}
         {showForm && (
           <div className="mb-8">
