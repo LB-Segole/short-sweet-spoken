@@ -1,113 +1,103 @@
 
-import { useState } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import React from 'react';
+import { Outlet, Link, useLocation } from 'react-router-dom';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { useAuth } from '@/context/AuthContext';
 import { 
   LayoutDashboard, 
-  Phone, 
+  Mic, 
+  Users, 
+  History, 
   Settings, 
-  LogOut, 
-  Bot,
-  History,
-  HelpCircle
+  Zap,
+  Puzzle,
+  GitBranch,
+  UsersIcon,
+  Store
 } from 'lucide-react';
-import { toast } from 'sonner';
-import ContactSupportModal from '@/components/Support/ContactSupportModal';
-import PaymentModal from '@/components/Payment/PaymentModal';
 
-const MainLayout = () => {
-  const { logout } = useAuth();
-  const navigate = useNavigate();
-  const [showContactSupport, setShowContactSupport] = useState(false);
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
+const navigation = [
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { name: 'Voice Agents', href: '/voice-agents', icon: Mic },
+  { name: 'Assistants', href: '/assistants', icon: Users },
+  { name: 'Agent Flows', href: '/agent-flow-editor', icon: GitBranch },
+  { name: 'Orchestration', href: '/orchestration', icon: Zap },
+  { name: 'Integrations', href: '/integrations', icon: Puzzle },
+  { name: 'Marketplace', href: '/marketplace', icon: Store },
+  { name: 'Teams', href: '/teams', icon: UsersIcon },
+  { name: 'Call History', href: '/call-history', icon: History },
+  { name: 'Settings', href: '/settings', icon: Settings },
+];
 
-  const handleLogout = async () => {
-    try {
-      await logout();
-      toast.success('Logged out successfully');
-      navigate('/');
-    } catch (error) {
-      console.error('Logout error:', error);
-      toast.error('Failed to logout');
-    }
-  };
-
-  const menuItems = [
-    { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
-    { icon: Phone, label: 'Campaigns', path: '/campaigns' },
-    { icon: History, label: 'Call History', path: '/call-history' },
-    { icon: Phone, label: 'Call Center', path: '/call-center' },
-    { icon: Bot, label: 'AI Agents', path: '/assistants' },
-    { icon: Settings, label: 'Settings', path: '/settings' },
-  ];
+export const MainLayout: React.FC = () => {
+  const location = useLocation();
 
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Sidebar */}
-      <div className="fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg">
-        <div className="flex flex-col h-full">
-          {/* Logo */}
-          <div className="flex items-center h-16 px-6 border-b">
-            <h1 className="text-xl font-bold text-gray-900">First Choice LLC</h1>
+      <div className="fixed inset-y-0 z-50 flex w-72 flex-col">
+        <div className="flex grow flex-col gap-y-5 overflow-y-auto border-r border-gray-200 bg-white px-6 pb-4">
+          <div className="flex h-16 shrink-0 items-center">
+            <Link to="/" className="flex items-center space-x-2">
+              <Mic className="h-8 w-8 text-blue-600" />
+              <span className="text-xl font-bold">Vapi Clone</span>
+            </Link>
           </div>
-
-          {/* Navigation */}
-          <nav className="flex-1 px-4 py-6 space-y-2">
-            {menuItems.map((item) => (
-              <Button
-                key={item.path}
-                variant="ghost"
-                className="w-full justify-start"
-                onClick={() => navigate(item.path)}
-              >
-                <item.icon className="w-5 h-5 mr-3" />
-                {item.label}
-              </Button>
-            ))}
+          <nav className="flex flex-1 flex-col">
+            <ul role="list" className="flex flex-1 flex-col gap-y-7">
+              <li>
+                <ul role="list" className="-mx-2 space-y-1">
+                  {navigation.map((item) => {
+                    const isActive = location.pathname === item.href;
+                    return (
+                      <li key={item.name}>
+                        <Link
+                          to={item.href}
+                          className={cn(
+                            isActive
+                              ? 'bg-gray-50 text-blue-600'
+                              : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50',
+                            'group flex gap-x-3 rounded-md p-2 text-sm leading-6 font-semibold'
+                          )}
+                        >
+                          <item.icon
+                            className={cn(
+                              isActive ? 'text-blue-600' : 'text-gray-400 group-hover:text-blue-600',
+                              'h-6 w-6 shrink-0'
+                            )}
+                            aria-hidden="true"
+                          />
+                          {item.name}
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </li>
+            </ul>
           </nav>
-
-          {/* Bottom Actions */}
-          <div className="p-4 border-t space-y-2">
-            <Button
-              variant="ghost"
-              className="w-full justify-start"
-              onClick={() => setShowContactSupport(true)}
-            >
-              <HelpCircle className="w-5 h-5 mr-3" />
-              Contact Support
-            </Button>
-            <Button
-              variant="ghost"
-              className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50"
-              onClick={handleLogout}
-            >
-              <LogOut className="w-5 h-5 mr-3" />
-              Logout
-            </Button>
-          </div>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="ml-64">
-        <main className="p-8">
-          <Outlet />
+      {/* Main content */}
+      <div className="pl-72">
+        <div className="sticky top-0 z-40 flex h-16 shrink-0 items-center gap-x-4 border-b border-gray-200 bg-white px-4 shadow-sm sm:gap-x-6 sm:px-6 lg:px-8">
+          <div className="flex flex-1 gap-x-4 self-stretch lg:gap-x-6">
+            <div className="relative flex flex-1"></div>
+            <div className="flex items-center gap-x-4 lg:gap-x-6">
+              <Button variant="outline" size="sm">
+                Upgrade
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <main className="py-10">
+          <div className="px-4 sm:px-6 lg:px-8">
+            <Outlet />
+          </div>
         </main>
       </div>
-
-      {/* Modals */}
-      <ContactSupportModal 
-        isOpen={showContactSupport} 
-        onClose={() => setShowContactSupport(false)} 
-      />
-      
-      <PaymentModal 
-        isOpen={showPaymentModal} 
-        onClose={() => setShowPaymentModal(false)} 
-      />
     </div>
   );
 };
-
-export default MainLayout;

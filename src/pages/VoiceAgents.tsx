@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Plus } from 'lucide-react';
+import { ArrowLeft, Plus, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useVoiceAgents } from '@/hooks/useVoiceAgents';
 import { VoiceAgentForm } from '@/components/VoiceAgents/VoiceAgentForm';
@@ -105,6 +105,10 @@ const VoiceAgents = () => {
               <h1 className="text-2xl font-bold text-gray-900">Voice AI Agents</h1>
             </div>
             <div className="flex items-center space-x-4">
+              <Button onClick={() => navigate('/integrations')} variant="outline">
+                <Zap className="w-4 h-4 mr-2" />
+                Integrations
+              </Button>
               <Button onClick={handleCreateFlow} variant="outline">
                 <Plus className="w-4 h-4 mr-2" />
                 Visual Flow Builder

@@ -9,6 +9,101 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      agent_chains: {
+        Row: {
+          configuration: Json
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          configuration?: Json
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          configuration?: Json
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      agent_templates: {
+        Row: {
+          category: string
+          created_at: string
+          created_by: string
+          description: string | null
+          downloads_count: number | null
+          id: string
+          is_public: boolean
+          name: string
+          rating_average: number | null
+          rating_count: number | null
+          tags: string[] | null
+          team_id: string | null
+          template_data: Json
+          updated_at: string
+          version: string | null
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          created_by: string
+          description?: string | null
+          downloads_count?: number | null
+          id?: string
+          is_public?: boolean
+          name: string
+          rating_average?: number | null
+          rating_count?: number | null
+          tags?: string[] | null
+          team_id?: string | null
+          template_data: Json
+          updated_at?: string
+          version?: string | null
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          created_by?: string
+          description?: string | null
+          downloads_count?: number | null
+          id?: string
+          is_public?: boolean
+          name?: string
+          rating_average?: number | null
+          rating_count?: number | null
+          tags?: string[] | null
+          team_id?: string | null
+          template_data?: Json
+          updated_at?: string
+          version?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_templates_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       assistants: {
         Row: {
           created_at: string
@@ -248,6 +343,129 @@ export type Database = {
         }
         Relationships: []
       }
+      chain_executions: {
+        Row: {
+          call_id: string | null
+          chain_id: string
+          completed_at: string | null
+          current_step_id: string | null
+          error_message: string | null
+          execution_log: Json | null
+          id: string
+          started_at: string
+          status: string
+        }
+        Insert: {
+          call_id?: string | null
+          chain_id: string
+          completed_at?: string | null
+          current_step_id?: string | null
+          error_message?: string | null
+          execution_log?: Json | null
+          id?: string
+          started_at?: string
+          status?: string
+        }
+        Update: {
+          call_id?: string | null
+          chain_id?: string
+          completed_at?: string | null
+          current_step_id?: string | null
+          error_message?: string | null
+          execution_log?: Json | null
+          id?: string
+          started_at?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chain_executions_call_id_fkey"
+            columns: ["call_id"]
+            isOneToOne: false
+            referencedRelation: "call_analytics_view"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chain_executions_call_id_fkey"
+            columns: ["call_id"]
+            isOneToOne: false
+            referencedRelation: "calls"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chain_executions_chain_id_fkey"
+            columns: ["chain_id"]
+            isOneToOne: false
+            referencedRelation: "agent_chains"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chain_executions_current_step_id_fkey"
+            columns: ["current_step_id"]
+            isOneToOne: false
+            referencedRelation: "chain_steps"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chain_steps: {
+        Row: {
+          agent_id: string | null
+          chain_id: string
+          conditions: Json | null
+          created_at: string
+          fallback_step_id: string | null
+          flow_id: string | null
+          id: string
+          step_order: number
+          timeout_seconds: number | null
+        }
+        Insert: {
+          agent_id?: string | null
+          chain_id: string
+          conditions?: Json | null
+          created_at?: string
+          fallback_step_id?: string | null
+          flow_id?: string | null
+          id?: string
+          step_order: number
+          timeout_seconds?: number | null
+        }
+        Update: {
+          agent_id?: string | null
+          chain_id?: string
+          conditions?: Json | null
+          created_at?: string
+          fallback_step_id?: string | null
+          flow_id?: string | null
+          id?: string
+          step_order?: number
+          timeout_seconds?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chain_steps_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "assistants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chain_steps_chain_id_fkey"
+            columns: ["chain_id"]
+            isOneToOne: false
+            referencedRelation: "agent_chains"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chain_steps_fallback_step_id_fkey"
+            columns: ["fallback_step_id"]
+            isOneToOne: false
+            referencedRelation: "chain_steps"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contacts: {
         Row: {
           campaign_id: string | null
@@ -447,6 +665,112 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      team_members: {
+        Row: {
+          id: string
+          invited_at: string | null
+          invited_by: string | null
+          joined_at: string | null
+          role: string
+          team_id: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          invited_at?: string | null
+          invited_by?: string | null
+          joined_at?: string | null
+          role?: string
+          team_id: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          invited_at?: string | null
+          invited_by?: string | null
+          joined_at?: string | null
+          role?: string
+          team_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_members_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      teams: {
+        Row: {
+          billing_email: string | null
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+          owner_id: string
+          subscription_tier: string | null
+          updated_at: string
+        }
+        Insert: {
+          billing_email?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+          owner_id: string
+          subscription_tier?: string | null
+          updated_at?: string
+        }
+        Update: {
+          billing_email?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+          owner_id?: string
+          subscription_tier?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      template_reviews: {
+        Row: {
+          created_at: string
+          id: string
+          rating: number
+          review_text: string | null
+          template_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          rating: number
+          review_text?: string | null
+          template_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          rating?: number
+          review_text?: string | null
+          template_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "template_reviews_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "agent_templates"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       user_profiles: {
         Row: {

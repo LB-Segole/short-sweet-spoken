@@ -2,7 +2,6 @@
 import React, { useCallback, useRef, useState } from 'react';
 import ReactFlow, {
   Node,
-  Edge,
   addEdge,
   Connection,
   useNodesState,
@@ -23,9 +22,12 @@ import { TransferNode } from './nodes/TransferNode';
 import { EndNode } from './nodes/EndNode';
 import { VariableNode } from './nodes/VariableNode';
 import { NodeToolbar } from './NodeToolbar';
+import { FlowExecutionPanel } from './FlowExecutionPanel';
 import { FlowNode, FlowEdge, AgentFlow } from '@/types/agentFlow';
 import { Button } from '@/components/ui/button';
-import { Save, Play, Download, Upload } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Save, Play, Eye, Settings, Zap } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
 const nodeTypes = {
   start: StartNode,
@@ -48,7 +50,9 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({ flow, onSave, onTest }) 
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState(flow?.nodes || []);
   const [edges, setEdges, onEdgesChange] = useEdgesState(flow?.edges || []);
-  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [showExecutionPanel, setShowExecutionPanel] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const { toast } = useToast();
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
@@ -81,20 +85,28 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({ flow, onSave, onTest }) 
         type,
         position,
         data: {
-          label: `${type} node`,
+          label: `${type.replace('_', ' ')} node`,
           config: getDefaultNodeConfig(type),
         },
       };
 
       setNodes((nds) => nds.concat(newNode));
+      
+      toast({
+        title: "Node Added",
+        description: `${type.replace('_', ' ')} node has been added to the flow.`,
+      });
     },
-    [reactFlowInstance, setNodes]
+    [reactFlowInstance, setNodes, toast]
   );
 
   const getDefaultNodeConfig = (type: string) => {
     switch (type) {
       case 'start':
-        return { greeting_message: 'Hello! How can I help you today?' };
+        return { 
+          greeting_message: 'Hello! How can I help you today?',
+          voice_settings: { voice_id: 'aura-asteria-en', speed: 1.0 }
+        };
       case 'ai_message':
         return {
           system_prompt: 'You are a helpful assistant.',
@@ -106,12 +118,16 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({ flow, onSave, onTest }) 
         return {
           condition_type: 'keyword',
           condition_value: '',
+          true_path: null,
+          false_path: null,
         };
       case 'integration':
         return {
           integration_type: 'webhook',
           endpoint: '',
           method: 'POST',
+          headers: {},
+          body: {},
         };
       case 'transfer':
         return {
@@ -128,6 +144,7 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({ flow, onSave, onTest }) 
         return {
           variable_name: 'user_input',
           variable_type: 'string',
+          default_value: '',
         };
       default:
         return {};
@@ -150,6 +167,11 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({ flow, onSave, onTest }) 
     };
     
     onSave(flowData);
+    
+    toast({
+      title: "Flow Saved",
+      description: "Your agent flow has been saved successfully.",
+    });
   };
 
   const handleTest = () => {
@@ -168,10 +190,11 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({ flow, onSave, onTest }) 
     };
     
     onTest(flowData);
+    setShowExecutionPanel(true);
   };
 
-  const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
-    setSelectedNode(node);
+  const onNodeClick = useCallback((_event: React.MouseEvent, _node: Node) => {
+    // Node click handler - currently unused but available for future features
   }, []);
 
   return (
@@ -179,16 +202,58 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({ flow, onSave, onTest }) 
       <NodeToolbar />
       
       <div className="flex-1 relative" ref={reactFlowWrapper}>
-        <div className="absolute top-4 left-4 z-10 flex gap-2">
-          <Button onClick={handleSave} size="sm">
-            <Save className="w-4 h-4 mr-2" />
-            Save Flow
-          </Button>
-          <Button onClick={handleTest} size="sm" variant="outline">
-            <Play className="w-4 h-4 mr-2" />
-            Test Flow
-          </Button>
-        </div>
+        {/* Enhanced Toolbar */}
+        <Card className="absolute top-4 left-4 z-10 bg-white/95 backdrop-blur-sm">
+          <CardContent className="p-3">
+            <div className="flex gap-2">
+              <Button onClick={handleSave} size="sm" className="flex items-center gap-2">
+                <Save className="w-4 h-4" />
+                Save Flow
+              </Button>
+              <Button 
+                onClick={handleTest} 
+                size="sm" 
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <Play className="w-4 h-4" />
+                Test Flow
+              </Button>
+              <Button 
+                onClick={() => setShowExecutionPanel(!showExecutionPanel)} 
+                size="sm" 
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <Eye className="w-4 h-4" />
+                Preview
+              </Button>
+              <Button 
+                onClick={() => setShowSettings(!showSettings)} 
+                size="sm" 
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <Settings className="w-4 h-4" />
+                Settings
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Flow Statistics */}
+        <Card className="absolute top-4 right-4 z-10 bg-white/95 backdrop-blur-sm">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-4 text-sm text-gray-600">
+              <span>Nodes: {nodes.length}</span>
+              <span>Connections: {edges.length}</span>
+              <div className="flex items-center gap-1">
+                <Zap className="w-4 h-4" />
+                <span>{nodes.filter(n => n.type === 'integration').length} Integrations</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         <ReactFlow
           nodes={nodes}
@@ -203,12 +268,32 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({ flow, onSave, onTest }) 
           nodeTypes={nodeTypes}
           fitView
           attributionPosition="bottom-left"
+          className="bg-gray-50"
+          defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
         >
           <Controls />
           <MiniMap />
-          <Background />
+          <Background gap={20} size={1} color="#e5e7eb" />
         </ReactFlow>
       </div>
+
+      {/* Execution Panel */}
+      {showExecutionPanel && (
+        <FlowExecutionPanel
+          flow={{
+            id: flow?.id || `flow-${Date.now()}`,
+            name: flow?.name || 'Test Flow',
+            description: flow?.description,
+            nodes: nodes as FlowNode[],
+            edges: edges as FlowEdge[],
+            created_at: flow?.created_at || new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            user_id: flow?.user_id || 'current-user',
+            is_active: true,
+          }}
+          onClose={() => setShowExecutionPanel(false)}
+        />
+      )}
     </div>
   );
 };

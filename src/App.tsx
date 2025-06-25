@@ -1,94 +1,56 @@
-import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { useAuth } from './contexts/AuthContext';
-import Dashboard from './pages/Dashboard';
-import Login from './pages/Login';
-import Signup from './pages/Signup';
-import Account from './pages/Account';
-import VoiceAgents from './pages/VoiceAgents';
 
-import AgentEditor from './pages/AgentEditor';
-import Pricing from './pages/Pricing';
-import CallLogs from './pages/CallLogs';
-import { Toaster } from '@/components/ui/toaster';
-import { LandingPage } from './pages/LandingPage';
-import AgentFlowEditor from '@/pages/AgentFlowEditor';
+import { Toaster } from "@/components/ui/toaster";
+import { Toaster as Sonner } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "@/contexts/AuthContext";
+import { MainLayout } from "@/components/Layout/MainLayout";
+
+// Page imports
+import Index from "./pages/Index";
+import Dashboard from "./pages/Dashboard";
+import VoiceAgents from "./pages/VoiceAgents";
+import Assistants from "./pages/Assistants";
+import CallHistory from "./pages/CallHistory";
+import Settings from "./pages/Settings";
+import { Auth } from "./pages/Auth";
+import AgentFlowEditor from "./pages/AgentFlowEditor";
+import IntegrationsPage from "./pages/IntegrationsPage";
+import { AgentOrchestration } from "./pages/AgentOrchestration";
+import { TeamManagement } from "./pages/TeamManagement";
+import { AgentMarketplace } from "./pages/AgentMarketplace";
+
+const queryClient = new QueryClient();
 
 function App() {
-  const { currentUser } = useAuth();
-
-  const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-    return currentUser ? <>{children}</> : <Navigate to="/login" />;
-  };
-
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/signup" element={<Signup />} />
-        <Route path="/pricing" element={<Pricing />} />
-        
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/account"
-          element={
-            <ProtectedRoute>
-              <Account />
-            </ProtectedRoute>
-          }
-        />
-        <Route 
-          path="/voice-agents" 
-          element={
-            <ProtectedRoute>
-              <VoiceAgents />
-            </ProtectedRoute>
-          } 
-        />
-        <Route 
-          path="/agent-editor/:agentId" 
-          element={
-            <ProtectedRoute>
-              <AgentEditor />
-            </ProtectedRoute>
-          } 
-        />
-        <Route 
-          path="/call-logs" 
-          element={
-            <ProtectedRoute>
-              <CallLogs />
-            </ProtectedRoute>
-          } 
-        />
-        
-        <Route 
-          path="/agent-flow-editor/:flowId" 
-          element={
-            <ProtectedRoute>
-              <AgentFlowEditor />
-            </ProtectedRoute>
-          } 
-        />
-        <Route 
-          path="/agent-flow-editor" 
-          element={
-            <ProtectedRoute>
-              <AgentFlowEditor />
-            </ProtectedRoute>
-          } 
-        />
-      </Routes>
-      <Toaster />
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <Routes>
+              <Route path="/auth" element={<Auth />} />
+              <Route path="/" element={<MainLayout />}>
+                <Route index element={<Index />} />
+                <Route path="dashboard" element={<Dashboard />} />
+                <Route path="voice-agents" element={<VoiceAgents />} />
+                <Route path="assistants" element={<Assistants />} />
+                <Route path="call-history" element={<CallHistory />} />
+                <Route path="settings" element={<Settings />} />
+                <Route path="agent-flow-editor" element={<AgentFlowEditor />} />
+                <Route path="integrations" element={<IntegrationsPage />} />
+                <Route path="orchestration" element={<AgentOrchestration />} />
+                <Route path="teams" element={<TeamManagement />} />
+                <Route path="marketplace" element={<AgentMarketplace />} />
+              </Route>
+            </Routes>
+          </BrowserRouter>
+        </TooltipProvider>
+      </AuthProvider>
+    </QueryClientProvider>
   );
 }
 
