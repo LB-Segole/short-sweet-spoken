@@ -5,7 +5,20 @@ import { Phone, Clock, TrendingUp, Users } from 'lucide-react';
 import { useDashboardData } from '@/hooks/useDashboardData';
 
 export const DashboardStats = () => {
-  const { campaignStats, callStats, isLoading } = useDashboardData();
+  const { campaignStats, callStats, isLoading, error } = useDashboardData();
+
+  if (error) {
+    console.error('Dashboard stats error:', error);
+    return (
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Card className="col-span-full">
+          <CardContent className="pt-6">
+            <p className="text-center text-gray-500">Unable to load dashboard statistics</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
