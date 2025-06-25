@@ -39,8 +39,7 @@ interface FilterState {
 
 const AgentMarketplace = () => {
   const navigate = useNavigate();
-  const auth = useAuth();
-  const user = auth?.user || null;
+  const { user } = useAuth();
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterState>({
@@ -158,11 +157,6 @@ const AgentMarketplace = () => {
   };
 
   const TemplateCard = ({ template }: { template: AgentTemplate }) => {
-    const templateData = template.template_data || {};
-    const systemPrompt = templateData.system_prompt || 'No system prompt available';
-    const voiceModel = templateData.voice_model || 'Default voice';
-    const exampleCalls = templateData.example_calls || [];
-
     return (
       <Card className="bg-white shadow-md rounded-lg overflow-hidden">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
